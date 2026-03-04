@@ -1,0 +1,130 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "QPocket"
+version = "0.1.0"
+description = "Q-Pocket: A Framework for Analysis and Benchmarking of the Experimentally Observed Conformational Space of Protein Binding Pockets for Drug Design Applications"
+authors = [
+  {name = "Hamlet Khachatryan", email = "hamletk@denovosciences.ai"},
+  {name = "Hovakim Zakaryan", email = "hovakimz@denovosciences.ai"},
+]
+maintainers = [
+  {name = "Hamlet Khachatryan", email = "hamletk@denovosciences.ai"},
+]
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+keywords = [
+  "structural bioinformatics",
+  "protein binding pockets",
+  "drug design",
+  "cheminformatics",
+  "fragment screening",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+]
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "pandas>=2.0",
+  "joblib>=1.3",
+  "biopython>=1.81",
+  "biopandas>=0.4",
+  "rdkit>=2023.3.1",
+  "scikit-learn>=1.3",
+  "h5py>=3.9",
+  "hydra-core>=1.3",
+  "omegaconf>=2.3",
+  "click>=8.1",
+  "eliot>=1.14",
+  "requests>=2.28",
+  "pdb2pqr>=3.6",
+  "apbs-binary>=3.4",
+  "molvs>=0.1.1",
+  "meeko>=0.5",
+  "gdown>=4.7",
+  "openbabel-wheel>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-mock>=3.12",
+  "ruff>=0.1",
+  "mkdocs>=1.5",
+  "mkdocs-material>=9.4",
+  "mkdocstrings-python>=0.24",
+  "mkdocs-autorefs>=0.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/hamlet-khachatryan/QPocket"
+#Documentation = "https://denovosciences.github.io/QPocket"
+Repository = "https://github.com/hamlet-khachatryan/QPocket"
+"Bug Tracker" = "https://github.com/hamlet-khachatryan/QPocket/issues"
+
+[project.scripts]
+qpocket = "qpocket_pipeline.cli:cli"
+qpocket-screen = "qpocket_screen.cli:screen_cli"
+
+[tool.setuptools.packages.find]
+where = ["src",]
+include = ["qpocket_pipeline*", "cavitomix*", "qpocket_screen*", "plip*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml", "*.txt", "*.md"]
+"conf" = ["*.yaml"]
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+exclude = [
+  ".bzr", ".direnv", ".eggs", ".git", ".git-rewrite",
+  ".hg", ".ipynb_checkpoints", ".mypy_cache", ".nox",
+  ".pants.d", ".pyenv", ".pytest_cache", ".pytype",
+  ".ruff_cache", ".svn", ".tox", ".venv", ".vscode",
+  "__pypackages__", "_build", "buck-out", "build",
+  "dist", "node_modules", "site-packages", "venv",
+  "src/plip",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # Pyflakes
+  "N",   # pep8-naming
+  "W",   # pycodestyle warnings
+]
+ignore = [
+  "E501",  # line too long — handled by formatter
+  "B008",
+]
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = false
+docstring-code-line-length = "dynamic"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

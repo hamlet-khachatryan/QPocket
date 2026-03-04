@@ -1,0 +1,55 @@
+defaults:
+  - _self_
+
+mode: "pdb_query"  # "pdb_query" or "fragment_screen"
+
+reference:
+  pdb_id: null                # e.g. "6HP0"
+  chain_id: "A"
+  ligand_id: null             # e.g. "LKQ"
+  pocket_definition: "Interactions"  # "Interactions" or "Solvent"
+  pocket_mode: "cavity_detection"    # "cavity_detection" or "bounding_box"
+  bounding_box:               # Used only when pocket_mode is "bounding_box"
+    center: null              # [x, y, z] coordinates
+    dimensions: null          # [dx, dy, dz] dimensions
+
+fragment_screen:
+  input_type: "csv"           # "csv" or "paths"
+  csv_path: null              # Path to CSV with 'pdb_path' column
+  structure_paths: null       # List of structure file paths (alternative to CSV)
+  reference_index: 0          # Index of reference structure (0-based)
+  interaction_padding: 5.0   # Padding around interacting residues (Angstroms)
+
+paths:
+  workdir: null
+
+pdb_query:
+  sequence_identity: 1.0
+  resolution_limit: 2.5
+  min_length: 20              # Minimum length of the query sequence
+  max_length: null            # Maximum length of the query sequence
+  experimental_method: null
+  enforce_same_uniprot: false # Fetch only structures with same UniProt ID
+
+alignment:
+  renumber_residues: true     # Forces numbering to match UniProt
+  manual_uniprot_id: null     # Optional: force a specific UniProt ID (e.g., "P0DTC2")
+
+cleaning:
+  allowed_cofactors: null     # Biologically relevant molecules to retain ('|'-separated, e.g. "HEM|MG|CL")
+
+io:
+  log_format: "json"          # Eliot log format: "json" or "text"
+  save_intermediate: false    # Save intermediate pocket point clouds (binding_site_initial.csv)
+  compression: "gzip"         # HDF5 compression: "gzip" or "none"
+
+spectral_distance_matrix:
+  geo_graph_neighbor_radius: 2.0  # Threshold for geodesic graph neighbourhood (Angstroms)
+  paralell_jobs: -1               # Number of parallel jobs (-1 = all cores)
+  global_k: 100                   # Length of the spectral fingerprint vector
+  sigma: 10.0                     # Standard deviation of the Heat Gaussian kernel
+  max_points: 5000                # Max point-cloud size considered in spectral embedding
+  alpha: 0.85                     # Weight of geodesic cost  [0, 1]
+  beta: 12.5                      # Scaling factor of feature cost
+  affinity_damping: 0.9           # Affinity Propagation damping factor [0.5, 1.0)
+  affinity_max_iter: 300          # Maximum Affinity Propagation iterations

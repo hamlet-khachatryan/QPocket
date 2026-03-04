@@ -1,0 +1,4 @@
+pdb_id,aligned_file,cleaned_file
+1ABC,1ABC_aligned.pdb,1ABC_cleaned.pdb
+2DEF,2DEF_aligned.pdb,2DEF_cleaned.pdb
+3GHI,3GHI_aligned.pdb,3GHI_cleaned.pdb
