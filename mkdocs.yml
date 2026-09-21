@@ -79,6 +79,7 @@ nav:
       - Output Files: user-guide/outputs.md
   - API Reference:
       - Overview: api/index.md
+      - Library Use: api/library.md
       - Pipeline API: api/pipeline.md
       - Configuration: api/config.md
       - Utilities: api/utils.md

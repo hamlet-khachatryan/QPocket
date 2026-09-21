@@ -78,19 +78,27 @@ If the default `python3` is the wrong version, look for a module first:
 
 ## 3. Install
 
+Q-Pocket is built and installed with [uv](https://docs.astral.sh/uv/). Get it
+once (no root needed; either line works):
+
 ```bash
-cd "$QP_HOME"
-module load python/3.11            # only if you needed one in step 2
-rm -rf src/*.egg-info               # stale build metadata from an earlier install
-python3 -m venv .venv
-. .venv/bin/activate
-pip install --upgrade pip
-pip install -e ".[viz]"            # [viz] adds marimo for the notebook
+python3 -m pip install --user uv                     # wherever pip reaches PyPI
+curl -LsSf https://astral.sh/uv/install.sh | sh      # or the standalone installer
 ```
 
-The `rm -rf src/*.egg-info` matters when reinstalling: setuptools reuses an
-existing one, and an egg-info left by an older layout can resurrect files that
-no longer belong in the package.
+Both put `uv` in `~/.local/bin`. Then:
+
+```bash
+cd "$QP_HOME"
+module load python/3.11                               # only if you needed one in step 2
+uv sync --locked --extra viz --python "$(command -v python3)"
+. .venv/bin/activate
+```
+
+`uv sync` creates `.venv` and installs exactly the versions in `uv.lock`, so the
+cluster gets the same numbers as the laptop. `--python` makes it use the site's
+interpreter instead of downloading one; drop it if downloads are fine. `--extra
+viz` adds marimo for the notebook.
 
 Then prove it works **on a compute node**. This is not optional: it runs
 pdb2pqr and APBS for real, and a wheel can install cleanly and still fail to
@@ -105,7 +113,7 @@ It must end with `This node can run the pipeline.`
 
 If it passes on the login node but **fails on a compute node**, the two run
 different OS images and pip picked wheels for the login node's. Rebuild the venv
-from a shell on a compute node (`srun ... --pty bash`, then the commands above),
+from a shell on a compute node (`srun ... --pty bash`, then `uv sync` as above),
 provided compute nodes can reach PyPI; otherwise this cluster needs a container.
 
 ---
@@ -298,11 +306,12 @@ Do this before scratch is purged.
 Push on the laptop, transfer into the same `$QP_HOME`, then on the cluster:
 
 ```bash
-cd "$QP_HOME" && . .venv/bin/activate
-rm -rf src/*.egg-info && pip install -e ".[viz]"     # only needed if pyproject.toml changed
+cd "$QP_HOME"
+uv sync --locked --extra viz --python "$(command -v python3)"   # picks up dependency changes
 srun -p "$QP_PART" -t 00:10:00 --pty "$QP_HOME/.venv/bin/qpocket" doctor
 ```
 
-The install is editable, so code changes take effect without reinstalling.
+The project is installed in editable mode, so code changes take effect without
+reinstalling.
 That also means a task picks up whatever code is on disk when it **starts** —
 do not update while a run is in progress.

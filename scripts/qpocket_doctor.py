@@ -200,8 +200,9 @@ def main(argv=None):
         print("This machine cannot install Q-Pocket as it stands.\n")
     else:
         print("This machine can install Q-Pocket:\n")
-        print("    python3 -m venv .venv && . .venv/bin/activate")
-        print("    pip install -e .")
+        print("    python3 -m pip install --user uv      # once; or the uv installer script")
+        print("    uv sync --locked --extra viz --python \"$(command -v python3)\"")
+        print("    . .venv/bin/activate")
         print("    qpocket doctor          # the fuller check, once installed\n")
 
     for line in advice:

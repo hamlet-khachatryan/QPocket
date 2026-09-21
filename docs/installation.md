@@ -37,23 +37,20 @@ structures every aligned atom lands within 0.0016 Å of where PyMOL put it.
 
 ## Install
 
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install --upgrade pip
-pip install -e .
-```
-
-A very old system pip can fail building from `pyproject.toml` with
-`'Distribution' has no attribute '_finalize_feature_opts'`; upgrading pip first
-avoids it.
-
-Optional extras:
+Q-Pocket uses [uv](https://docs.astral.sh/uv/) for installing, running and
+building. Install uv once (`python3 -m pip install --user uv`, or
+`curl -LsSf https://astral.sh/uv/install.sh | sh`), then from the repository:
 
 ```bash
-pip install -e ".[viz]"   # the marimo explorer notebook
-pip install -e ".[dev]"   # tests and documentation
+uv sync                 # .venv with the exact versions in uv.lock, plus test tools
+uv sync --extra viz     # also the marimo explorer notebook
+uv run qpocket --help   # run without activating; or: . .venv/bin/activate
+uv run pytest           # the test suite
+uv build                # sdist and wheel in dist/
 ```
+
+On a cluster, `uv sync --python "$(command -v python3)"` uses the loaded Python
+module instead of downloading an interpreter.
 
 PLIP and CavitOmiX are vendored under `src/` and install with the package;
 there is nothing extra to fetch.
@@ -83,6 +80,8 @@ On a cluster, run it where the jobs will run:
 ```bash
 srun -p <partition> --pty .venv/bin/qpocket doctor
 ```
+
+`uv run qpocket doctor` does the same from the repository without activating.
 
 ## When the machine is not supported
 
