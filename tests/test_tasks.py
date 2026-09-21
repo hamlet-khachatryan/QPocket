@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from qpocket.pipelines import api, tasks
-from qpocket.pipelines.api import ExtractionContext, StructureResult
+from qpocket.pipelines import stages, tasks
+from qpocket.pipelines.stages import ExtractionContext, StructureResult
 from qpocket.config import QPocketConfig
 from qpocket.pipelines.tasks import TaskError, resolve_pdb_id, run_task
 
@@ -71,7 +71,7 @@ def write_part(dirs, pdb_id, **kw):
         observed=kw.get("observed", [f"ARG_1_A|Hydrophobic"]),
         smiles=kw.get("smiles"),
     )
-    (api.parts_dir(dirs) / f"{pdb_id}.json").write_text(json.dumps(result.to_json()))
+    (stages.parts_dir(dirs) / f"{pdb_id}.json").write_text(json.dumps(result.to_json()))
     return result
 
 
@@ -129,19 +129,19 @@ def test_the_reference_geometry_survives_a_round_trip_to_disk(dirs):
         bbox_dims=None,
         ref_pocket_bbox=(np.array([0.0, 0.0, 0.0]), np.array([4.0, 5.0, 6.0])),
     )
-    api.save_extraction_context(dirs, context)
-    back = api.load_extraction_context(dirs)
+    stages.save_extraction_context(dirs, context)
+    back = stages.load_extraction_context(dirs)
     assert np.allclose(back.ref_pocket_bbox[1], [4.0, 5.0, 6.0])
 
 
 def test_a_context_with_no_reference_pocket_round_trips_as_none(dirs):
-    api.save_extraction_context(dirs, ExtractionContext(None, None, None, None))
-    assert api.load_extraction_context(dirs).ref_pocket_bbox is None
+    stages.save_extraction_context(dirs, ExtractionContext(None, None, None, None))
+    assert stages.load_extraction_context(dirs).ref_pocket_bbox is None
 
 
 def test_a_task_before_prepare_says_to_run_prepare(dirs):
     with pytest.raises(FileNotFoundError, match="prepare"):
-        api.load_extraction_context(dirs)
+        stages.load_extraction_context(dirs)
 
 
 # --- collect ---------------------------------------------------------------
@@ -155,7 +155,7 @@ def test_collect_refuses_when_no_structure_succeeded(cfg, dirs):
 def test_collect_fills_master_from_the_sidecars(cfg, dirs):
     for pid in PDB_IDS:
         write_part(dirs, pid, ligand_file=f"/lig/{pid}.pdb")
-    api.collect_structure_results(cfg, dirs)
+    stages.collect_structure_results(cfg, dirs)
     df = pd.read_csv(dirs["metadata"] / "master.csv")
     assert list(df["ligand_file"]) == [f"/lig/{p}.pdb" for p in PDB_IDS]
 
@@ -165,14 +165,14 @@ def test_a_missing_structure_does_not_shift_the_other_rows(cfg, dirs):
     what the old code did, would slide 3GHI's result onto 2DEF."""
     write_part(dirs, "1ABC", ligand_file="/lig/1ABC.pdb")
     write_part(dirs, "3GHI", ligand_file="/lig/3GHI.pdb")
-    api.collect_structure_results(cfg, dirs)
+    stages.collect_structure_results(cfg, dirs)
     df = pd.read_csv(dirs["metadata"] / "master.csv").set_index("pdb_id")
     assert df.loc["3GHI", "ligand_file"] == "/lig/3GHI.pdb"
 
 
 def test_a_structure_with_no_sidecar_is_marked_failed(cfg, dirs):
     write_part(dirs, "1ABC")
-    api.collect_structure_results(cfg, dirs)
+    stages.collect_structure_results(cfg, dirs)
     df = pd.read_csv(dirs["metadata"] / "master.csv").set_index("pdb_id")
     assert df.loc["2DEF", "protein_state"] == "FAILED"
 
@@ -180,7 +180,7 @@ def test_a_structure_with_no_sidecar_is_marked_failed(cfg, dirs):
 def test_collect_writes_the_interaction_archives(cfg, dirs):
     for pid in PDB_IDS:
         write_part(dirs, pid)
-    api.collect_structure_results(cfg, dirs)
+    stages.collect_structure_results(cfg, dirs)
     with h5py.File(dirs["metadata"] / "observed_interactions.h5", "r") as hf:
         assert sorted(hf.keys()) == sorted(PDB_IDS)
 
@@ -190,7 +190,7 @@ def test_archive_key_order_follows_master_not_the_glob(cfg, dirs):
     globbing the sidecars would make the output depend on the scheduling."""
     for pid in reversed(PDB_IDS):
         write_part(dirs, pid)
-    api.collect_structure_results(cfg, dirs)
+    stages.collect_structure_results(cfg, dirs)
     with h5py.File(dirs["metadata"] / "observed_interactions.h5", "r") as hf:
         # h5py lists keys alphabetically; insertion order is what we control.
         assert set(hf.keys()) == set(PDB_IDS)
@@ -199,15 +199,15 @@ def test_archive_key_order_follows_master_not_the_glob(cfg, dirs):
 def test_actives_are_written_in_master_order(cfg, dirs):
     write_part(dirs, "3GHI", smiles=("CCO", "LIG"))
     write_part(dirs, "1ABC", smiles=("CCN", "LGB"))
-    api.collect_structure_results(cfg, dirs)
+    stages.collect_structure_results(cfg, dirs)
     lines = (dirs["screening"] / "actives.smi").read_text().splitlines()
     assert [ln.split("\t")[1] for ln in lines[1:]] == ["1ABC", "3GHI"]
 
 
 def test_an_unreadable_sidecar_does_not_abort_the_merge(cfg, dirs):
     write_part(dirs, "1ABC")
-    (api.parts_dir(dirs) / "2DEF.json").write_text("{ not json")
-    api.collect_structure_results(cfg, dirs)
+    (stages.parts_dir(dirs) / "2DEF.json").write_text("{ not json")
+    stages.collect_structure_results(cfg, dirs)
     df = pd.read_csv(dirs["metadata"] / "master.csv").set_index("pdb_id")
     assert df.loc["1ABC", "protein_state"] == "BOUND_STATE"
 
@@ -219,7 +219,7 @@ def test_featurize_skips_a_structure_that_already_has_a_sidecar(cfg, dirs, manif
     """A resubmitted array must re-run only what is missing."""
     write_part(dirs, "1ABC")
     run_task("featurize", cfg, dirs, manifest=manifest, index=0)  # must not raise
-    assert (api.parts_dir(dirs) / "1ABC.json").exists()
+    assert (stages.parts_dir(dirs) / "1ABC.json").exists()
 
 
 def test_geodesic_refuses_a_pocket_that_was_never_featurised(cfg, dirs, tmp_path):
@@ -245,6 +245,6 @@ def test_geodesic_builds_a_cache_for_a_real_pocket(cfg, dirs, tmp_path):
 def test_a_structure_result_survives_a_round_trip(dirs):
     original = write_part(dirs, "1ABC", smiles=("CCO", "LIG"))
     back = StructureResult.from_json(
-        json.loads((api.parts_dir(dirs) / "1ABC.json").read_text())
+        json.loads((stages.parts_dir(dirs) / "1ABC.json").read_text())
     )
     assert back == original

@@ -13,8 +13,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from qpocket.pipelines import api
-from qpocket.pipelines.api import (
+from qpocket.pipelines import stages
+from qpocket.pipelines.stages import (
     _fragment_input_paths,
     _load_fragment_screen_structures,
     reference_id,
@@ -182,7 +182,7 @@ def test_an_empty_ingest_raises_rather_than_reaching_alignment(campaign):
     cfg.fragment_screen.reference_path = None
     cfg.fragment_screen.structure_paths = ["/nope/a.pdb"]
     with pytest.raises(ValueError, match="ingested no structures"):
-        api.fetch_structures(cfg, dirs["original"])
+        stages.fetch_structures(cfg, dirs["original"])
 
 
 def test_a_csv_without_the_expected_column_yields_nothing(campaign, tmp_path):

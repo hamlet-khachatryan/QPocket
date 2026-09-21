@@ -2,7 +2,7 @@
 
 ## Extraction
 
-::: qpocket.core.extraction
+::: qpocket.pipelines.pockets
     options:
       members:
         - extract_reference_pocket_bbox
@@ -12,7 +12,7 @@
 
 ## Alignment
 
-::: qpocket.core.alignment
+::: qpocket.pipelines.align
     options:
       members:
         - process_structure
@@ -32,7 +32,7 @@
 
 ## Cleaning
 
-::: qpocket.core.cleaning
+::: qpocket.pipelines.clean
     options:
       members:
         - clean_structure

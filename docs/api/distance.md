@@ -2,7 +2,7 @@
 
 ## Spectral distance
 
-::: qpocket.core.spectral_distance
+::: qpocket.pipelines.distance
     options:
       members:
         - compute_geodesic

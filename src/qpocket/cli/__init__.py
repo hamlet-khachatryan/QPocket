@@ -12,7 +12,7 @@ import click
 from pathlib import Path
 from typing import Optional, List
 
-from qpocket.pipelines.api import run_qpocket_pipeline
+from qpocket.pipelines.run import run_qpocket_pipeline
 
 
 @click.group()
@@ -421,7 +421,7 @@ def validate(config_file: str):
     \b
     qpocket validate config.yaml
     """
-    from qpocket.pipelines.api import load_qpocket_config
+    from qpocket.pipelines.stages import load_qpocket_config
 
     click.echo(f"Validating configuration file: {config_file}")
 
@@ -455,7 +455,7 @@ def init(output: str):
     qpocket init
     qpocket run --config qpocket_config.yaml
     """
-    from qpocket.pipelines.api import CONF_PATH
+    from qpocket.pipelines.stages import CONF_PATH
 
     source = CONF_PATH / "config.yaml"
     if not source.exists():
@@ -493,13 +493,13 @@ def init(output: str):
 
 def _load_run(config: Optional[str], workdir: Optional[str], overrides: List[str]):
     """Load a config and its directory map, the way every slurm command needs."""
-    from qpocket.pipelines.api import load_qpocket_config, run_id as api_run_id
-    from qpocket import utils
+    from qpocket.pipelines.stages import load_qpocket_config, run_id as api_run_id
+    from qpocket.io import workspace
 
     if workdir:
         overrides = list(overrides) + [f"paths.workdir={Path(workdir).resolve()}"]
     cfg = load_qpocket_config(config_path=config, overrides=overrides or None)
-    dirs = utils.setup_directory_hierarchy(cfg.paths.workdir, api_run_id(cfg))
+    dirs = workspace.setup_directory_hierarchy(cfg.paths.workdir, api_run_id(cfg))
     return cfg, dirs
 
 
@@ -708,7 +708,7 @@ def doctor(config: Optional[str], smoke: bool):
     # --- the configuration ------------------------------------------------
     if config:
         try:
-            from qpocket.pipelines.api import load_qpocket_config
+            from qpocket.pipelines.stages import load_qpocket_config
 
             load_qpocket_config(config_path=config)
             ok("config loads", config)
@@ -745,7 +745,7 @@ def _make_task_command(name: str):
                   help="Recompute even if the output already exists.")
     def command(config, workdir, manifest, index, force):
         from qpocket.pipelines import tasks
-        from qpocket.pipelines.api import _configure_logging
+        from qpocket.pipelines.stages import _configure_logging
 
         cfg, dirs = _load_run(config, workdir, [])
 

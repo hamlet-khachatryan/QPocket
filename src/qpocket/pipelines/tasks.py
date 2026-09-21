@@ -32,10 +32,9 @@ from typing import Dict, List, Optional
 import pandas as pd
 from eliot import log_message, start_action
 
-from qpocket import utils
-from qpocket.pipelines import api
+from qpocket.pipelines import stages
 from qpocket.config import QPocketConfig
-from qpocket.core.spectral_distance import (
+from qpocket.pipelines.distance import (
     compute_geodesic,
     compute_spectral_distance_matrix,
     pocket_manifest,
@@ -114,9 +113,9 @@ def task_prepare(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False)
         TaskError: If no ``master.csv`` or no reference pocket results.
     """
     with start_action(action_type="task_prepare"):
-        api.fetch_structures(cfg, dirs["original"])
-        api.align_structures(cfg, dirs)
-        api.clean_structures(cfg, dirs)
+        stages.fetch_structures(cfg, dirs["original"])
+        stages.align_structures(cfg, dirs)
+        stages.clean_structures(cfg, dirs)
 
         csv_path = dirs["metadata"] / "master.csv"
         if not csv_path.exists():
@@ -127,13 +126,13 @@ def task_prepare(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False)
             log_message(message_type="skip", stage="prepare", reason="context exists")
             return
 
-        context = api.build_extraction_context(cfg, dirs, pd.read_csv(csv_path))
+        context = stages.build_extraction_context(cfg, dirs, pd.read_csv(csv_path))
         if context is None:
             raise TaskError(
                 "could not locate the reference pocket; every per-structure task "
                 "depends on it, so the run cannot continue"
             )
-        api.save_extraction_context(dirs, context)
+        stages.save_extraction_context(dirs, context)
 
 
 def task_featurize(
@@ -157,15 +156,15 @@ def task_featurize(
         TaskError: If the task leaves no sidecar behind.
     """
     with start_action(action_type="task_featurize", pdb_id=pdb_id):
-        part = api.parts_dir(dirs) / f"{pdb_id}.json"
+        part = stages.parts_dir(dirs) / f"{pdb_id}.json"
         if part.exists() and not force:
             log_message(message_type="skip", stage="featurize", pdb_id=pdb_id,
                         reason="sidecar exists")
             return
 
-        context = api.load_extraction_context(dirs)
+        context = stages.load_extraction_context(dirs)
         row = _master_row(dirs, pdb_id)
-        api.process_one_structure(cfg, dirs, row, context)
+        stages.process_one_structure(cfg, dirs, row, context)
 
         if not part.exists():
             raise TaskError(f"featurisation of {pdb_id} wrote no sidecar at {part}")
@@ -207,13 +206,13 @@ def task_collect(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False)
             task failed and going further would produce empty tables.
     """
     with start_action(action_type="task_collect"):
-        parts = list(api.parts_dir(dirs).glob("*.json"))
+        parts = list(stages.parts_dir(dirs).glob("*.json"))
         if not parts:
             raise TaskError(
                 "no per-structure sidecars found — the featurize stage produced "
                 "nothing, so there is nothing to collect"
             )
-        api.collect_structure_results(cfg, dirs)
+        stages.collect_structure_results(cfg, dirs)
 
         obs_h5 = dirs["metadata"] / "observed_interactions.h5"
         if not obs_h5.exists():

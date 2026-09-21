@@ -410,7 +410,7 @@ def run_interaction_analysis(
     Returns:
         DataFrame with columns: job_id, pdb_id, ligand_id, interaction_type, count.
     """
-    from qpocket.core.extraction import get_plip_interactions
+    from qpocket.pipelines.pockets import get_plip_interactions
 
     df_jobs = pd.read_csv(jobs_csv)
     actives_jobs = df_jobs[df_jobs["molecule_type"] == "actives"]

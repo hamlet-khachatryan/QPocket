@@ -1,5 +1,5 @@
 """
-Tests for pure utility functions in qpocket/utils.py.
+Tests for geometry, pocket, hdf5 and workspace helpers.
 No external process mocking needed; all functions are pure Python / numpy.
 """
 from __future__ import annotations
@@ -18,7 +18,8 @@ from qpocket.core.geometry import (
     crop_pocket_by_interactions,
 )
 from qpocket.core.pocket import extract_pdb_block, is_residue_ligand
-from qpocket.utils import save_to_hdf5_ascii, setup_directory_hierarchy
+from qpocket.io.hdf5 import save_interactions as save_to_hdf5_ascii
+from qpocket.io.workspace import setup_directory_hierarchy
 
 
 # ---------------------------------------------------------------------------

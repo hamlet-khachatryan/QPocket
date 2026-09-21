@@ -18,7 +18,7 @@ import pytest
 
 from qpocket.core import structure as st
 from qpocket.io import structures as sio
-from qpocket.core.alignment import process_structure
+from qpocket.pipelines.align import process_structure
 
 SEQ = "ACDEFGHIKLMNPQRSTVWY"
 THREE = {"A": "ALA", "C": "CYS", "D": "ASP", "E": "GLU", "F": "PHE", "G": "GLY",

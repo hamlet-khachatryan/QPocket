@@ -17,7 +17,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from qpocket.pipelines.api import CONF_PATH
+from qpocket.pipelines.stages import CONF_PATH
 from qpocket.cli import cli
 from qpocket.config import QPocketConfig, _plain
 

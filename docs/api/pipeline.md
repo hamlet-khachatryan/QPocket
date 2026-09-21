@@ -1,6 +1,6 @@
 # Pipeline API
 
-::: qpocket.pipelines.api
+::: qpocket.pipelines.stages
     options:
       members:
         - load_qpocket_config
@@ -9,3 +9,11 @@
         - align_structures
         - clean_structures
         - extract_pockets_and_interactions
+
+## Orchestrators
+
+::: qpocket.pipelines.run
+
+::: qpocket.pipelines.pdb_query
+
+::: qpocket.pipelines.fragment_screen

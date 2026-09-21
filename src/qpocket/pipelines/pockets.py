@@ -40,11 +40,12 @@ from qpocket.core.pocket import (
     select_cavity_by_bbox,
     select_cavity_by_centroid,
 )
+from qpocket.core import pocket
+from qpocket.core.features import pocket_features
+from qpocket.io import tables, tools
 from qpocket.io.tables import write_points as _write_coords_csv
 from qpocket.io.tools import plip_interactions as get_plip_interactions  # noqa: F401 (re-exported)
 from qpocket.io.tools import run_cavfind
-from qpocket.utils import get_interacting_residues_coords
-from qpocket.pipelines.stages import featurize
 
 warnings.simplefilter("ignore", PDBConstructionWarning)
 
@@ -56,6 +57,103 @@ warnings.simplefilter("ignore", PDBConstructionWarning)
 # ---------------------------------------------------------------------------
 # Reference pocket bounding box
 # ---------------------------------------------------------------------------
+
+def featurize(csv_path: Path, pdb_path: Path) -> None:
+    """Write featurized.csv beside a pocket's point cloud.
+
+    Args:
+        csv_path: Pocket point cloud CSV (x, y, z).
+        pdb_path: Cleaned protein PDB.
+    """
+    with start_action(action_type="process_point_cloud"):
+        if not csv_path.exists():
+            log_message(message_type="error", error="CSV missing", path=str(csv_path))
+            return
+
+        try:
+            table, points = tables.read_point_table(csv_path)
+        except Exception as e:
+            log_message(message_type="error", error=f"CSV read error: {e}")
+            return
+
+        try:
+            data = tools.structure_data(pdb_path)
+        except Exception as e:
+            log_message(message_type="fatal_error", error=str(e))
+            return
+
+        out_path = csv_path.with_name("featurized.csv")
+        log_message(message_type="status", msg="Running APBS")
+        apbs = tools.apbs_potential(pdb_path, points)
+        log_message(message_type="status", msg="Running CP/LP and geometry")
+        tables.write_featurized(out_path, table, pocket_features(points, data, apbs))
+        log_message(message_type="success", output=str(out_path))
+
+
+def get_ref_ligand_centroid(
+    ref_pdb_path: Path,
+    ligand_resname: str,
+    search_chains: Optional[List[str]] = None,
+) -> Optional[np.ndarray]:
+    """Centroid of the reference ligand in a PDB file.
+
+    Args:
+        ref_pdb_path: Aligned reference PDB.
+        ligand_resname: Ligand residue name.
+        search_chains: Chains to search, or None for all.
+
+    Returns:
+        (3,) centroid, or None if absent or unreadable.
+    """
+    try:
+        structure = PDBParser(QUIET=True).get_structure("reference", ref_pdb_path)
+        centroid = pocket.ligand_centroid(structure, ligand_resname, search_chains)
+        if centroid is None:
+            searched = search_chains if search_chains is not None else "all chains"
+            log_message(
+                message_type="warning",
+                stage="get_ref_ligand_centroid",
+                warning=(
+                    f"ligand {ligand_resname!r} not found in {searched} "
+                    f"of {ref_pdb_path}"
+                ),
+            )
+        return centroid
+    except Exception as e:
+        log_message(
+            message_type="error",
+            stage="get_ref_ligand_centroid",
+            error=str(e),
+        )
+        return None
+
+
+def get_interacting_residues_coords(
+    pdb_path: Path,
+    interactions_list: List[str],
+    padding: float = 5.0,
+) -> Optional[np.ndarray]:
+    """Atom coordinates of the residues named in interaction strings.
+
+    Args:
+        pdb_path: Aligned PDB.
+        interactions_list: Strings like "TYR_795_A|H-bond Donor".
+        padding: Unused; kept for callers.
+
+    Returns:
+        (M, 3) coordinates, or None.
+    """
+    try:
+        atoms = PandasPdb().read_pdb(str(pdb_path)).df["ATOM"]
+        return pocket.interacting_residue_coords(atoms, interactions_list)
+    except Exception as e:
+        log_message(
+            message_type="error",
+            stage="get_interacting_residues_coords",
+            error=str(e),
+        )
+        return None
+
 
 def extract_reference_pocket_bbox(
     pdb_path: Path,

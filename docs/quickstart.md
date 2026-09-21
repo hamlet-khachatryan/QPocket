@@ -58,7 +58,7 @@ qpocket run --config qpocket_config.yaml
 ## Python API
 
 ```python
-from qpocket.pipelines.api import run_qpocket_pipeline
+from qpocket.pipelines.stages import run_qpocket_pipeline
 
 run_qpocket_pipeline(
     pdb_id="6HP0",

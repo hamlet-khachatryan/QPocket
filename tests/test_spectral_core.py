@@ -77,7 +77,7 @@ def test_geodesic_and_scaler_caches_round_trip(tmp_path):
 
 
 def test_compute_geodesic_still_writes_the_same_cache(tmp_path):
-    from qpocket.core.spectral_distance import compute_geodesic
+    from qpocket.pipelines.distance import compute_geodesic
     rng = np.random.default_rng(5)
     df = pd.DataFrame(rng.random((60, 3)) * 6, columns=list("xyz")); df["apbs"] = rng.random(60)
     df.to_csv(tmp_path / "featurized.csv", index=False)
