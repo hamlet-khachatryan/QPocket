@@ -91,8 +91,13 @@ qpocket = "qpocket_pipeline.cli:cli"
 qpocket-screen = "qpocket_screen.cli:screen_cli"
 
 [tool.setuptools.packages.find]
-where = ["src",]
+# src/plip is the vendored PLIP *repository*; its package is src/plip/plip.
+# Searching src/plip as a second root makes `import plip` find that package.
+where = ["src", "src/plip"]
 include = ["qpocket_pipeline*", "cavitomix*", "qpocket_screen*", "plip*"]
+# Only directories with an __init__.py count. The pyproject default (true)
+# would also take the vendored repository folder src/plip as a package.
+namespaces = false
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.yml", "*.txt", "*.md"]
