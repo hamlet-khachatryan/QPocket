@@ -22,8 +22,26 @@ from qpocket.constants import (
 )
 from qpocket.types import StructureData
 
-# Maximum distance (Å) beyond which atom contributions to CP/LP are negligible.
-_CP_LP_CUTOFF = 12.0
+# Atom contributions to cp/lp fade out smoothly between these distances (A). A hard
+# cutoff let a 0.001 A coordinate change add or drop an atom's whole contribution.
+_CP_LP_R_ON = 10.0
+_CP_LP_R_OFF = 12.0
+_CP_LP_CUTOFF = _CP_LP_R_OFF  # the KD-tree pre-filter radius; exact, since weights are 0 beyond
+
+
+def switching(r: np.ndarray, r_on: float = _CP_LP_R_ON, r_off: float = _CP_LP_R_OFF) -> np.ndarray:
+    """Weight 1 below r_on, 0 from r_off, C2-smooth (smootherstep) in between.
+
+    Args:
+        r: Distances (A).
+        r_on: Where switching starts.
+        r_off: Where the weight reaches zero.
+
+    Returns:
+        Weights, same shape as r.
+    """
+    x = np.clip((r - r_on) / (r_off - r_on), 0.0, 1.0)
+    return 1.0 - x ** 3 * (10.0 - 15.0 * x + 6.0 * x ** 2)
 
 #: Column order of featurized.csv after x, y, z.
 FEATURE_COLUMNS = ("apbs", "cp", "lp", "h_donor", "h_acceptor", "aromatic")
@@ -228,19 +246,22 @@ def calculate_cp_lp(
 
     dist_sq = cdist(points, atom_coords_f, metric="sqeuclidean").astype(FP_DTYPE)
 
-    # Charge potential: sum(q / r²) × 557 (kcal/mol·e units approximation)
+    dist = np.sqrt(dist_sq)
+    weight = switching(dist).astype(dist.dtype)
+
+    # Charge potential: sum(s(r) q / r²) × 557 (kcal/mol·e units approximation)
     with np.errstate(divide="ignore", invalid="ignore"):
         chg_matrix = np.divide(chg_f[np.newaxis, :], dist_sq)
         chg_matrix[np.isinf(chg_matrix)] = 0.0
-    cp = np.sum(chg_matrix, axis=1) * 557.0
+    cp = np.sum(chg_matrix * weight, axis=1) * 557.0
 
-    # Lipophilic potential: Fermi-weighted hydrophobicity
-    dist = np.sqrt(dist_sq)
+    # Lipophilic potential: Fermi-weighted hydrophobicity, switched off with distance
     fermi_wt = np.zeros_like(dist)
     num = math.exp(-c1 * c2) + 1.0
     exponent = c1 * (dist - c2)
     mask = exponent < 50.0
     fermi_wt[mask] = num / (np.exp(exponent[mask]) + 1.0)
+    fermi_wt *= weight
     sum_wt = np.maximum(np.sum(fermi_wt, axis=1), 1.0e-6)
     lp = np.sum(fermi_wt * hp_f[np.newaxis, :], axis=1) / sum_wt
 

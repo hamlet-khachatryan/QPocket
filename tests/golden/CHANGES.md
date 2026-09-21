@@ -67,3 +67,22 @@ cleaning.allowed_cofactors) now get them in cp/lp as well as APBS.
 Only the two structures carrying the CME cofactor change (7KG6, 7KFP): ion repair had
 re-added CME's alpha carbon (atom CA) as a +2 calcium ion, which shifted APBS. The
 bug predates the refactor; it now matches ions by residue name.
+
+## Task 16 — smooth 10–12 Å switching for cp/lp
+
+- `spectral_distance_matrix`: max |delta| 26.8 (max value 767)
+- `shape_distance_matrix`: max |delta| 0 (max value 0.035)
+- `feature_distance_matrix`: max |delta| 14.3 (max value 409)
+- 4A0D featurized: cp 15.7, lp 0.001
+- 4B1H featurized: cp 22.6, lp 0.000553
+- 4B1J featurized: cp 22.1, lp 0.00054
+- 6HMM featurized: cp 12.6, lp 0.000839
+- 6O9Y featurized: cp 11.1, lp 0.00111
+- 7KFP featurized: cp 17.1, lp 0.000878
+- 7KG6 featurized: cp 16.1, lp 0.00103
+- clusters: ARI 1.000, 0 structure(s) moved
+
+cp changes by design (median 10% of its range on 7KG6): atoms 10-12 A away now fade out
+instead of counting fully. lp barely moves. Robustness, 7KG6 protein jittered by
++-0.0005 A (PDB rounding) over 20 trials: max |cp change| 2.71 with the hard cutoff,
+0.04 with switching.
