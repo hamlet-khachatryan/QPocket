@@ -14,7 +14,7 @@ from typing import Dict, List
 import pandas as pd
 from eliot import log_message
 
-from qpocket_screen.config import DockingConfig, SlurmConfig
+from qpocket.screen.config import DockingConfig, SlurmConfig
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ def generate_docking_jobs_csv(
             each a list of ligand PDBQT paths.
         box_params: Parsed box parameters from :func:`parse_vina_box`.
         results_dir: Directory in which output PDBQT files will be placed.
-        docking_cfg: :class:`~qpocket_screen.config.DockingConfig`.
+        docking_cfg: :class:`~qpocket.screen.config.DockingConfig`.
 
     Returns:
         DataFrame with columns: job_id, protein_pdbqt, ligand_pdbqt,

@@ -18,10 +18,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from qpocket_pipeline import api, tasks
-from qpocket_pipeline.api import ExtractionContext, StructureResult
-from qpocket_pipeline.config import QPocketConfig
-from qpocket_pipeline.tasks import TaskError, resolve_pdb_id, run_task
+from qpocket.pipelines import api, tasks
+from qpocket.pipelines.api import ExtractionContext, StructureResult
+from qpocket.config import QPocketConfig
+from qpocket.pipelines.tasks import TaskError, resolve_pdb_id, run_task
 
 PDB_IDS = ["1ABC", "2DEF", "3GHI"]
 

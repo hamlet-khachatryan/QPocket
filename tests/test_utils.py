@@ -1,5 +1,5 @@
 """
-Tests for pure utility functions in qpocket_pipeline/utils.py.
+Tests for pure utility functions in qpocket/utils.py.
 No external process mocking needed; all functions are pure Python / numpy.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ import h5py
 import numpy as np
 import pytest
 
-from qpocket_pipeline.utils import (
+from qpocket.utils import (
     calculate_sequence_identity,
     check_overlap,
     create_bounding_box_pocket,

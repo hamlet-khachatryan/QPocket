@@ -16,8 +16,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from qpocket_pipeline.processing import structure as st
-from qpocket_pipeline.processing.alignment import process_structure
+from qpocket.core import structure as st
+from qpocket.core.alignment import process_structure
 
 SEQ = "ACDEFGHIKLMNPQRSTVWY"
 THREE = {"A": "ALA", "C": "CYS", "D": "ASP", "E": "GLU", "F": "PHE", "G": "GLY",
@@ -402,10 +402,10 @@ def test_no_module_imports_pymol():
     import subprocess
     import sys
 
-    import qpocket_pipeline
+    import qpocket
 
     modules = sorted(
-        m.name for m in pkgutil.walk_packages(qpocket_pipeline.__path__, "qpocket_pipeline.")
+        m.name for m in pkgutil.walk_packages(qpocket.__path__, "qpocket.")
     )
     script = (
         "import sys, importlib\n"
@@ -413,7 +413,7 @@ def test_no_module_imports_pymol():
         f"for name in {modules!r}:\n"
         "    importlib.import_module(name)\n"
     )
-    src = str(Path(qpocket_pipeline.__file__).resolve().parents[1])
+    src = str(Path(qpocket.__file__).resolve().parents[1])
     done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                           env={**__import__("os").environ, "PYTHONPATH": src})
     assert done.returncode == 0, done.stderr[-800:]

@@ -3,19 +3,19 @@
 The notebook at ``experiments/visualize_qpocket.py`` is the user interface; the
 logic it needs lives here, where pytest can reach it:
 
-:mod:`~qpocket_pipeline.viz.pdb_text`
+:mod:`~qpocket.viz.pdb_text`
     Reading structures and emitting column-correct PDB for a browser viewer.
-:mod:`~qpocket_pipeline.viz.ramps`
+:mod:`~qpocket.viz.ramps`
     Per-feature colour ramps, and the gradient maths a legend has to mirror.
-:mod:`~qpocket_pipeline.viz.embed`
+:mod:`~qpocket.viz.embed`
     Two-dimensional layouts of a precomputed distance matrix.
-:mod:`~qpocket_pipeline.viz.cluster`
+:mod:`~qpocket.viz.cluster`
     Re-clustering that matrix, and comparing the result to the stored labels.
-:mod:`~qpocket_pipeline.viz.pockets`
+:mod:`~qpocket.viz.pockets`
     Exact set arithmetic over pocket clouds: occupancy, overlap, field differences.
-:mod:`~qpocket_pipeline.viz.runs`
+:mod:`~qpocket.viz.runs`
     Finding run directories, including one the user types in.
-:mod:`~qpocket_pipeline.viz.assets`
+:mod:`~qpocket.viz.assets`
     The vendored 3Dmol.js build, for pages that must work offline.
 
 Nothing here imports plotly, marimo, umap or scikit-learn at module level, so the
@@ -24,7 +24,7 @@ package stays importable without the notebook's own dependencies.
 
 from __future__ import annotations
 
-from qpocket_pipeline.viz.assets import (
+from qpocket.viz.assets import (
     THREEDMOL_CDN,
     THREEDMOL_SHA256,
     THREEDMOL_VERSION,
@@ -32,7 +32,7 @@ from qpocket_pipeline.viz.assets import (
     threedmol_script,
     threedmol_source,
 )
-from qpocket_pipeline.viz.cluster import (
+from qpocket.viz.cluster import (
     AFFINITY,
     CRITERIA,
     LINKAGES,
@@ -51,8 +51,8 @@ from qpocket_pipeline.viz.cluster import (
     silhouette,
     threshold_for_clusters,
 )
-from qpocket_pipeline.viz.cluster import METHODS as CLUSTER_METHODS
-from qpocket_pipeline.viz.embed import (
+from qpocket.viz.cluster import METHODS as CLUSTER_METHODS
+from qpocket.viz.embed import (
     METHODS as EMBED_METHODS,
     Embedding,
     MDSResult,
@@ -61,7 +61,7 @@ from qpocket_pipeline.viz.embed import (
     max_perplexity,
     symmetrise,
 )
-from qpocket_pipeline.viz.pdb_text import (
+from qpocket.viz.pdb_text import (
     BACKBONE,
     ProteinModels,
     atom_line,
@@ -74,7 +74,7 @@ from qpocket_pipeline.viz.pdb_text import (
     read_protein_atoms,
     residue_model,
 )
-from qpocket_pipeline.viz.pockets import (
+from qpocket.viz.pockets import (
     LATTICE_TOLERANCE,
     FieldDifference,
     Occupancy,
@@ -90,7 +90,7 @@ from qpocket_pipeline.viz.pockets import (
     volume_table,
     voxel_index,
 )
-from qpocket_pipeline.viz.runs import (
+from qpocket.viz.runs import (
     RUNS_ENV,
     Location,
     default_roots,
@@ -100,7 +100,7 @@ from qpocket_pipeline.viz.runs import (
     resolve_location,
     run_label,
 )
-from qpocket_pipeline.viz.ramps import (
+from qpocket.viz.ramps import (
     DEFAULT_RAMP,
     FEATURE_RAMP,
     N_STOPS,

@@ -32,9 +32,10 @@ from typing import Dict, List, Optional
 import pandas as pd
 from eliot import log_message, start_action
 
-from qpocket_pipeline import api, utils
-from qpocket_pipeline.config import QPocketConfig
-from qpocket_pipeline.distance_logic.spectral_distance import (
+from qpocket import utils
+from qpocket.pipelines import api
+from qpocket.config import QPocketConfig
+from qpocket.core.spectral_distance import (
     compute_geodesic,
     compute_spectral_distance_matrix,
     pocket_manifest,

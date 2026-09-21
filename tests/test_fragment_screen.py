@@ -13,8 +13,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from qpocket_pipeline import api
-from qpocket_pipeline.api import (
+from qpocket.pipelines import api
+from qpocket.pipelines.api import (
     _fragment_input_paths,
     _load_fragment_screen_structures,
     reference_id,
@@ -22,7 +22,7 @@ from qpocket_pipeline.api import (
     sanitise_id,
     should_renumber,
 )
-from qpocket_pipeline.config import FragmentScreenParams, QPocketConfig, validate_config
+from qpocket.config import FragmentScreenParams, QPocketConfig, validate_config
 
 
 def structure(path, text="ATOM      1  N   ALA A   1       0.000   0.000   0.000\n"):

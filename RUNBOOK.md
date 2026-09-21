@@ -37,11 +37,11 @@ so a transfer made from git would lack them unless they were committed first:
 
 ```bash
 cd "$QP_HOME"
-for f in src/qpocket_pipeline/conf/config.yaml \
-         src/qpocket_pipeline/distance_logic/clustering.py \
-         src/qpocket_pipeline/slurm.py src/qpocket_pipeline/tasks.py \
-         src/qpocket_pipeline/doctor.py src/qpocket_pipeline/viz/runs.py \
-         src/qpocket_pipeline/processing/structure.py \
+for f in src/qpocket/conf/config.yaml \
+         src/qpocket/core/clustering.py \
+         src/qpocket/pipelines/slurm.py src/qpocket/pipelines/tasks.py \
+         src/qpocket/doctor.py src/qpocket/viz/runs.py \
+         src/qpocket/core/structure.py \
          scripts/qpocket_doctor.py experiments/visualize_qpocket.py; do
   [ -f "$f" ] && echo "ok       $f" || echo "MISSING  $f"
 done

@@ -15,20 +15,20 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
 
-from qpocket_pipeline.config import (
+from qpocket.config import (
     QPocketConfig,
     SlurmConfig,
     fill_defaults,
     migrate_legacy,
     validate_config,
 )
-from qpocket_pipeline import utils
-from qpocket_pipeline.distance_logic.spectral_distance import compute_spectral_distance_matrix
-from qpocket_pipeline import pdb_query
-from qpocket_pipeline.processing import alignment
-from qpocket_pipeline.processing import cleaning
-from qpocket_pipeline.processing import extraction
-from qpocket_pipeline.processing import structure as st
+from qpocket import utils
+from qpocket.core.spectral_distance import compute_spectral_distance_matrix
+from qpocket import pdb_query
+from qpocket.core import alignment
+from qpocket.core import cleaning
+from qpocket.core import extraction
+from qpocket.core import structure as st
 
 def _find_conf_dir() -> Path:
     """Locate the Hydra config directory.
@@ -44,8 +44,8 @@ def _find_conf_dir() -> Path:
     Raises:
         FileNotFoundError: If neither location has one, naming both.
     """
-    packaged = Path(__file__).parent / "conf"
-    repo_root = Path(__file__).resolve().parents[2] / "conf"
+    packaged = Path(__file__).resolve().parents[1] / "conf"
+    repo_root = Path(__file__).resolve().parents[3] / "conf"
 
     for candidate in (packaged, repo_root):
         if (candidate / "config.yaml").exists():
@@ -55,7 +55,7 @@ def _find_conf_dir() -> Path:
         "Q-Pocket's default configuration was not found. Looked in:\n"
         f"  {packaged / 'config.yaml'}\n"
         f"  {repo_root / 'config.yaml'}\n"
-        "In a git checkout this usually means src/qpocket_pipeline/conf/ was "
+        "In a git checkout this usually means src/qpocket/conf/ was "
         "never committed."
     )
 
@@ -77,7 +77,7 @@ def load_qpocket_config(
             (e.g. ``["mode=fragment_screen", "reference.pdb_id=6HP0"]``).
 
     Returns:
-        Fully validated :class:`~qpocket_pipeline.config.QPocketConfig`.
+        Fully validated :class:`~qpocket.config.QPocketConfig`.
 
     Raises:
         ValueError: If the assembled configuration fails validation.

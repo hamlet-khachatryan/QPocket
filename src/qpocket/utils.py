@@ -16,7 +16,7 @@ from eliot import log_message, start_action
 from rdkit import Chem
 from scipy.spatial.distance import cdist
 
-from qpocket_pipeline.global_vars import HET_TO_REMOVE
+from qpocket.constants import HET_TO_REMOVE
 
 warnings.simplefilter("ignore", PDBConstructionWarning)
 

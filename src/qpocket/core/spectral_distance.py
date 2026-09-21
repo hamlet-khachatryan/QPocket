@@ -15,8 +15,8 @@ import pandas as pd
 from eliot import log_message, start_action
 from joblib import Parallel, delayed
 
-from qpocket_pipeline.config import QPocketConfig
-from qpocket_pipeline.distance_logic import clustering as cl
+from qpocket.config import QPocketConfig
+from qpocket.core import clustering as cl
 
 
 def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path, None]:

@@ -1,4 +1,4 @@
-"""Tests for qpocket_pipeline.viz.pdb_text.
+"""Tests for qpocket.viz.pdb_text.
 
 The point of these is that a browser viewer parses PDB by fixed columns, so a
 record that is one character off is silently misread rather than rejected. Every
@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qpocket_pipeline.viz.pdb_text import (
+from qpocket.viz.pdb_text import (
     BACKBONE,
     atom_line,
     bbox_corners,

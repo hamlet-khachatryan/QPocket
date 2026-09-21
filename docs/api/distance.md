@@ -2,7 +2,7 @@
 
 ## Spectral distance
 
-::: qpocket_pipeline.distance_logic.spectral_distance
+::: qpocket.core.spectral_distance
     options:
       members:
         - compute_geodesic
@@ -12,7 +12,7 @@
 
 ## Featurisation
 
-::: qpocket_pipeline.distance_logic.features
+::: qpocket.core.features
     options:
       members:
         - featurize
@@ -23,7 +23,7 @@
 
 ## Distance utilities
 
-::: qpocket_pipeline.distance_logic.distance_utils
+::: qpocket.core.distance_utils
     options:
       members:
         - get_structure_data

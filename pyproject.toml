@@ -63,7 +63,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Dependencies of the explorer notebook (experiments/visualize_qpocket.py). The
-# qpocket_pipeline.viz package itself needs nothing beyond numpy and scipy.
+# qpocket.viz package itself needs nothing beyond numpy and scipy.
 viz = [
   "marimo>=0.23; python_version >= '3.10'",  # marimo dropped 3.9
   "plotly>=5.18",
@@ -77,12 +77,12 @@ Repository = "https://github.com/hamlet-khachatryan/QPocket"
 "Bug Tracker" = "https://github.com/hamlet-khachatryan/QPocket/issues"
 
 [project.scripts]
-qpocket = "qpocket_pipeline.cli:cli"
-qpocket-screen = "qpocket_screen.cli:screen_cli"
+qpocket = "qpocket.cli:cli"
+qpocket-screen = "qpocket.screen.cli:screen_cli"
 
 [tool.uv.build-backend]
 module-root = "src"
-module-name = ["qpocket_pipeline", "qpocket_screen", "cavitomix", "plip"]
+module-name = ["qpocket", "cavitomix", "plip"]
 
 [dependency-groups]
 dev = [

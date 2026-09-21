@@ -14,7 +14,7 @@ import h5py
 import numpy as np
 import pytest
 
-from qpocket_pipeline.distance_logic.interaction_stats import (
+from qpocket.core.interaction_stats import (
     MIN_TESTABLE,
     build_profile,
     engaged_set,

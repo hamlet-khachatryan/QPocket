@@ -1,4 +1,4 @@
-"""Tests for qpocket_pipeline.viz.ramps.
+"""Tests for qpocket.viz.ramps.
 
 Two things matter here. A signed feature must read warm-for-negative whatever
 values happen to be in view, and the legend must be coloured by the same maths
@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qpocket_pipeline.viz.ramps import (
+from qpocket.viz.ramps import (
     FEATURE_RAMP,
     PERCEPTUAL_SCHEME,
     RAMP_TABLES,

@@ -1,6 +1,6 @@
 # Utilities
 
-::: qpocket_pipeline.utils
+::: qpocket.utils
     options:
       members:
         - setup_directory_hierarchy

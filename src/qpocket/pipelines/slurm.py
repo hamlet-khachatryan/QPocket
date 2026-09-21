@@ -85,7 +85,7 @@ def active_stages(cfg) -> Tuple[StageSpec, ...]:
     """The stages to generate, honouring ``slurm.split_apbs_stage``.
 
     Args:
-        cfg: A loaded :class:`~qpocket_pipeline.config.QPocketConfig`.
+        cfg: A loaded :class:`~qpocket.config.QPocketConfig`.
 
     Returns:
         Stage specs in dependency order. ``apbs`` is present only when it has

@@ -1,6 +1,6 @@
 # Configuration
 
-::: qpocket_pipeline.config
+::: qpocket.config
     options:
       members:
         - QPocketConfig

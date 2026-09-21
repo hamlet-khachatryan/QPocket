@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from qpocket_pipeline.viz.runs import (
+from qpocket.viz.runs import (
     default_roots,
     find_runs,
     is_complete,

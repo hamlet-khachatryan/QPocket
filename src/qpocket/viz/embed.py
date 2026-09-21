@@ -27,7 +27,7 @@ import numpy as np
 
 # ``symmetrise`` is a distance-matrix utility, not an embedding one, so it lives
 # in the layer the pipeline can import. Re-exported here for the notebook.
-from qpocket_pipeline.distance_logic.clustering import symmetrise
+from qpocket.core.clustering import symmetrise
 
 #: Layout names, in the order a UI should offer them.
 METHODS: Tuple[str, ...] = ("PCA (classical MDS)", "UMAP", "t-SNE")

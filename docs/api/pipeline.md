@@ -1,6 +1,6 @@
 # Pipeline API
 
-::: qpocket_pipeline.api
+::: qpocket.pipelines.api
     options:
       members:
         - load_qpocket_config

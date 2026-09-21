@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qpocket_pipeline.utils import find_auxiliary_chain
-from qpocket_pipeline.config import (
+from qpocket.utils import find_auxiliary_chain
+from qpocket.config import (
     AlignParams,
     ReferenceParams,
     validate_config,

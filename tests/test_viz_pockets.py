@@ -1,4 +1,4 @@
-"""Tests for qpocket_pipeline.viz.pockets.
+"""Tests for qpocket.viz.pockets.
 
 Everything here rests on one claim: pocket clouds share a lattice, so comparing
 them is set arithmetic rather than interpolation. These tests check that claim's
@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qpocket_pipeline.viz.pockets import (
+from qpocket.viz.pockets import (
     LATTICE_TOLERANCE,
     NOISE_FLOOR,
     field_difference,

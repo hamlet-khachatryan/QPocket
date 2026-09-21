@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qpocket_pipeline.distance_logic.clustering import (
+from qpocket.core.clustering import (
     AFFINITY,
     KMEDOIDS,
     best_k_by_silhouette,

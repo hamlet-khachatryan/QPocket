@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from qpocket_pipeline.viz.cluster import affinity_labels, compare_labelings
+from qpocket.viz.cluster import affinity_labels, compare_labelings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

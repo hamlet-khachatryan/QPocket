@@ -31,7 +31,7 @@ from eliot import log_message, start_action
 from plip.structure.preparation import PDBComplex
 
 from cavitomix.cavfind import CavFind
-from qpocket_pipeline.utils import (
+from qpocket.utils import (
     check_overlap,
     compute_pocket_bounding_box,
     compute_volumetric_overlap,
@@ -42,7 +42,7 @@ from qpocket_pipeline.utils import (
     get_smiles_from_pdb_block,
     is_residue_ligand,
 )
-from qpocket_pipeline.distance_logic.features import featurize
+from qpocket.core.features import featurize
 
 warnings.simplefilter("ignore", PDBConstructionWarning)
 

@@ -11,7 +11,7 @@ from typing import Optional
 
 from eliot import log_message, start_action
 
-from qpocket_screen.config import ScreenConfig, load_screen_config, validate_screen_config
+from qpocket.screen.config import ScreenConfig, load_screen_config, validate_screen_config
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ def run_qpocket_screen_prepare(
     """Prepare all inputs for a docking campaign.
 
     Steps:
-    1. Load and validate :class:`~qpocket_screen.config.ScreenConfig`.
+    1. Load and validate :class:`~qpocket.screen.config.ScreenConfig`.
     2. Resolve directory layout from *pipeline_workdir*.
     3. Generate ``vina_box.txt``.
     4. If ``virtual_screening``: download ChEMBL data + generate decoys.
@@ -60,7 +60,7 @@ def run_qpocket_screen_prepare(
         actives_smi = screening_dir / "actives.smi"
 
         # 3. Vina box
-        from qpocket_screen.binding_box import extract_vina_box
+        from qpocket.screen.binding_box import extract_vina_box
 
         box_dirs = {
             "ligands": structures_dir / "extracted_ligands",
@@ -77,7 +77,7 @@ def run_qpocket_screen_prepare(
         # 4. Decoys (virtual_screening only)
         decoys_smi: Optional[Path] = None
         if cfg.run_mode == "virtual_screening":
-            from qpocket_screen.generate_decoys import download_chembl_dataset, generate_decoys_lude
+            from qpocket.screen.generate_decoys import download_chembl_dataset, generate_decoys_lude
 
             chembl_dir = download_chembl_dataset(cfg.chembl.url, cfg.chembl.local_dir)
             generate_decoys_lude(actives_smi, chembl_dir, screening_dir, cfg.decoy)
@@ -85,14 +85,14 @@ def run_qpocket_screen_prepare(
             decoys_smi = candidate if candidate.exists() else None
 
         # 5. Prepare proteins
-        from qpocket_screen.preparation import prepare_all_proteins
+        from qpocket.screen.preparation import prepare_all_proteins
 
         prepared_pdb_ids = prepare_all_proteins(screening_dir, representatives_csv, master_csv, cfg)
         proteins_dir = screening_dir / "proteins"
         protein_pdbqts = [proteins_dir / f"{pdb_id}.pdbqt" for pdb_id in prepared_pdb_ids]
 
         # 6. Prepare ligands
-        from qpocket_screen.preparation import prepare_all_ligands
+        from qpocket.screen.preparation import prepare_all_ligands
 
         lig_result = prepare_all_ligands(
             screening_dir, actives_smi, decoys_smi, cfg, mode=cfg.run_mode
@@ -107,7 +107,7 @@ def run_qpocket_screen_prepare(
             ligands["decoys"] = [decoys_dir / f"{lid}.pdbqt" for lid in lig_result["decoys"]]
 
         # 7. Build docking_jobs.csv
-        from qpocket_screen.docking import generate_docking_jobs_csv, parse_vina_box
+        from qpocket.screen.docking import generate_docking_jobs_csv, parse_vina_box
 
         box_params = parse_vina_box(vina_box_txt) if vina_box_txt.exists() else {}
         results_dir = screening_dir / "results"
@@ -118,7 +118,7 @@ def run_qpocket_screen_prepare(
         jobs_df.to_csv(jobs_csv_path, index=False)
 
         # 8. Submission scripts
-        from qpocket_screen.docking import write_local_script, write_slurm_script
+        from qpocket.screen.docking import write_local_script, write_slurm_script
 
         write_local_script(jobs_csv_path, cfg.docking, screening_dir / "run_docking.sh")
         write_slurm_script(jobs_csv_path, cfg.docking, cfg.slurm, screening_dir / "run_docking.slurm")
@@ -158,7 +158,7 @@ def run_qpocket_screen_analyze(
     """Run post-docking analysis on a completed screening campaign.
 
     Steps:
-    1. Load and validate :class:`~qpocket_screen.config.ScreenConfig`.
+    1. Load and validate :class:`~qpocket.screen.config.ScreenConfig`.
     2. Collect docking scores from ``screening/results/``.
     3. RMSD analysis vs. crystal ligands.
     4. Enrichment metrics (``virtual_screening`` mode only).
@@ -177,7 +177,7 @@ def run_qpocket_screen_analyze(
         base = Path(pipeline_workdir).resolve()
         screening_dir = base / "screening"
 
-        from qpocket_screen.analysis import run_full_analysis
+        from qpocket.screen.analysis import run_full_analysis
 
         run_full_analysis(screening_dir, base, cfg)
 

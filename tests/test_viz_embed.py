@@ -1,4 +1,4 @@
-"""Tests for qpocket_pipeline.viz.embed and the vendored viewer asset.
+"""Tests for qpocket.viz.embed and the vendored viewer asset.
 
 Layouts of a distance matrix are easy to get subtly wrong: a flipped eigenvector
 makes the same data look different between runs, and a parameter scikit-learn
@@ -13,7 +13,7 @@ import hashlib
 import numpy as np
 import pytest
 
-from qpocket_pipeline.viz.assets import (
+from qpocket.viz.assets import (
     THREEDMOL_CDN,
     THREEDMOL_SHA256,
     THREEDMOL_VERSION,
@@ -21,7 +21,7 @@ from qpocket_pipeline.viz.assets import (
     threedmol_script,
     threedmol_source,
 )
-from qpocket_pipeline.viz.embed import (
+from qpocket.viz.embed import (
     METHODS,
     PCA_MDS,
     TSNE,

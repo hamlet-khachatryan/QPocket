@@ -1,4 +1,4 @@
-"""Tests for qpocket_pipeline.viz.cluster.
+"""Tests for qpocket.viz.cluster.
 
 Re-clustering is only useful if it is honest: the cut has to do what it says, the
 labels have to stay attached to the same groups as the cut moves, and the
@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qpocket_pipeline.viz.cluster import (
+from qpocket.viz.cluster import (
     AFFINITY,
     COUNT,
     CRITERIA,

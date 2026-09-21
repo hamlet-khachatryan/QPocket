@@ -21,7 +21,7 @@ from molvs import Standardizer
 
 from openbabel import openbabel
 
-from qpocket_screen.config import DecoyConfig
+from qpocket.screen.config import DecoyConfig
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +194,7 @@ def generate_decoys_lude(
         actives_path: Path to ``actives.smi`` (tab-separated).
         chembl_dir: Directory containing ChEMBL ``.txt`` / ``.csv`` files.
         output_dir: Directory in which to write ``decoys.smi``.
-        config: :class:`~qpocket_screen.config.DecoyConfig` instance.
+        config: :class:`~qpocket.screen.config.DecoyConfig` instance.
     """
     log_message(message_type="decoy_gen_start", actives=str(actives_path))
 
@@ -319,7 +319,7 @@ def run_screening_prep(
     decoy_config: dict,
 ) -> None:
     """Orchestrates Vina Box Extraction + Decoy Generation."""
-    from qpocket_screen.binding_box import extract_vina_box
+    from qpocket.screen.binding_box import extract_vina_box
 
     BASE = Path(base_dir)
     DIRS = {

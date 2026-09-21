@@ -10,8 +10,8 @@ REPO = Path(__file__).resolve().parents[1]
 REQUIRED = [
     "plip/structure/preparation.py",
     "cavitomix/cavfind.py",
-    "qpocket_pipeline/conf/config.yaml",
-    "qpocket_pipeline/viz/vendor/3Dmol-2.4.2.min.js",
+    "qpocket/conf/config.yaml",
+    "qpocket/viz/vendor/3Dmol-2.4.2.min.js",
 ]
 
 

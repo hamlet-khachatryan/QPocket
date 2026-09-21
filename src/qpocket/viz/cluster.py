@@ -14,7 +14,7 @@ own cluster count, which is why its knob is a preference percentile rather than 
 The hierarchical alternatives take a ``k`` or a cut height and will disagree with
 the stored grouping substantially, since they optimise something else entirely.
 
-The algorithms themselves live in :mod:`qpocket_pipeline.distance_logic.clustering`,
+The algorithms themselves live in :mod:`qpocket.core.clustering`,
 because the pipeline needs them too and must not import a presentation package.
 This module is the notebook's view of them: :data:`METHODS` is the picker's list,
 which deliberately omits k-medoids.
@@ -22,7 +22,7 @@ which deliberately omits k-medoids.
 
 from __future__ import annotations
 
-from qpocket_pipeline.distance_logic.clustering import (
+from qpocket.core.clustering import (
     AFFINITY,
     ALL_METHODS,
     COUNT,

@@ -14,11 +14,11 @@ from scipy.spatial.distance import cdist
 
 from eliot import log_message, start_action
 
-from qpocket_pipeline.distance_logic.distance_utils import (
+from qpocket.core.distance_utils import (
     get_structure_data,
     repair_pqr_with_missing_ions,
 )
-from qpocket_pipeline.global_vars import FP_DTYPE, SIGMA_AROM, SIGMA_HBOND, SIGMA_HYDRO
+from qpocket.constants import FP_DTYPE, SIGMA_AROM, SIGMA_HBOND, SIGMA_HYDRO
 
 try:
     from apbs_binary import popen_apbs

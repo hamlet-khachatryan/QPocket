@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from qpocket_pipeline.config import (
+from qpocket.config import (
     BoundingBoxParams,
     DistanceConfig,
     FragmentScreenParams,
@@ -53,7 +53,7 @@ def _single(**kw) -> DistanceConfig:
     ever applied to affinity propagation, so they now live on the stage that
     selects it.
     """
-    from qpocket_pipeline.config import ClusteringParams, StageClustering
+    from qpocket.config import ClusteringParams, StageClustering
 
     dm = _dm()
     dm.clustering = ClusteringParams(single=StageClustering(method="affinity", **kw))

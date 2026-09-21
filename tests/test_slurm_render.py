@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from qpocket_pipeline import slurm
-from qpocket_pipeline.config import QPocketConfig
-from qpocket_pipeline.slurm import (
+from qpocket.pipelines import slurm
+from qpocket.config import QPocketConfig
+from qpocket.pipelines.slurm import (
     STAGES_BY_NAME,
     active_stages,
     chunk_bounds,

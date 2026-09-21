@@ -6,8 +6,8 @@ QPocket exposes a clean Python API for programmatic use.
 
 | Module | Description |
 |---|---|
-| [`qpocket_pipeline.api`](pipeline.md) | Top-level pipeline orchestration |
-| [`qpocket_pipeline.config`](config.md) | Configuration dataclasses and validation |
-| [`qpocket_pipeline.utils`](utils.md) | Utility functions (geometry, I/O, sequence analysis) |
-| [`qpocket_pipeline.distance_logic`](distance.md) | Spectral fingerprinting and distance matrix |
-| [`qpocket_pipeline.processing`](processing.md) | Alignment, cleaning, and pocket extraction |
+| [`qpocket.pipelines.api`](pipeline.md) | Top-level pipeline orchestration |
+| [`qpocket.config`](config.md) | Configuration dataclasses and validation |
+| [`qpocket.utils`](utils.md) | Utility functions (geometry, I/O, sequence analysis) |
+| [`qpocket.core`](distance.md) | Spectral fingerprinting and distance matrix |
+| [`qpocket.core`](processing.md) | Alignment, cleaning, and pocket extraction |

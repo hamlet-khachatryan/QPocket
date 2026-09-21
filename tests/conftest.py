@@ -181,7 +181,7 @@ def sample_dx(tmp_path) -> Path:
 
 def make_config(**overrides):
     """Returns a valid QPocketConfig, optionally overriding nested fields."""
-    from qpocket_pipeline.config import (
+    from qpocket.config import (
         AlignParams,
         BoundingBoxParams,
         CleanParams,

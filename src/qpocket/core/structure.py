@@ -37,7 +37,7 @@ from Bio.PDB.Residue import Residue
 from Bio.PDB.Structure import Structure
 from scipy.spatial import cKDTree
 
-from qpocket_pipeline.global_vars import STANDARD_AA, THREE_TO_ONE_MAPPING
+from qpocket.constants import STANDARD_AA, THREE_TO_ONE_MAPPING
 
 #: Residue names PyMOL's ``solvent`` selection removes.
 WATER = frozenset({"HOH", "WAT", "H2O", "DOD", "D2O", "SOL", "TIP", "TIP3", "TIP4", "SPC"})

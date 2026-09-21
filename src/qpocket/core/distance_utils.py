@@ -5,7 +5,7 @@ from typing import Tuple, List
 from subprocess import Popen, PIPE
 from Bio.PDB import PDBParser, is_aa
 from eliot import start_action, log_message
-from qpocket_pipeline.global_vars import (
+from qpocket.constants import (
     FP_DTYPE,
     GET_ATOMIC_HYDROPHOBICITY,
     DONOR_RESIDUES,

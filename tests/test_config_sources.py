@@ -17,9 +17,9 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from qpocket_pipeline.api import CONF_PATH
-from qpocket_pipeline.cli import cli
-from qpocket_pipeline.config import QPocketConfig, _plain
+from qpocket.pipelines.api import CONF_PATH
+from qpocket.cli import cli
+from qpocket.config import QPocketConfig, _plain
 
 REPO_YAML = Path("conf/config.yaml")
 PACKAGED_YAML = CONF_PATH / "config.yaml"
@@ -128,4 +128,4 @@ def test_every_setting_is_documented(schema_keys):
 @pytest.mark.skipif(not DOCS.exists(), reason="docs not present")
 def test_the_docs_point_at_the_config_the_code_loads():
     """They named the repo-root copy, which nothing reads."""
-    assert "src/qpocket_pipeline/conf/config.yaml" in DOCS.read_text()
+    assert "src/qpocket/conf/config.yaml" in DOCS.read_text()

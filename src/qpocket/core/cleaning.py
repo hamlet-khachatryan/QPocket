@@ -1,6 +1,6 @@
 """Structure cleaning: keeps protein residues and allowed cofactors.
 
-Biopython rather than PyMOL; see :mod:`qpocket_pipeline.processing.structure`.
+Biopython rather than PyMOL; see :mod:`qpocket.core.structure`.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Optional
 
 from eliot import log_message, start_action
 
-from qpocket_pipeline.processing import structure as st
+from qpocket.core import structure as st
 
 
 def clean_structure(

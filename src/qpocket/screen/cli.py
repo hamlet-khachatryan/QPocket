@@ -57,7 +57,7 @@ def prepare(
     box_padding: float | None,
 ) -> None:
     """Prepare proteins, ligands, and docking job scripts."""
-    from qpocket_screen.api import run_qpocket_screen_prepare
+    from qpocket.screen.api import run_qpocket_screen_prepare
 
     overrides: dict = {"run_mode": run_mode, "docking": {"engine": engine}}
 
@@ -107,7 +107,7 @@ def analyze(
     bedroc_alpha: float | None,
 ) -> None:
     """Analyse docking results and write CSV reports."""
-    from qpocket_screen.api import run_qpocket_screen_analyze
+    from qpocket.screen.api import run_qpocket_screen_analyze
 
     overrides: dict = {}
     if run_mode:

@@ -10,7 +10,7 @@ qpocket validate qpocket_config.yaml      # check it without running anything
 ```
 
 The defaults the pipeline actually loads live in
-`src/qpocket_pipeline/conf/config.yaml`, which `qpocket init` copies verbatim, so
+`src/qpocket/conf/config.yaml`, which `qpocket init` copies verbatim, so
 the two cannot disagree. Individual settings can also be overridden on the
 command line (`qpocket run --sigma 8.0`).
 

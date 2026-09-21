@@ -18,7 +18,7 @@ from eliot import log_message, start_action
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from qpocket_screen.config import DockingConfig, PreparationConfig, ScreenConfig
+from qpocket.screen.config import DockingConfig, PreparationConfig, ScreenConfig
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ def prepare_protein_pdbqt(
     Args:
         input_pdb: Path to the cleaned protein PDB file.
         output_pdbqt: Desired output path.
-        cfg: :class:`~qpocket_screen.config.PreparationConfig`.
+        cfg: :class:`~qpocket.screen.config.PreparationConfig`.
 
     Returns:
         ``True`` on success, ``False`` if preparation failed.
@@ -173,7 +173,7 @@ def prepare_ligand_pdbqt(
     Args:
         smiles: Input SMILES string.
         output_pdbqt: Desired output path.
-        cfg: :class:`~qpocket_screen.config.PreparationConfig`.
+        cfg: :class:`~qpocket.screen.config.PreparationConfig`.
         ligand_id: Short identifier used in log messages.
 
     Returns:
@@ -351,7 +351,7 @@ def prepare_all_proteins(
         screening_dir: Root screening directory (``screening/proteins/`` is created here).
         representatives_csv: Path to ``metadata/selected_representatives.csv``.
         master_csv: Path to ``metadata/master.csv``.
-        cfg: Full :class:`~qpocket_screen.config.ScreenConfig`.
+        cfg: Full :class:`~qpocket.screen.config.ScreenConfig`.
 
     Returns:
         List of PDB IDs that were successfully prepared.
@@ -415,7 +415,7 @@ def prepare_all_ligands(
         actives_smi: Path to ``screening/actives.smi``.
         decoys_smi: Path to ``screening/decoys.smi``; only used when
             *mode* is ``"virtual_screening"``.
-        cfg: Full :class:`~qpocket_screen.config.ScreenConfig`.
+        cfg: Full :class:`~qpocket.screen.config.ScreenConfig`.
         mode: ``"cross_docking"`` or ``"virtual_screening"``.
 
     Returns:

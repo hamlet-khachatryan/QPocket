@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 from click.testing import CliRunner
 
-from qpocket_pipeline import cli as cli_mod
-from qpocket_pipeline.cli import cli
+from qpocket import cli as cli_mod
+from qpocket.cli import cli
 
 
 @pytest.fixture
@@ -171,7 +171,7 @@ def config_file(tmp_path):
 
 
 def effective(captured, config_file):
-    from qpocket_pipeline.api import load_qpocket_config
+    from qpocket.pipelines.api import load_qpocket_config
 
     return load_qpocket_config(
         config_path=str(config_file),

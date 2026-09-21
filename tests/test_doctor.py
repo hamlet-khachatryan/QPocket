@@ -14,6 +14,7 @@ because the machine that matters cannot be reached from here to try it on.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -151,7 +152,7 @@ def test_the_probe_parses_as_python_3_4():
 def test_the_probe_imports_nothing_outside_the_standard_library():
     """It has to run before `pip install`, so it cannot need the package."""
     source = (Path(probe.__file__)).read_text()
-    assert "qpocket_pipeline" not in source
+    assert not re.search(r"^\s*(from|import)\s+qpocket\b", source, re.M)
 
 
 # --- the smoke tests the installed doctor runs -----------------------------
@@ -174,7 +175,7 @@ def _is_mocked(name, attribute):
                     reason="apbs_binary is mocked by conftest")
 def test_apbs_actually_runs():
     """An import proves nothing: apbs-binary patches its library path on macOS only."""
-    from qpocket_pipeline.doctor import run_apbs_smoke_test
+    from qpocket.doctor import run_apbs_smoke_test
 
     seconds, detail = run_apbs_smoke_test()
     assert "grid" in detail
@@ -183,7 +184,7 @@ def test_apbs_actually_runs():
 @pytest.mark.skipif(_is_mocked("apbs_binary", "popen_apbs"),
                     reason="toolchain is mocked by conftest")
 def test_pdb2pqr_actually_runs():
-    from qpocket_pipeline.doctor import run_pdb2pqr_smoke_test
+    from qpocket.doctor import run_pdb2pqr_smoke_test
 
     seconds, detail = run_pdb2pqr_smoke_test()
     assert "bytes" in detail

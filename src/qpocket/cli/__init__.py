@@ -12,7 +12,7 @@ import click
 from pathlib import Path
 from typing import Optional, List
 
-from qpocket_pipeline.api import run_qpocket_pipeline
+from qpocket.pipelines.api import run_qpocket_pipeline
 
 
 @click.group()
@@ -421,7 +421,7 @@ def validate(config_file: str):
     \b
     qpocket validate config.yaml
     """
-    from qpocket_pipeline.api import load_qpocket_config
+    from qpocket.pipelines.api import load_qpocket_config
 
     click.echo(f"Validating configuration file: {config_file}")
 
@@ -455,7 +455,7 @@ def init(output: str):
     qpocket init
     qpocket run --config qpocket_config.yaml
     """
-    from qpocket_pipeline.api import CONF_PATH
+    from qpocket.pipelines.api import CONF_PATH
 
     source = CONF_PATH / "config.yaml"
     if not source.exists():
@@ -493,8 +493,8 @@ def init(output: str):
 
 def _load_run(config: Optional[str], workdir: Optional[str], overrides: List[str]):
     """Load a config and its directory map, the way every slurm command needs."""
-    from qpocket_pipeline.api import load_qpocket_config, run_id as api_run_id
-    from qpocket_pipeline import utils
+    from qpocket.pipelines.api import load_qpocket_config, run_id as api_run_id
+    from qpocket import utils
 
     if workdir:
         overrides = list(overrides) + [f"paths.workdir={Path(workdir).resolve()}"]
@@ -534,8 +534,8 @@ def slurm_generate(config: str, workdir: Optional[str], stages: Optional[str],
     qpocket slurm generate --config experiments/PARG.yaml
     bash <workdir>/<PDB>/slurm/submit_all.sh
     """
-    from qpocket_pipeline import slurm as slurm_mod
-    from qpocket_pipeline import tasks
+    from qpocket.pipelines import slurm as slurm_mod
+    from qpocket.pipelines import tasks
 
     cfg, dirs = _load_run(config, workdir, [])
 
@@ -593,7 +593,7 @@ def slurm_status(config: str, workdir: Optional[str]):
     Artifacts rather than sacct, so it keeps answering after the accounting
     database has rotated the jobs away.
     """
-    from qpocket_pipeline import slurm as slurm_mod
+    from qpocket.pipelines import slurm as slurm_mod
 
     cfg, dirs = _load_run(config, workdir, [])
     rows = slurm_mod.stage_progress(cfg, dirs)
@@ -658,7 +658,7 @@ def doctor(config: Optional[str], smoke: bool):
 
     # --- platform ---------------------------------------------------------
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
         from qpocket_doctor import fmt, glibc_version  # type: ignore
 
         libc = f", glibc {fmt(glibc_version())}" if platform.system() == "Linux" else ""
@@ -693,7 +693,7 @@ def doctor(config: Optional[str], smoke: bool):
 
     # --- APBS actually running -------------------------------------------
     if smoke:
-        from qpocket_pipeline import doctor as checks
+        from qpocket import doctor as checks
 
         for label, probe in (
             ("pdb2pqr runs", checks.run_pdb2pqr_smoke_test),
@@ -708,7 +708,7 @@ def doctor(config: Optional[str], smoke: bool):
     # --- the configuration ------------------------------------------------
     if config:
         try:
-            from qpocket_pipeline.api import load_qpocket_config
+            from qpocket.pipelines.api import load_qpocket_config
 
             load_qpocket_config(config_path=config)
             ok("config loads", config)
@@ -744,8 +744,8 @@ def _make_task_command(name: str):
     @click.option("--force", is_flag=True, default=False,
                   help="Recompute even if the output already exists.")
     def command(config, workdir, manifest, index, force):
-        from qpocket_pipeline import tasks
-        from qpocket_pipeline.api import _configure_logging
+        from qpocket.pipelines import tasks
+        from qpocket.pipelines.api import _configure_logging
 
         cfg, dirs = _load_run(config, workdir, [])
 

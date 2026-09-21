@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from qpocket_pipeline.distance_logic.spectral_distance import (
+from qpocket.core.spectral_distance import (
     compute_geodesic,
     compute_spectral_fingerprint,
     data_processing_spectral,

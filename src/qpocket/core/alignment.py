@@ -1,6 +1,6 @@
 """Structure alignment against a reference, and UniProt-based renumbering.
 
-Uses :mod:`qpocket_pipeline.processing.structure` (Biopython) rather than PyMOL,
+Uses :mod:`qpocket.core.structure` (Biopython) rather than PyMOL,
 which has no pip wheel for most cluster operating systems. The superposition
 reproduces ``cmd.align``; on the 20 PARG structures every atom lands within
 0.0016 A of where PyMOL placed it.
@@ -16,9 +16,9 @@ from Bio import Align
 from Bio.PDB.Residue import Residue
 from eliot import log_message, start_action
 
-from qpocket_pipeline.processing import structure as st
-from qpocket_pipeline.utils import calculate_sequence_identity, find_auxiliary_chain
-from qpocket_pipeline.global_vars import FASTA_UNIPROT_TEMPLATE
+from qpocket.core import structure as st
+from qpocket.utils import calculate_sequence_identity, find_auxiliary_chain
+from qpocket.constants import FASTA_UNIPROT_TEMPLATE
 
 def fetch_uniprot_sequence(uniprot_id: str) -> Optional[str]:
     """Fetches the canonical amino acid sequence for a UniProt accession.
@@ -216,7 +216,7 @@ def process_structure_interface(
     3. Fit on the primary chain and move the **whole structure**, so every
        auxiliary chain arrives in the reference frame.
     4. For each reference auxiliary chain, find the matching target chain via
-       :func:`~qpocket_pipeline.utils.find_auxiliary_chain` (sequence filter,
+       :func:`~qpocket.utils.find_auxiliary_chain` (sequence filter,
        then C-alpha centroid proximity to separate homodimer copies).
     5. Skip the structure if *require_all_chains* and any auxiliary chain is
        unmatched.

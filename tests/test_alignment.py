@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from qpocket_pipeline.processing.alignment import (
+from qpocket.core.alignment import (
     fetch_uniprot_sequence,
     generate_renumbering_map,
 )
@@ -31,7 +31,7 @@ def _make_resp(status_code: int = 200, text: str = ">SP|P12345|PROT\nMKTAYIAKQ\n
 
 def test_fetch_uniprot_sequence_success():
     resp = _make_resp(200, ">SP|P12345|PROT\nMKTAY\nIAKQ\n")
-    with patch("qpocket_pipeline.processing.alignment.requests.get", return_value=resp):
+    with patch("qpocket.core.alignment.requests.get", return_value=resp):
         seq = fetch_uniprot_sequence("P12345")
     assert seq == "MKTAYIAKQ"
 
@@ -40,7 +40,7 @@ def test_fetch_uniprot_sequence_non_200_returns_none():
     resp = MagicMock()
     resp.raise_for_status.side_effect = Exception("404")
     with patch(
-        "qpocket_pipeline.processing.alignment.requests.get",
+        "qpocket.core.alignment.requests.get",
         side_effect=Exception("network error"),
     ):
         seq = fetch_uniprot_sequence("P99999")
@@ -49,14 +49,14 @@ def test_fetch_uniprot_sequence_non_200_returns_none():
 
 def test_fetch_uniprot_sequence_single_line_fasta():
     resp = _make_resp(200, ">SP|P12345|PROT\nACGTACGT\n")
-    with patch("qpocket_pipeline.processing.alignment.requests.get", return_value=resp):
+    with patch("qpocket.core.alignment.requests.get", return_value=resp):
         seq = fetch_uniprot_sequence("P12345")
     assert seq == "ACGTACGT"
 
 
 def test_fetch_uniprot_sequence_multiline():
     resp = _make_resp(200, ">SP|P12345|PROT\nAAAA\nBBBB\nCCCC\n")
-    with patch("qpocket_pipeline.processing.alignment.requests.get", return_value=resp):
+    with patch("qpocket.core.alignment.requests.get", return_value=resp):
         seq = fetch_uniprot_sequence("P12345")
     assert seq == "AAAABBBBCCCC"
 
