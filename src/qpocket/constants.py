@@ -61,41 +61,67 @@ ACCEPTOR_RESIDUES: Set[str] = {
 AROMATIC_RESIDUES: Set[str] = {"PHE", "TYR", "TRP", "HIS", "HIP", "HIE", "HID"}
 
 
-def GET_ATOMIC_HYDROPHOBICITY(atom_name: str, res_name: str) -> float:
-    """Hydrophobicity score of a PDB atom, used by the lipophilic potential.
+#: Metal ions scored as charged (-2) by the lipophilic potential.
+METALS = frozenset({"MG", "ZN", "CA", "FE", "MN", "CO", "CU", "NI"})
+
+# pdb2pqr's AMBER names encode protonation; the scores are per standard residue.
+_AMBER_TO_STANDARD = {"ASH": "ASP", "GLH": "GLU", "LYN": "LYS", "CYX": "CYS", "CYM": "CYS",
+                      "HID": "HIS", "HIE": "HIS", "HIP": "HIS"}
+
+
+def canonical_residue(res_name: str) -> str:
+    """Standard residue name for an AMBER protonation variant.
+
+    Args:
+        res_name: Residue name, e.g. HIE.
+
+    Returns:
+        Standard three-letter name, e.g. HIS.
+    """
+    name = res_name.strip().upper()
+    return _AMBER_TO_STANDARD.get(name, name)
+
+
+def element_of(atom_name: str, res_name: str) -> str:
+    """Element of an atom from its PDB name; PQR files carry no element column.
 
     Args:
         atom_name: PDB atom name.
         res_name: Residue name.
 
     Returns:
+        Upper-case element symbol.
+    """
+    name, res = atom_name.strip().upper(), res_name.strip().upper()
+    if name in METALS and (name != "CA" or res == "CA"):
+        return name  # CA is calcium only as its own residue; elsewhere it is an alpha carbon
+    if name.startswith("SE") and res == "MSE":
+        return "SE"
+    return name.lstrip("0123456789")[:1]
+
+
+def atomic_hydrophobicity(atom_name: str, res_name: str) -> float:
+    """Hydrophobicity score of a PDB atom, used by the lipophilic potential.
+
+    Args:
+        atom_name: PDB atom name.
+        res_name: Residue name; AMBER variants are accepted.
+
+    Returns:
         Score from -2 (charged) to 1 (aliphatic carbon).
     """
     if not atom_name:
         return 0.0
-    element = atom_name[0]
-    if element.isdigit() and len(atom_name) > 1:
-        element = atom_name[1]
+    element, res_name = element_of(atom_name, res_name), canonical_residue(res_name)
 
-
-    if element in {"Mg", "Zn", "Ca", "Fe", "Mn", "Co", "Cu", "Ni"}:
+    if element in METALS:
         return -2.0
 
     if element == "C":
         if atom_name == "C":
             return 0.0
-        if res_name in {"PHE", "TYR", "TRP", "HIS", "HIP", "HIE", "HID"}:
-            if atom_name in {
-                "CG",
-                "CD1",
-                "CD2",
-                "CE1",
-                "CE2",
-                "CZ",
-                "CZ2",
-                "CZ3",
-                "CH2",
-            }:
+        if res_name in {"PHE", "TYR", "TRP", "HIS"}:
+            if atom_name in {"CG", "CD1", "CD2", "CE1", "CE2", "CZ", "CZ2", "CZ3", "CH2"}:
                 return 0.5
         return 1.0
 
@@ -115,7 +141,7 @@ def GET_ATOMIC_HYDROPHOBICITY(atom_name: str, res_name: str) -> float:
             return -1.0
         return -0.5
 
-    if element == "S" or element == "SE":
+    if element in ("S", "SE"):
         return 0.6
 
     return 0.0

@@ -118,7 +118,7 @@ LP(p) = Σᵢ w_i(p) · hpᵢ / max(Σᵢ w_i(p), 1e-6)
 ```
 
 - c₁ = 1.0,  c₂ = σ_hydro = 1.5 Å
-- hpᵢ — atom hydrophobicity (look-up table in `global_vars.GET_ATOMIC_HYDROPHOBICITY`)
+- hpᵢ — atom hydrophobicity (look-up table in `qpocket.constants.atomic_hydrophobicity`)
 - The Fermi function provides a smooth, distance-decaying weight
 
 ### 1.4 H-Bond Donor Field  (`h_donor`)

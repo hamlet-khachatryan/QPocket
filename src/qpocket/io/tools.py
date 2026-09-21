@@ -13,7 +13,7 @@ from plip.structure.preparation import PDBComplex
 
 from cavitomix.cavfind import CavFind
 
-from qpocket.constants import FP_DTYPE, GET_ATOMIC_HYDROPHOBICITY, ION_PARAMS
+from qpocket.constants import FP_DTYPE, ION_PARAMS, atomic_hydrophobicity
 from qpocket.core import features as ft
 from qpocket.io.tables import parse_pqr_data
 from qpocket.types import StructureData
@@ -243,7 +243,7 @@ def structure_data(pdb_path: Path) -> StructureData:
                 )
 
             hp_list = [
-                GET_ATOMIC_HYDROPHOBICITY(an, rn)
+                atomic_hydrophobicity(an, rn)
                 for an, rn in zip(atom_names, res_names)
             ]
             all_hp = np.array(hp_list, dtype=FP_DTYPE)
