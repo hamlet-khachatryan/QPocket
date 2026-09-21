@@ -8,7 +8,7 @@ import pandas as pd
 from rdkit import Chem
 
 from qpocket.constants import HET_TO_REMOVE
-from qpocket.core.geometry import check_overlap, compute_volumetric_overlap
+from qpocket.core.geometry import check_overlap, compute_volumetric_overlap, crop_pocket_by_interactions
 
 
 def get_smiles_from_pdb_block(pdb_block: str) -> str:
@@ -272,3 +272,54 @@ def interacting_residue_coords(atoms: pd.DataFrame, interactions: List[str]) -> 
     if not coords_list:
         return None
     return np.vstack(coords_list)
+
+
+def residue_coords(structure, residues: Sequence[str], chain: Optional[str] = None) -> Optional[np.ndarray]:
+    """Atom coordinates of residues named like TYR795 (name check optional: 795).
+
+    Args:
+        structure: Parsed Biopython structure.
+        residues: Residue labels, e.g. ("TYR795", "GLU756").
+        chain: Restrict to this chain, or None for all.
+
+    Returns:
+        (M, 3) coordinates, or None if none match.
+    """
+    wanted = []
+    for label in residues:
+        name = "".join(c for c in label if c.isalpha())[:3].upper()
+        number = int("".join(c for c in label if c.isdigit()))
+        wanted.append((name, number))
+    coords = [
+        atom.get_coord()
+        for model in structure
+        for ch in model
+        if chain is None or ch.id == chain
+        for res in ch
+        if any(res.id[1] == num and (not name or res.get_resname().strip() == name) for name, num in wanted)
+        for atom in res
+    ]
+    return np.array(coords) if coords else None
+
+
+def select_cavity_by_residues(
+    cavities: Sequence[np.ndarray], residue_xyz: np.ndarray, padding: float
+) -> Optional[np.ndarray]:
+    """Points of the best-lined cavity that lie within padding of given residues.
+
+    Args:
+        cavities: Cavity point clouds.
+        residue_xyz: (M, 3) atoms of the lining residues.
+        padding: Distance cutoff (A).
+
+    Returns:
+        Cropped points of the cavity with the most such points, or None.
+    """
+    best: Optional[np.ndarray] = None
+    for coords in cavities:
+        if len(coords) == 0:
+            continue
+        cropped = crop_pocket_by_interactions(coords, residue_xyz, padding=padding)
+        if len(cropped) and (best is None or len(cropped) > len(best)):
+            best = cropped
+    return best

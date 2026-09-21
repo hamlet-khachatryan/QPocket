@@ -772,3 +772,13 @@ def _make_task_command(name: str):
 
 for _name in ("prepare", "apbs", "featurize", "collect", "geodesic", "distance"):
     task.command(_name)(_make_task_command(_name))
+
+
+from qpocket.cli.compare import (  # noqa: E402  (registered after the group exists)
+    compare_command,
+    compare_structures_command,
+    featurize_command,
+)
+
+for _command in (featurize_command, compare_command, compare_structures_command):
+    cli.add_command(_command)
