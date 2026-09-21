@@ -10,25 +10,30 @@
         - data_processing_spectral
         - compute_spectral_distance_matrix
 
-## Featurisation
+## Featurisation (pure)
 
 ::: qpocket.core.features
     options:
       members:
-        - featurize
-        - calculate_apbs_potential
+        - pocket_features
         - calculate_cp_lp
         - calculate_geometric_potentials
-        - read_dx_grid
+        - structure_sites
+        - apbs_grid_box
+        - interpolate_grid
+        - parse_dx
 
-## Distance utilities
+## External tools
 
 ::: qpocket.io.tools
-
-::: qpocket.io.tables
     options:
       members:
-        - get_structure_data
-        - repair_pqr_with_missing_ions
-        - parse_pqr_data
+        - apbs_potential
+        - structure_data
         - run_pdb2pqr
+        - repair_pqr_with_missing_ions
+        - read_dx_grid
+
+## Tables
+
+::: qpocket.io.tables
