@@ -59,15 +59,19 @@ def featurize(csv_path: Path, pdb_path: Path) -> None:
             log_message(message_type="error", error=f"CSV read error: {e}")
             return
 
+        pqr_path = csv_path.with_name("protein.pqr")
         try:
-            data = tools.structure_data(pdb_path)
+            # One pdb2pqr run per structure; reused by the Interactions second pass.
+            if not pqr_path.exists() or pqr_path.stat().st_mtime < Path(pdb_path).stat().st_mtime:
+                tools.protonate(pdb_path, pqr_path)
+            data = tools.structure_data(pdb_path, tables.read_pqr(pqr_path))
         except Exception as e:
             log_message(message_type="fatal_error", error=str(e))
             return
 
         out_path = csv_path.with_name("featurized.csv")
         log_message(message_type="status", msg="Running APBS")
-        apbs = tools.apbs_potential(pdb_path, points)
+        apbs = tools.apbs_potential(pqr_path, points)
         log_message(message_type="status", msg="Running CP/LP and geometry")
         tables.write_featurized(out_path, table, pocket_features(points, data, apbs))
         log_message(message_type="success", output=str(out_path))

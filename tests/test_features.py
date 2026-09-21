@@ -194,45 +194,30 @@ def test_calculate_geometric_potentials_multiple_targets():
 # ---------------------------------------------------------------------------
 
 
-def test_calculate_apbs_potential_pdb2pqr_failure_returns_zeros(tmp_path):
-    """When pdb2pqr fails (empty pqr), zeros are returned."""
-    from qpocket.io.tools import apbs_potential as calculate_apbs_potential
+def test_protonate_raises_when_pdb2pqr_writes_nothing(tmp_path):
+    """A failed pdb2pqr run is an error, not a silent empty PQR."""
+    from qpocket.io.tools import protonate
 
     pdb = tmp_path / "mol.pdb"
     pdb.write_text("ATOM      1  CA  ALA A   1       0.000   0.000   0.000\n")
-    points = np.zeros((3, 3), dtype=float)
-
-    # Mock pdb2pqr subprocess to produce no output pqr
     proc_mock = MagicMock()
     proc_mock.communicate.return_value = (b"", b"pdb2pqr failed")
 
     with patch("qpocket.io.tools.Popen", return_value=proc_mock):
-        with patch("qpocket.io.tools.repair_pqr_with_missing_ions"):
-            result = calculate_apbs_potential(pdb, points)
-
-    assert result.shape == (3,)
-    np.testing.assert_array_equal(result, 0.0)
+        with pytest.raises(RuntimeError):
+            protonate(pdb, tmp_path / "out.pqr")
 
 
 def test_calculate_apbs_potential_missing_dx_returns_zeros(tmp_path):
     """If dx file is not produced by APBS, zeros are returned."""
     from qpocket.io.tools import apbs_potential as calculate_apbs_potential
 
-    pdb = tmp_path / "mol.pdb"
-    pdb.write_text("ATOM      1  CA  ALA A   1       0.000   0.000   0.000\n")
+    pqr = tmp_path / "mol.pqr"
+    pqr.write_text("ATOM  1  CA  ALA A 1  0.000  0.000  0.000  0.00  1.80\n")
     points = np.zeros((3, 3), dtype=float)
 
-    # Write a minimal PQR so the size check passes
-    def _fake_repair(pdb_path, pqr_path):
-        pqr_path.write_text("ATOM  1  CA  ALA A 1  0.000  0.000  0.000  0.00  1.80\n")
-
-    proc_mock = MagicMock()
-    proc_mock.communicate.return_value = (b"", b"")
-
-    with patch("qpocket.io.tools.Popen", return_value=proc_mock):
-        with patch("qpocket.io.tools.repair_pqr_with_missing_ions", side_effect=_fake_repair):
-            # apbs_binary.popen_apbs is already mocked in sys.modules
-            result = calculate_apbs_potential(pdb, points)
+    # apbs_binary.popen_apbs is mocked in sys.modules and writes no grid
+    result = calculate_apbs_potential(pqr, points)
 
     # DX file won't exist → zeros
     assert result.shape == (3,)

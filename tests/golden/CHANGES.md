@@ -30,3 +30,22 @@ gave different APBS values on identical code:
 No change on PARG: cleaning removes metal ions and the PQR behind cp/lp has none yet.
 The fix matters once Task 14 feeds the ion-repaired PQR to cp/lp, and for kept
 cofactors (heme iron, selenomethionine).
+
+## Task 14 — one pdb2pqr run per structure, ions repaired for every feature
+
+- `spectral_distance_matrix`: max |delta| 0 (max value 768)
+- `shape_distance_matrix`: max |delta| 0 (max value 0.035)
+- `feature_distance_matrix`: max |delta| 0 (max value 409)
+- 4A0D featurized: identical
+- 4B1H featurized: identical
+- 4B1J featurized: identical
+- 6HMM featurized: identical
+- 6O9Y featurized: identical
+- 7KFP featurized: identical
+- 7KG6 featurized: identical
+- clusters: ARI 1.000, 0 structure(s) moved
+
+Identical on PARG: cleaning strips its ions, and AMBER names map back to the same
+hydrophobicity. Each pocket now keeps protein.pqr (and pdb2pqr's protein.log); pdb2pqr
+runs once per structure instead of twice. Structures that keep ions (via
+cleaning.allowed_cofactors) now get them in cp/lp as well as APBS.

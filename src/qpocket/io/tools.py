@@ -15,8 +15,7 @@ from cavitomix.cavfind import CavFind
 
 from qpocket.constants import FP_DTYPE, ION_PARAMS, atomic_hydrophobicity
 from qpocket.core import features as ft
-from qpocket.io.tables import parse_pqr_data
-from qpocket.types import StructureData
+from qpocket.types import PQRAtoms, StructureData
 
 try:
     from apbs_binary import popen_apbs
@@ -100,24 +99,32 @@ def repair_pqr_with_missing_ions(pdb_path: Path, pqr_path: Path) -> None:
         )
 
 
-def run_pdb2pqr(pdb_path: Path, output_pqr: Path) -> None:
-    """Runs PDB2PQR via command line."""
+def protonate(pdb_path: Path, out_pqr: Path) -> Path:
+    """Protonate a protein once: pdb2pqr (PARSE charges and radii, AMBER names), then repair ions.
+
+    Args:
+        pdb_path: Cleaned protein PDB.
+        out_pqr: Where to write the PQR.
+
+    Returns:
+        out_pqr.
+
+    Raises:
+        RuntimeError: If pdb2pqr writes nothing.
+    """
     with start_action(action_type="run_pdb2pqr", pdb=str(pdb_path)):
-        cmd = [
-            "pdb2pqr",
-            "--ff=PARSE",
-            "--whitespace",
-            "--noopt",
-            str(pdb_path),
-            str(output_pqr),
-        ]
-
-        p = Popen(cmd, stdout=PIPE, stderr=PIPE)
-        out, err = p.communicate()
-
-        if not output_pqr.exists() or output_pqr.stat().st_size == 0:
+        out_pqr = Path(out_pqr).resolve()
+        cmd = ["pdb2pqr", "--ff=PARSE", "--ffout=AMBER", "--whitespace", "--noopt",
+               str(Path(pdb_path).resolve()), str(out_pqr)]
+        # cwd: pdb2pqr drops working files beside the process, not its output.
+        with tempfile.TemporaryDirectory() as scratch:
+            p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=scratch)
+            out, err = p.communicate()
+        if not out_pqr.exists() or out_pqr.stat().st_size == 0:
             log_message(message_type="error", error=err.decode(), stdout=out.decode())
             raise RuntimeError("PDB2PQR failed or produced empty file.")
+        repair_pqr_with_missing_ions(Path(pdb_path), out_pqr)
+        return out_pqr
 
 
 def read_dx_grid(dx_path: Path):
@@ -136,67 +143,48 @@ def read_dx_grid(dx_path: Path):
         return ft.parse_dx(f.read())
 
 
-def apbs_potential(pdb_path: Path, point_cloud: np.ndarray) -> np.ndarray:
-    """Electrostatic potential (kT/e) at pocket points, via pdb2pqr and APBS.
+def apbs_potential(pqr_path: Path, point_cloud: np.ndarray) -> np.ndarray:
+    """Electrostatic potential (kT/e) at pocket points, from APBS on a PQR.
 
     Args:
-        pdb_path: Cleaned protein PDB.
+        pqr_path: Protonated protein from protonate.
         point_cloud: (N, 3) pocket points.
 
     Returns:
-        (N,) potential; zeros if pdb2pqr or APBS fails.
+        (N,) potential; zeros if APBS fails.
     """
     with start_action(action_type="calculate_apbs_potential"):
+        pqr = Path(pqr_path).resolve()
+        if not pqr.exists() or pqr.stat().st_size == 0:
+            log_message(message_type="pdb2pqr_fail", error=f"missing PQR {pqr}")
+            return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+
+        prot_coords = []
+        with pqr.open() as f:
+            for line in f:
+                if line.startswith("ATOM"):
+                    try:
+                        parts = line.split()
+                        prot_coords.append([float(parts[-5]), float(parts[-4]), float(parts[-3])])
+                    except (ValueError, IndexError):
+                        pass
+        if not prot_coords:
+            return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+
+        box = ft.apbs_grid_box(np.array(prot_coords), point_cloud)
+        if box is None:
+            log_message(
+                message_type="error",
+                stage="calculate_apbs_potential",
+                error="NaN in grid center/dims",
+            )
+            return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+
+        # cwd=temp_dir: APBS always writes an io.mc beside the process, which
+        # concurrent workers would otherwise share.
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_dir = Path(temp_dir_str)
             base = temp_dir / "mol"
-            pqr = base.with_suffix(".pqr")
-
-            cmd = [
-                "pdb2pqr",
-                "--ff=PARSE",
-                "--whitespace",
-                "--noopt",
-                str(pdb_path),
-                str(pqr),
-            ]
-            # cwd=temp_dir: both pdb2pqr and APBS drop working files beside the
-            # process, not beside their output. APBS in particular always writes
-            # an io.mc, which several concurrent workers would otherwise append
-            # to in whatever directory the job was launched from.
-            p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=str(temp_dir))
-            out, err = p.communicate()
-
-            repair_pqr_with_missing_ions(pdb_path, pqr)
-
-            if not pqr.exists() or pqr.stat().st_size == 0:
-                log_message(message_type="pdb2pqr_fail", error=err.decode())
-                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
-
-            prot_coords = []
-            with pqr.open() as f:
-                for line in f:
-                    if line.startswith("ATOM"):
-                        try:
-                            parts = line.split()
-                            prot_coords.append(
-                                [float(parts[-5]), float(parts[-4]), float(parts[-3])]
-                            )
-                        except (ValueError, IndexError):
-                            pass
-
-            if not prot_coords:
-                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
-
-            box = ft.apbs_grid_box(np.array(prot_coords), point_cloud)
-            if box is None:
-                log_message(
-                    message_type="error",
-                    stage="calculate_apbs_potential",
-                    error="NaN in grid center/dims",
-                )
-                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
-
             apbs_in = base.with_suffix(".in")
             with apbs_in.open("w") as f:
                 f.write(ft.apbs_input(pqr, base, *box))
@@ -207,7 +195,6 @@ def apbs_potential(pdb_path: Path, point_cloud: np.ndarray) -> np.ndarray:
             dx_file = base.with_suffix(".dx")
             if not dx_file.exists():
                 dx_file = base.with_suffix(".pot.dx")
-
             if not dx_file.exists():
                 log_message(message_type="apbs_binary_fail", stderr=err.decode())
                 return np.zeros(len(point_cloud), dtype=FP_DTYPE)
@@ -220,41 +207,26 @@ def apbs_potential(pdb_path: Path, point_cloud: np.ndarray) -> np.ndarray:
                 return np.zeros(len(point_cloud), dtype=FP_DTYPE)
 
 
-def structure_data(pdb_path: Path) -> StructureData:
+def structure_data(pdb_path: Path, pqr: PQRAtoms) -> StructureData:
     """Charges, hydrophobicity and pharmacophore sites of a protein.
 
     Args:
-        pdb_path: Cleaned protein PDB.
+        pdb_path: Cleaned protein PDB (for donor, acceptor and ring geometry).
+        pqr: Its protonated atoms from read_pqr.
 
     Returns:
         The protein's featurisation inputs.
     """
     with start_action(action_type="extract_structure_data", pdb=str(pdb_path)):
-        with tempfile.NamedTemporaryFile(suffix=".pqr", delete=False) as tmp:
-            pqr_path = Path(tmp.name)
-
-        try:
-            run_pdb2pqr(pdb_path, pqr_path)
-            all_coords, all_chg, atom_names, res_names = parse_pqr_data(pqr_path)
-
-            if len(all_coords) == 0:
-                log_message(
-                    message_type="warning", msg="PQR parsed 0 atoms! Check PDB format."
-                )
-
-            hp_list = [
-                atomic_hydrophobicity(an, rn)
-                for an, rn in zip(atom_names, res_names)
-            ]
-            all_hp = np.array(hp_list, dtype=FP_DTYPE)
-
-        finally:
-            if pqr_path.exists():
-                pqr_path.unlink()
-
+        if len(pqr.coords) == 0:
+            log_message(message_type="warning", msg="PQR parsed 0 atoms! Check PDB format.")
+        hydrophobicity = np.array(
+            [atomic_hydrophobicity(an, rn) for an, rn in zip(pqr.atom_names, pqr.res_names)],
+            dtype=FP_DTYPE,
+        )
         structure = PDBParser(QUIET=True).get_structure("prot", str(pdb_path))
         donors, acceptors, aromatics = ft.structure_sites(structure)
-        return StructureData(all_coords, all_chg, all_hp, donors, acceptors, aromatics)
+        return StructureData(pqr.coords, pqr.charges, hydrophobicity, donors, acceptors, aromatics)
 
 
 def run_cavfind(pdb_path: Path, name: str) -> List[np.ndarray]:

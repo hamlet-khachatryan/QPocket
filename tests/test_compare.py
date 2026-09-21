@@ -67,9 +67,11 @@ def _pdb(tmp_path):
 
 
 def _fake_tools(monkeypatch):
-    from qpocket.io import tools
+    from qpocket.io import tables, tools
     monkeypatch.setattr(tools, "run_cavfind", lambda path, name: [_blob((50, 50, 50)), _blob((15, 4, 0), seed=2)])
-    monkeypatch.setattr(tools, "structure_data", lambda path: StructureData(
+    monkeypatch.setattr(tools, "protonate", lambda pdb, out: Path(out).write_text("") or Path(out))
+    monkeypatch.setattr(tables, "read_pqr", lambda path: None)
+    monkeypatch.setattr(tools, "structure_data", lambda path, pqr: StructureData(
         np.zeros((3, 3)), np.ones(3), np.ones(3), np.zeros((0, 3)), np.zeros((1, 3)), np.zeros((0, 3))))
     monkeypatch.setattr(tools, "apbs_potential", lambda path, pts: np.zeros(len(pts)))
 

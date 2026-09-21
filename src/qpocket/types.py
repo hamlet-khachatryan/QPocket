@@ -134,3 +134,25 @@ class ComparisonResult(NamedTuple):
         import pandas as pd
 
         return pd.DataFrame(getattr(self, kind), index=list(self.ids), columns=list(self.ids))
+
+
+class PQRAtoms(NamedTuple):
+    """Atoms of a PQR file (pdb2pqr output, ions repaired).
+
+    Attributes:
+        coords: (M, 3) coordinates.
+        charges: (M,) partial charges.
+        radii: (M,) atomic radii.
+        atom_names: Atom names.
+        res_names: Residue names (AMBER protonation names).
+        chain_ids: Chain IDs; empty for repaired ions.
+        res_seqs: Residue numbers.
+    """
+
+    coords: np.ndarray
+    charges: np.ndarray
+    radii: np.ndarray
+    atom_names: list
+    res_names: list
+    chain_ids: list
+    res_seqs: list

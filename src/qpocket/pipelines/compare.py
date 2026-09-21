@@ -11,7 +11,7 @@ from qpocket.core import pocket as pk
 from qpocket.core import spectral as sp
 from qpocket.core import structure as st
 from qpocket.core.features import FEATURE_COLUMNS, pocket_features
-from qpocket.io import rcsb, tools
+from qpocket.io import rcsb, tables, tools
 from qpocket.io import structures as sio
 from qpocket.types import ComparisonResult, PocketSpec, Scaler
 
@@ -65,7 +65,9 @@ def featurize(spec: PocketSpec, workdir: Optional[Path] = None) -> Tuple[np.ndar
     if points is None:
         raise ValueError(f"{spec.structure}: no cavity matches the pocket definition")
 
-    feats = pocket_features(points, tools.structure_data(clean_path), tools.apbs_potential(clean_path, points))
+    pqr_path = tools.protonate(clean_path, workdir / f"{name}.pqr")
+    data = tools.structure_data(clean_path, tables.read_pqr(pqr_path))
+    feats = pocket_features(points, data, tools.apbs_potential(pqr_path, points))
     return points, np.column_stack([feats[c] for c in FEATURE_COLUMNS])
 
 

@@ -93,8 +93,8 @@ def element_of(atom_name: str, res_name: str) -> str:
         Upper-case element symbol.
     """
     name, res = atom_name.strip().upper(), res_name.strip().upper()
-    if name in METALS and (name != "CA" or res == "CA"):
-        return name  # CA is calcium only as its own residue; elsewhere it is an alpha carbon
+    if name in METALS and (name != "CA" or res in ("CA", "ION")):
+        return name  # CA is calcium only as an ion residue; elsewhere it is an alpha carbon
     if name.startswith("SE") and res == "MSE":
         return "SE"
     return name.lstrip("0123456789")[:1]
