@@ -215,10 +215,10 @@ def test_data_processing_spectral_runs(tmp_path):
     p2 = _write_npz(tmp_path / "b.npz", seed=2)
 
     cfg = make_config()
-    cfg.spectral_distance_matrix.global_k = 5
-    cfg.spectral_distance_matrix.sigma = 0.5
-    cfg.spectral_distance_matrix.paralell_jobs = 1
-    cfg.spectral_distance_matrix.max_points = 5000
+    cfg.distance.global_k = 5
+    cfg.distance.sigma = 0.5
+    cfg.distance.parallel_jobs = 1
+    cfg.distance.max_points = 5000
 
     result = data_processing_spectral(cfg, [p1, p2])
     assert isinstance(result, dict)
@@ -231,10 +231,10 @@ def test_data_processing_spectral_scaler_applied(tmp_path):
     p2 = _write_npz(tmp_path / "b.npz", seed=20)
 
     cfg = make_config()
-    cfg.spectral_distance_matrix.global_k = 3
-    cfg.spectral_distance_matrix.sigma = 1.0
-    cfg.spectral_distance_matrix.paralell_jobs = 1
-    cfg.spectral_distance_matrix.max_points = 5000
+    cfg.distance.global_k = 3
+    cfg.distance.sigma = 1.0
+    cfg.distance.parallel_jobs = 1
+    cfg.distance.max_points = 5000
 
     result = data_processing_spectral(cfg, [p1, p2])
     # Just verify it runs without error and returns a dict

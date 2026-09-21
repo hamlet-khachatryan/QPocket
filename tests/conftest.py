@@ -197,7 +197,7 @@ def make_config(**overrides):
         AlignParams,
         BoundingBoxParams,
         CleanParams,
-        DistanceMatrix,
+        DistanceConfig,
         FragmentScreenParams,
         IOConfig,
         PathConfig,
@@ -225,14 +225,13 @@ def make_config(**overrides):
                 input_type="csv",
                 csv_path="/some/path.csv",
                 reference_index=0,
-                interaction_padding=5.0,
             ),
         ),
         pdb_query=overrides.pop("pdb_query", QueryParams()),
         alignment=overrides.pop("alignment", AlignParams()),
         cleaning=overrides.pop("cleaning", CleanParams()),
         io=overrides.pop("io", IOConfig()),
-        spectral_distance_matrix=overrides.pop("spectral_distance_matrix", DistanceMatrix()),
+        distance=overrides.pop("distance", DistanceConfig()),
     )
     return cfg
 

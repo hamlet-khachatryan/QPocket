@@ -239,6 +239,100 @@ def test_extract_pdb_block_multiple_lines():
     assert len(lines) == 2
 
 
+class _MockResidueNamed:
+    """Residue whose atom names / resname exercise the fixed-column edge cases."""
+
+    def __init__(self, atoms, resname="LIG", res_seq=100):
+        self.resname = resname
+        self.id = ("H_LIG", res_seq, " ")
+        self._atoms = atoms
+
+    def __iter__(self):
+        return iter(self._atoms)
+
+
+# PDB fixed columns (1-indexed, inclusive) -> 0-indexed slice.
+_FIELDS = {
+    "record": (0, 6),
+    "serial": (6, 11),
+    "name": (12, 16),
+    "altloc": (16, 17),
+    "resname": (17, 20),
+    "chain": (21, 22),
+    "resseq": (22, 26),
+    "x": (30, 38),
+    "y": (38, 46),
+    "z": (46, 54),
+    "element": (76, 78),
+}
+
+
+def _field(line, key):
+    lo, hi = _FIELDS[key]
+    return line[lo:hi]
+
+
+@pytest.mark.parametrize(
+    "atom_name,element,expected_name_field",
+    [
+        ("C1", "C", " C1 "),      # 1-char element -> leading space
+        ("PA", "P", " PA "),
+        ("H011", "H", "H011"),    # 4-char name fills cols 13-16, no leading space
+        ("FE", "FE", "FE  "),     # 2-char element starts at col 13
+        ("CL21", "CL", "CL21"),
+    ],
+)
+def test_extract_pdb_block_atom_name_column(atom_name, element, expected_name_field):
+    res = _MockResidueNamed([_MockAtom(atom_name, (1.0, 2.0, 3.0), element)])
+    line = extract_pdb_block(res, "A").splitlines()[0]
+    assert _field(line, "name") == expected_name_field
+
+
+@pytest.mark.parametrize("atom_name,element", [("C1", "C"), ("H011", "H"), ("FE", "FE")])
+def test_extract_pdb_block_fields_stay_in_their_columns(atom_name, element):
+    """Every field must land in its own columns regardless of atom-name length."""
+    res = _MockResidueNamed([_MockAtom(atom_name, (29.118, -0.578, 4.478), element)])
+    line = extract_pdb_block(res, "B").splitlines()[0]
+
+    assert len(line) == 80
+    assert _field(line, "record") == "HETATM"
+    assert int(_field(line, "serial")) == 1
+    assert _field(line, "altloc") == " "
+    assert _field(line, "resname") == "LIG"
+    assert _field(line, "chain") == "B"
+    assert int(_field(line, "resseq")) == 100
+    assert float(_field(line, "x")) == pytest.approx(29.118)
+    assert float(_field(line, "y")) == pytest.approx(-0.578)
+    assert float(_field(line, "z")) == pytest.approx(4.478)
+    assert _field(line, "element").strip() == element
+
+
+def test_extract_pdb_block_parses_with_biopython(tmp_path):
+    """A 4-character atom name used to shift the line and break PDBParser."""
+    from Bio.PDB import PDBParser
+
+    res = _MockResidueNamed(
+        [
+            _MockAtom("PA", (29.118, 0.578, -4.478), "P"),
+            _MockAtom("H011", (22.773, 0.394, 1.435), "H"),
+        ]
+    )
+    path = tmp_path / "lig.pdb"
+    path.write_text(extract_pdb_block(res, "A"))
+
+    structure = PDBParser(QUIET=True).get_structure("lig", str(path))
+    atoms = list(structure.get_atoms())
+    assert [a.get_name() for a in atoms] == ["PA", "H011"]
+    assert atoms[1].get_coord()[0] == pytest.approx(22.773)
+
+
+def test_extract_pdb_block_truncates_long_resname():
+    res = _MockResidueNamed([_MockAtom("C1", (1.0, 2.0, 3.0), "C")], resname="A1B2C")
+    line = extract_pdb_block(res, "A").splitlines()[0]
+    assert _field(line, "resname") == "A1B"
+    assert len(line) == 80
+
+
 # ---------------------------------------------------------------------------
 # save_to_hdf5_ascii + roundtrip
 # ---------------------------------------------------------------------------

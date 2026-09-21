@@ -75,6 +75,7 @@ nav:
       - Fragment Screening Mode: user-guide/fragment-screening.md
       - Pocket Extraction: user-guide/pocket-extraction.md
       - Distance Analysis: user-guide/distance-analysis.md
+      - Running on a Cluster: user-guide/hpc.md
       - Output Files: user-guide/outputs.md
   - API Reference:
       - Overview: api/index.md

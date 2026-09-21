@@ -5,6 +5,9 @@ Provides command-line interface for the QPocket pipeline.
 """
 from __future__ import annotations
 
+import re
+import sys
+
 import click
 from pathlib import Path
 from typing import Optional, List
@@ -34,7 +37,7 @@ def cli():
 @click.option(
     "--mode",
     type=click.Choice(["pdb_query", "fragment_screen"]),
-    default="pdb_query",
+    default=None,
     help="Pipeline mode: pdb_query or fragment_screen"
 )
 @click.option(
@@ -43,7 +46,7 @@ def cli():
 )
 @click.option(
     "--chain-id",
-    default="A",
+    default=None,
     help="Chain identifier for reference structure"
 )
 @click.option(
@@ -58,13 +61,13 @@ def cli():
 @click.option(
     "--pocket-mode",
     type=click.Choice(["cavity_detection", "bounding_box"]),
-    default="cavity_detection",
+    default=None,
     help="Pocket identification mode"
 )
 @click.option(
     "--pocket-definition",
     type=click.Choice(["Interactions", "Solvent"]),
-    default="Solvent",
+    default=None,
     help="Pocket representation mode"
 )
 @click.option(
@@ -90,15 +93,27 @@ def cli():
     help="List of structure file paths (fragment_screen mode)"
 )
 @click.option(
+    "--input-type",
+    type=click.Choice(["csv", "paths"]),
+    default=None,
+    help="Fragment-screen input: a CSV of paths, or an explicit path list.",
+)
+@click.option(
+    "--reference-path",
+    type=click.Path(exists=True),
+    default=None,
+    help="Fragment-screen reference structure (names the run).",
+)
+@click.option(
     "--reference-index",
     type=int,
-    default=0,
+    default=None,
     help="Index of reference structure in fragment_screen mode"
 )
 @click.option(
     "--interaction-padding",
     type=float,
-    default=5.0,
+    default=None,
     help="Padding around interacting residues (Angstroms)"
 )
 @click.option(
@@ -132,8 +147,9 @@ def cli():
 )
 @click.option(
     "--renumber-residues/--no-renumber-residues",
-    default=True,
-    help="Renumber residues to match UniProt"
+    default=None,
+    help="Renumber residues to match UniProt (default: on for pdb_query, "
+         "off for fragment_screen)"
 )
 @click.option(
     "--manual-uniprot-id",
@@ -194,12 +210,16 @@ def cli():
     help="Maximum number of points for spectral clustering"
 )
 @click.option(
+    "--shape-weight",
     "--alpha",
+    "alpha",
     type=float,
     help="Weight of geometric cost in distance matrix"
 )
 @click.option(
+    "--chem-scale",
     "--beta",
+    "beta",
     type=float,
     help="Scaling factor of feature cost in distance matrix"
 )
@@ -216,6 +236,8 @@ def run(
     bbox_dimensions: tuple,
     csv_path: Optional[str],
     structure_paths: tuple,
+    input_type: Optional[str],
+    reference_path: Optional[str],
     reference_index: int,
     interaction_padding: float,
     sequence_identity: Optional[float],
@@ -289,8 +311,12 @@ def run(
         overrides.append(f"fragment_screen.structure_paths={paths_str}")
     if reference_index is not None:
         overrides.append(f"fragment_screen.reference_index={reference_index}")
-    if interaction_padding:
-        overrides.append(f"fragment_screen.interaction_padding={interaction_padding}")
+    if input_type:
+        overrides.append(f"fragment_screen.input_type={input_type}")
+    if reference_path:
+        overrides.append(f"fragment_screen.reference_path={reference_path}")
+    if interaction_padding is not None:
+        overrides.append(f"reference.interaction_padding={interaction_padding}")
 
     if workdir:
         overrides.append(f"paths.workdir={workdir}")
@@ -310,7 +336,8 @@ def run(
         overrides.append(f"pdb_query.enforce_same_uniprot=true")
 
     # Alignment parameters
-    overrides.append(f"alignment.renumber_residues={renumber_residues}")
+    if renumber_residues is not None:
+        overrides.append(f"alignment.renumber_residues={renumber_residues}")
     if manual_uniprot_id:
         overrides.append(f"alignment.manual_uniprot_id={manual_uniprot_id}")
 
@@ -320,23 +347,23 @@ def run(
 
     # Distance matrix parameters
     if geo_graph_neighbor_radius is not None:
-        overrides.append(f"spectral_distance_matrix.geo_graph_neighbor_radius={geo_graph_neighbor_radius}")
+        overrides.append(f"distance.geo_graph_neighbor_radius={geo_graph_neighbor_radius}")
     if parallel_jobs is not None:
-        overrides.append(f"spectral_distance_matrix.paralell_jobs={parallel_jobs}")
+        overrides.append(f"distance.parallel_jobs={parallel_jobs}")
     if affinity_damping is not None:
-        overrides.append(f"spectral_distance_matrix.affinity_damping={affinity_damping}")
+        overrides.append(f"distance.clustering.single.damping={affinity_damping}")
     if affinity_max_iter is not None:
-        overrides.append(f"spectral_distance_matrix.affinity_max_iter={affinity_max_iter}")
+        overrides.append(f"distance.clustering.single.max_iter={affinity_max_iter}")
     if global_k is not None:
-        overrides.append(f"spectral_distance_matrix.global_k={global_k}")
+        overrides.append(f"distance.global_k={global_k}")
     if sigma is not None:
-        overrides.append(f"spectral_distance_matrix.sigma={sigma}")
+        overrides.append(f"distance.sigma={sigma}")
     if max_points is not None:
-        overrides.append(f"spectral_distance_matrix.max_points={max_points}")
+        overrides.append(f"distance.max_points={max_points}")
     if alpha is not None:
-        overrides.append(f"spectral_distance_matrix.alpha={alpha}")
+        overrides.append(f"distance.shape_weight={alpha}")
     if beta is not None:
-        overrides.append(f"spectral_distance_matrix.beta={beta}")
+        overrides.append(f"distance.chem_scale={beta}")
     if log_format:
         overrides.append(f"io.log_format={log_format}")
     if save_intermediate:
@@ -346,10 +373,13 @@ def run(
 
     # Run pipeline via API
     click.echo("Starting QPocket pipeline...")
-    click.echo(f"Mode: {mode}")
+    click.echo(f"Mode: {mode or 'from config'}")
 
     run_qpocket_pipeline(
         qpocket_config_path=config,
+        # These were built above and then discarded, which is why --mode and
+        # every fragment-screen flag silently did nothing.
+        extra_overrides=overrides,
         pdb_id=pdb_id,
         chain_id=chain_id,
         ligand_id=ligand_id,
@@ -364,7 +394,7 @@ def run(
         manual_uniprot_id=manual_uniprot_id,
         allowed_cofactors=allowed_cofactors,
         geo_graph_neighbor_radius=geo_graph_neighbor_radius,
-        paralell_jobs=parallel_jobs,
+        parallel_jobs=parallel_jobs,
         affinity_damping=affinity_damping,
         affinity_max_iter=affinity_max_iter,
         global_k=global_k,
@@ -406,79 +436,340 @@ def validate(config_file: str):
 
 
 @cli.command()
-def init():
+@click.option(
+    "--output", "-o",
+    type=click.Path(),
+    default="qpocket_config.yaml",
+    help="Where to write the configuration file.",
+)
+def init(output: str):
     """
-    Create a template configuration file in the current directory.
+    Write a configuration file containing every setting and its default.
+
+    The file is a copy of the defaults the pipeline actually loads, so it can
+    never fall behind them. Edit it and pass it with --config.
 
     Example:
 
     \b
     qpocket init
+    qpocket run --config qpocket_config.yaml
     """
-    template = """# QPocket Configuration File
-# Generated by: qpocket init
+    from qpocket_pipeline.api import CONF_PATH
 
-mode: "pdb_query"  # "pdb_query" or "fragment_screen"
+    source = CONF_PATH / "config.yaml"
+    if not source.exists():
+        click.echo(f"Packaged defaults not found at {source}", err=True)
+        raise click.Abort()
 
-reference:
-  pdb_id: "6HP0"
-  chain_id: "A"
-  ligand_id: "LKQ"
-  pocket_definition: "Solvent"   # "Interactions" or "Solvent"
-  pocket_mode: "cavity_detection"  # "cavity_detection" or "bounding_box"
-  bounding_box:
-    center: null    # [x, y, z]
-    dimensions: null  # [dx, dy, dz]
+    target = Path(output)
+    if target.exists():
+        click.confirm(f"{target} already exists. Overwrite?", abort=True)
 
-fragment_screen:
-  input_type: "csv"   # "csv" or "paths"
-  csv_path: null
-  structure_paths: null
-  reference_index: 0
-  interaction_padding: 5.0
+    header = (
+        "# QPocket configuration\n"
+        "#\n"
+        "# Written by `qpocket init` as a copy of the packaged defaults, so every\n"
+        "# setting below is the one the pipeline would use anyway. Delete the lines\n"
+        "# you do not want to change.\n"
+        "#\n"
+        "# Required before a run: reference.pdb_id (pdb_query mode) or\n"
+        "# fragment_screen.reference_path (fragment_screen mode), and\n"
+        "# reference.ligand_id when pocket_definition is \"Interactions\".\n"
+        "\n"
+    )
+    body = source.read_text()
+    # `defaults:` is Hydra's own composition list, meaningless in a user file.
+    body = re.sub(r"^defaults:\n(  - .*\n)+\n?", "", body)
+    target.write_text(header + body)
 
-paths:
-  workdir: "./results"
-
-pdb_query:
-  sequence_identity: 1.0
-  resolution_limit: 2.5
-  min_length: 20
-  max_length: null
-  experimental_method: null
-  enforce_same_uniprot: false
-
-alignment:
-  renumber_residues: true
-  manual_uniprot_id: null
-
-cleaning:
-  allowed_cofactors: null  # e.g., "HEM|MG|CL"
-
-io:
-  log_format: "json"        # "json" or "text"
-  save_intermediate: false  # save pre-crop pocket CSV
-  compression: "gzip"       # "gzip" or "none"
-
-spectral_distance_matrix:
-  geo_graph_neighbor_radius: 2.0
-  paralell_jobs: -1
-  global_k: 100
-  sigma: 10.0
-  max_points: 5000
-  alpha: 0.85
-  beta: 12.5
-  affinity_damping: 0.9
-  affinity_max_iter: 300
-"""
-
-    config_path = Path("qpocket_config.yaml")
-    if config_path.exists():
-        click.confirm(f"{config_path} already exists. Overwrite?", abort=True)
-
-    config_path.write_text(template)
-    click.echo(f" Created configuration template: {config_path}")
+    click.echo(f"Created {target}")
+    click.echo("Edit it, then run:  qpocket run --config " + str(target))
 
 
-if __name__ == "__main__":
-    cli()
+# ---------------------------------------------------------------------------
+# SLURM
+# ---------------------------------------------------------------------------
+
+def _load_run(config: Optional[str], workdir: Optional[str], overrides: List[str]):
+    """Load a config and its directory map, the way every slurm command needs."""
+    from qpocket_pipeline.api import load_qpocket_config, run_id as api_run_id
+    from qpocket_pipeline import utils
+
+    if workdir:
+        overrides = list(overrides) + [f"paths.workdir={Path(workdir).resolve()}"]
+    cfg = load_qpocket_config(config_path=config, overrides=overrides or None)
+    dirs = utils.setup_directory_hierarchy(cfg.paths.workdir, api_run_id(cfg))
+    return cfg, dirs
+
+
+@cli.group()
+def slurm():
+    """
+    Generate and submit the pipeline as SLURM job arrays.
+
+    APBS dominates the runtime — 216s of a 366s 21-structure run — and every
+    structure is independent, so featurisation runs as one array task each.
+    """
+    pass
+
+
+@slurm.command("generate")
+@click.option("--config", "-c", type=click.Path(exists=True), required=True,
+              help="Pipeline configuration file.")
+@click.option("--workdir", type=click.Path(), default=None,
+              help="Override paths.workdir.")
+@click.option("--stages", default=None,
+              help="Comma-separated subset of stages to generate.")
+@click.option("--submit", is_flag=True, default=False,
+              help="Also run sbatch and print the job IDs.")
+def slurm_generate(config: str, workdir: Optional[str], stages: Optional[str],
+                   submit: bool):
+    """
+    Write sbatch scripts for every stage, plus a dependency-chained driver.
+
+    Example:
+
+    \b
+    qpocket slurm generate --config experiments/PARG.yaml
+    bash <workdir>/<PDB>/slurm/submit_all.sh
+    """
+    from qpocket_pipeline import slurm as slurm_mod
+    from qpocket_pipeline import tasks
+
+    cfg, dirs = _load_run(config, workdir, [])
+
+    if getattr(cfg.slurm, "split_apbs_stage", False):
+        click.echo(
+            "slurm.split_apbs_stage is not implemented yet (it needs a per-structure "
+            "APBS grid cache). Set it to false — APBS already runs as one task per "
+            "structure inside the featurize stage.",
+            err=True,
+        )
+        raise click.Abort()
+
+    wanted = [s.strip() for s in stages.split(",")] if stages else None
+    pdb_ids = tasks.manifest_ids(cfg, dirs, "featurize")
+    if not pdb_ids:
+        click.echo(
+            "No structures found. The array stages are sized from master.csv, so "
+            "run the prepare stage first:\n"
+            f"  qpocket task prepare --config {config}",
+            err=True,
+        )
+
+    scripts = slurm_mod.write_scripts(cfg, dirs, Path(config), pdb_ids, stages=wanted)
+    driver = slurm_mod.write_submit_all(cfg, dirs, scripts)
+
+    click.echo(f"Wrote {sum(len(v) for v in scripts.values())} scripts to "
+               f"{slurm_mod.slurm_dir(dirs)}")
+    for name, paths in scripts.items():
+        for path in paths:
+            click.echo(f"  {path.name}")
+    click.echo(f"\n{len(pdb_ids)} structures in the array stages.")
+
+    if not submit:
+        click.echo(f"\nReview them, then submit:\n  bash {driver}")
+        return
+
+    try:
+        submitted = slurm_mod.submit(dirs, scripts, dependency=cfg.slurm.dependency)
+    except RuntimeError as e:
+        click.echo(f"Submission failed: {e}", err=True)
+        raise click.Abort()
+    for name, ids in submitted.items():
+        click.echo(f"  {name}: {', '.join(ids) if ids else '(nothing to submit)'}")
+
+
+@slurm.command("status")
+@click.option("--config", "-c", type=click.Path(exists=True), required=True,
+              help="Pipeline configuration file.")
+@click.option("--workdir", type=click.Path(), default=None,
+              help="Override paths.workdir.")
+def slurm_status(config: str, workdir: Optional[str]):
+    """
+    Report how far each stage has got, judged by the files on disk.
+
+    Artifacts rather than sacct, so it keeps answering after the accounting
+    database has rotated the jobs away.
+    """
+    from qpocket_pipeline import slurm as slurm_mod
+
+    cfg, dirs = _load_run(config, workdir, [])
+    rows = slurm_mod.stage_progress(cfg, dirs)
+
+    click.echo(f"{'stage':<12}{'done':>12}   missing")
+    for row in rows:
+        done = f"{row['complete']}/{row['expected']}"
+        missing = ", ".join(str(m) for m in row["missing"]) or "-"
+        click.echo(f"{row['stage']:<12}{done:>12}   {missing}")
+
+
+@slurm.command("check")
+@click.option("--config", "-c", type=click.Path(exists=True), default=None,
+              help="Pipeline configuration file.")
+@click.pass_context
+def slurm_check(ctx, config: Optional[str]):
+    """
+    Verify the toolchain on a compute node. An alias for `qpocket doctor`.
+    """
+    ctx.invoke(doctor, config=config, smoke=True)
+
+
+@cli.command()
+@click.option("--config", "-c", type=click.Path(exists=True), default=None,
+              help="Also check that this configuration loads.")
+@click.option("--smoke/--no-smoke", default=True,
+              help="Run APBS on a tiny synthetic system (a few seconds).")
+def doctor(config: Optional[str], smoke: bool):
+    """
+    Check that this machine can actually run the pipeline.
+
+    Reports the platform, every import, the external tools, and -- unless
+    --no-smoke -- runs APBS for real, which is the check that matters on Linux:
+    apbs-binary only patches its library path on macOS, so a wheel that imports
+    is not proof of a binary that runs.
+
+    Run it on a compute node, not the login node; they are often different.
+
+    Example:
+
+    \b
+    qpocket doctor
+    srun -p compute qpocket doctor      # where the work will actually happen
+    """
+    import importlib
+    import platform
+    import shutil
+
+    failures: List[str] = []
+
+    def line(status: str, label: str, detail: str = "") -> None:
+        click.echo(f"  {status:<6} {label:<22} {detail}")
+
+    def ok(label, detail=""):
+        line("ok", label, detail)
+
+    def bad(label, detail=""):
+        line("FAIL", label, detail)
+        failures.append(label)
+
+    click.echo("Q-Pocket doctor\n")
+
+    # --- platform ---------------------------------------------------------
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+        from qpocket_doctor import fmt, glibc_version  # type: ignore
+
+        libc = f", glibc {fmt(glibc_version())}" if platform.system() == "Linux" else ""
+    except Exception:
+        libc = ""
+    ok("platform", f"{platform.system()} {platform.machine()}{libc}")
+    ok("python", f"{platform.python_version()} at {sys.executable}")
+
+    # --- imports ----------------------------------------------------------
+    for module, why in (
+        ("numpy", ""), ("scipy", ""), ("pandas", ""), ("sklearn", ""),
+        ("h5py", ""), ("joblib", ""), ("hydra", ""), ("omegaconf", ""),
+        ("eliot", ""), ("Bio", "biopython"), ("biopandas", ""), ("rdkit", ""),
+        ("openbabel", ""), ("pdb2pqr", ""),
+        ("pymol", ""),
+        ("apbs_binary", "featurisation"),
+    ):
+        try:
+            importlib.import_module(module)
+            ok(f"import {module}", why)
+        except Exception as e:
+            bad(f"import {module}", f"{type(e).__name__}: {e}")
+
+    # --- external tools ---------------------------------------------------
+    for tool, required in (("pdb2pqr", True), ("sbatch", False)):
+        found = shutil.which(tool)
+        if found:
+            ok(f"{tool} on PATH", found)
+        elif required:
+            bad(f"{tool} on PATH", "not found")
+        else:
+            line("warn", f"{tool} on PATH", "not found (only needed for `qpocket slurm`)")
+
+    # --- APBS actually running -------------------------------------------
+    if smoke:
+        from qpocket_pipeline import doctor as checks
+
+        for label, probe in (
+            ("pdb2pqr runs", checks.run_pdb2pqr_smoke_test),
+            ("apbs runs", checks.run_apbs_smoke_test),
+        ):
+            try:
+                seconds, detail = probe()
+                ok(label, f"{detail} in {seconds:.1f}s")
+            except Exception as e:
+                bad(label, f"{type(e).__name__}: {e}")
+
+    # --- the configuration ------------------------------------------------
+    if config:
+        try:
+            from qpocket_pipeline.api import load_qpocket_config
+
+            load_qpocket_config(config_path=config)
+            ok("config loads", config)
+        except Exception as e:
+            bad("config loads", f"{type(e).__name__}: {e}")
+
+    click.echo()
+    if failures:
+        click.echo(f"{len(failures)} check(s) failed: {', '.join(failures)}", err=True)
+        raise click.Abort()
+    click.echo("This node can run the pipeline.")
+
+
+# ---------------------------------------------------------------------------
+# Array-task entry point (invoked by the generated sbatch scripts)
+# ---------------------------------------------------------------------------
+
+@cli.group(hidden=True)
+def task():
+    """Run one pipeline stage. Invoked by the generated sbatch scripts."""
+    pass
+
+
+def _make_task_command(name: str):
+    @click.option("--config", "-c", type=click.Path(exists=True), default=None,
+                  help="Pipeline configuration file.")
+    @click.option("--workdir", type=click.Path(), default=None,
+                  help="Override paths.workdir.")
+    @click.option("--manifest", type=click.Path(), default=None,
+                  help="Manifest of PDB IDs, for a per-structure stage.")
+    @click.option("--index", type=int, default=None,
+                  help="Row of the manifest, normally SLURM_ARRAY_TASK_ID.")
+    @click.option("--force", is_flag=True, default=False,
+                  help="Recompute even if the output already exists.")
+    def command(config, workdir, manifest, index, force):
+        from qpocket_pipeline import tasks
+        from qpocket_pipeline.api import _configure_logging
+
+        cfg, dirs = _load_run(config, workdir, [])
+
+        # One log per task: the pipeline log is opened truncating, so a shared
+        # path would have every array task erase the others.
+        suffix = f"_{index}" if index is not None else ""
+        log_dir = Path(dirs["root"]) / "slurm" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        _configure_logging(cfg, log_dir / f"{name}{suffix}.log")
+
+        try:
+            tasks.run_task(name, cfg, dirs,
+                           manifest=Path(manifest) if manifest else None,
+                           index=index, force=force)
+        except tasks.TaskError as e:
+            click.echo(f"[{name}] {e}", err=True)
+            raise SystemExit(1)
+        click.echo(f"[{name}] done")
+
+    command.__name__ = f"task_{name}"
+    command.__doc__ = f"Run the {name} stage."
+    return command
+
+
+for _name in ("prepare", "apbs", "featurize", "collect", "geodesic", "distance"):
+    task.command(_name)(_make_task_command(_name))

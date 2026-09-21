@@ -87,7 +87,10 @@ def repair_pqr_with_missing_ions(pdb_path: Path, pqr_path: Path) -> None:
             injected_count += 1
 
     if injected_count > 0:
-        print(f"Repaired PQR: Injected {injected_count} missing ions.")
+        log_message(
+            message_type="pqr_repair",
+            injected_ions=injected_count,
+        )
 
 
 def run_pdb2pqr(pdb_path: Path, output_pqr: Path) -> None:

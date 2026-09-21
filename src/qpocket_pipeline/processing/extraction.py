@@ -19,6 +19,7 @@ This module provides three public functions:
 from __future__ import annotations
 
 import warnings
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -42,9 +43,27 @@ from qpocket_pipeline.utils import (
     is_residue_ligand,
 )
 from qpocket_pipeline.distance_logic.features import featurize
-from pathlib import Path
 
 warnings.simplefilter("ignore", PDBConstructionWarning)
+
+
+# ---------------------------------------------------------------------------
+# Internal helper: safe attribute access for CavFind cavity objects
+# ---------------------------------------------------------------------------
+
+def _cavity_coords(cavity) -> np.ndarray:
+    """Returns the coordinate array of a CavFind cavity object.
+
+    Centralises access to the internal ``coords`` attribute so that a single
+    change here covers all call sites if cavitomix's API evolves.
+
+    Args:
+        cavity: A cavity object returned by :class:`cavitomix.cavfind.CavFind`.
+
+    Returns:
+        ``(N, 3)`` numpy array of cavity grid point coordinates.
+    """
+    return cavity.__dict__["coords"]
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +130,8 @@ def extract_reference_pocket_bbox(
 
         target_cavity = None
         for cavity in found_cavities:
-            if check_overlap(ref_centroid, cavity.__dict__["coords"], use_majority=True):
+            coords = _cavity_coords(cavity)
+            if check_overlap(ref_centroid, coords, use_majority=True):
                 target_cavity = cavity
                 break
 
@@ -124,10 +144,9 @@ def extract_reference_pocket_bbox(
             )
             return None
 
-        coords = target_cavity.__dict__["coords"]
+        coords = _cavity_coords(target_cavity)
         n_points = len(coords)
 
-        # Persist reference pocket CSV
         pocket_csv = pocket_save_dir / "binding_site.csv"
         _write_coords_csv(coords, pocket_csv)
 
@@ -163,6 +182,7 @@ def extract_pocket_from_structure(
     observed_interactions: Optional[List[str]] = None,
     ref_pocket_bbox: Optional[Tuple[np.ndarray, np.ndarray]] = None,
     save_intermediate: bool = False,
+    force_featurize: bool = False,
 ) -> Tuple[Optional[str], str]:
     """Extracts the binding pocket and largest co-crystallised ligand.
 
@@ -200,6 +220,10 @@ def extract_pocket_from_structure(
         ref_pocket_bbox: Pre-computed reference bounding box
             ``(bbox_min, bbox_max)`` used for non-reference structures.
         save_intermediate: Persist the pre-crop pocket point cloud.
+        force_featurize: When ``True``, delete any existing ``featurized.csv``
+            and re-run featurisation.  Required for the Interactions second
+            pass to keep ``featurized.csv`` consistent with the cropped
+            ``binding_site.csv``.
 
     Returns:
         ``(ligand_file_path_or_None, status_string)`` where status is one of
@@ -210,16 +234,13 @@ def extract_pocket_from_structure(
     cleaned_file = row["cleaned_file"]
     aligned_file = row["aligned_file"]
 
-    if allowed_cofactors is not None:
-        allowed_cofactors_list = allowed_cofactors.split("|")
-    else:
-        allowed_cofactors_list = []
+    allowed_cofactors_list = allowed_cofactors.split("|") if allowed_cofactors else []
 
     if pd.isna(cleaned_file) or pd.isna(aligned_file):
         return None, "FAILED"
 
-    cleaned_path = dirs["cleaned"] / cleaned_file
-    aligned_path = dirs["aligned"] / aligned_file
+    cleaned_path = Path(cleaned_file)
+    aligned_path = Path(aligned_file)
 
     if not cleaned_path.exists():
         return None, "FAILED"
@@ -265,7 +286,6 @@ def extract_pocket_from_structure(
                 return None, "NO_ANY_CAVITY_FOUND"
 
             if ref_pocket_bbox is not None:
-                # Non-reference structures: select cavity with max volumetric overlap
                 bbox_min, bbox_max = ref_pocket_bbox
                 target_coords = _select_best_cavity_by_bbox(
                     found_cavities, bbox_min, bbox_max, pdb_id
@@ -273,18 +293,16 @@ def extract_pocket_from_structure(
                 if target_coords is None:
                     return None, "CAVITY_CLOSED"
             else:
-                # Reference structure: select cavity by centroid overlap
                 target_cavity = None
                 for cavity in found_cavities:
-                    if check_overlap(
-                        ref_centroid, cavity.__dict__["coords"], use_majority=True
-                    ):
+                    coords = _cavity_coords(cavity)
+                    if check_overlap(ref_centroid, coords, use_majority=True):
                         target_cavity = cavity
                         break
 
                 if target_cavity is None:
                     return None, "CAVITY_CLOSED"
-                target_coords = target_cavity.__dict__["coords"]
+                target_coords = _cavity_coords(target_cavity)
 
         # ── Save initial pocket (optional) ────────────────────────────────────
         if save_intermediate:
@@ -318,6 +336,9 @@ def extract_pocket_from_structure(
         # ── Featurise pocket ──────────────────────────────────────────────────
         with start_action(action_type="featurise_pocket", pdb_id=pdb_id):
             features_path = pocket_save_dir / "featurized.csv"
+            if force_featurize and features_path.exists():
+                features_path.unlink()
+
             if features_path.exists():
                 log_message(
                     message_type="skip",
@@ -335,7 +356,7 @@ def extract_pocket_from_structure(
         except Exception:
             return None, "FAILED"
 
-        candidates: List[Tuple] = []  # (residue, chain_id, n_atoms)
+        candidates: List[Tuple] = []
         for model in structure:
             for chain in model:
                 for res in chain:
@@ -350,7 +371,6 @@ def extract_pocket_from_structure(
         if not candidates:
             return None, "UNBOUND_STATE"
 
-        # Select the ligand with the most heavy atoms
         best_res, best_chain_id, n_atoms = max(candidates, key=lambda x: x[2])
         res_name = best_res.get_resname().strip()
         fname = f"{pdb_id}_{res_name}.pdb"
@@ -382,6 +402,10 @@ def extract_pocket_from_structure(
 def get_plip_interactions(pdb_path: Path, ligand_name: str) -> List[str]:
     """Analyses protein–ligand interactions with PLIP.
 
+    Collects interactions from **all** binding sites whose residue name
+    matches *ligand_name* (handles structures with multiple copies of the
+    same ligand in different chains / symmetry mates).
+
     Args:
         pdb_path: Path to a PDB structure file.
         ligand_name: Residue name of the ligand to analyse (case-insensitive).
@@ -400,7 +424,9 @@ def get_plip_interactions(pdb_path: Path, ligand_name: str) -> List[str]:
         protlig.analyze()
 
         for k, binding_site in protlig.interaction_sets.items():
-            if ligand_name != k.upper().split(":")[0]:
+            # PLIP key format: "RESNAME:CHAIN:RESNUM:" — match on residue name only
+            # to capture all chains that carry the same ligand.
+            if ligand_name.upper() != k.upper().split(":")[0]:
                 continue
 
             bind_site_interactions = [
@@ -410,31 +436,32 @@ def get_plip_interactions(pdb_path: Path, ligand_name: str) -> List[str]:
             for inter in bind_site_interactions:
                 inter_type = str(inter).split("(")[0]
 
+                # Interaction strings include the chain ID so that residues on
+                # different chains are unambiguously distinguished (critical for
+                # interface pockets with two chains carrying the same residue numbers).
+                res_key = (
+                    f"{inter.restype.upper()}_{inter.resnr}_{inter.reschain}"
+                )
+
                 if inter_type == "pistack":
                     interactions.append(
-                        f"{inter.restype.upper()}_{inter.resnr}|Pi-stacking ({inter.type})"
+                        f"{res_key}|Pi-stacking ({inter.type})"
                     )
                 elif inter_type == "hbond":
                     itype = "H-bond Donor" if inter.protisdon else "H-bond Acceptor"
-                    interactions.append(f"{inter.restype.upper()}_{inter.resnr}|{itype}")
+                    interactions.append(f"{res_key}|{itype}")
                 elif inter_type == "pication":
                     itype = "Pi-Cation (Cat)" if inter.protcharged else "Pi-Cation (Pi)"
-                    interactions.append(f"{inter.restype.upper()}_{inter.resnr}|{itype}")
+                    interactions.append(f"{res_key}|{itype}")
                 elif inter_type == "saltbridge":
                     itype = "Saltbridge (+)" if inter.protispos else "Saltbridge (-)"
-                    interactions.append(f"{inter.restype.upper()}_{inter.resnr}|{itype}")
+                    interactions.append(f"{res_key}|{itype}")
                 elif inter_type == "metal_complex":
-                    interactions.append(
-                        f"{inter.restype.upper()}_{inter.resnr}|Metal Complex"
-                    )
+                    interactions.append(f"{res_key}|Metal Complex")
                 elif inter_type == "halogenbond":
-                    interactions.append(
-                        f"{inter.restype.upper()}_{inter.resnr}|Halogen Bond"
-                    )
+                    interactions.append(f"{res_key}|Halogen Bond")
                 elif inter_type == "hydroph_interaction":
-                    interactions.append(
-                        f"{inter.restype.upper()}_{inter.resnr}|Hydrophobic"
-                    )
+                    interactions.append(f"{res_key}|Hydrophobic")
 
     except Exception as e:
         log_message(
@@ -478,7 +505,7 @@ def run_analysis_step(
         )
 
         if cav_csv and pd.notna(row.get("cleaned_file")):
-            clean_path = dirs["cleaned"] / row["cleaned_file"]
+            clean_path = Path(row["cleaned_file"])
             if clean_path.exists():
                 try:
                     from scipy.spatial.distance import cdist as _cdist
@@ -491,8 +518,15 @@ def run_analysis_step(
                     dists = _cdist(prot_coords, cloud)
                     mask = dists.min(axis=1) <= 4.0
                     nearby = atoms[mask]
+                    # Chain ID is included so that potential and observed
+                    # interaction keys are in the same format and can be
+                    # intersected correctly in utilization analysis.
                     unique_res = (
-                        nearby["residue_name"] + "_" + nearby["residue_number"].astype(str)
+                        nearby["residue_name"]
+                        + "_"
+                        + nearby["residue_number"].astype(str)
+                        + "_"
+                        + nearby["chain_id"]
                     ).unique()
                     res["potential"] = sorted(unique_res.tolist())
 
@@ -510,7 +544,7 @@ def run_analysis_step(
                     )
 
         if row.get("protein_state") == "BOUND_STATE" and pd.notna(row.get("ligand_file")):
-            aligned_path = dirs["aligned"] / row["aligned_file"]
+            aligned_path = Path(row["aligned_file"])
             lig_name = Path(row["ligand_file"]).stem.split("_")[-1].upper()
 
             if aligned_path.exists():
@@ -550,14 +584,14 @@ def _select_best_cavity_by_bbox(
         pdb_id: Used for logging only.
 
     Returns:
-        Point cloud array (N × 3) of the best cavity, or ``None`` if no
+        Point cloud array ``(N, 3)`` of the best cavity, or ``None`` if no
         cavity overlaps at all.
     """
     best_coords: Optional[np.ndarray] = None
     best_overlap: int = 0
 
     for cavity in cavities:
-        coords = cavity.__dict__["coords"]
+        coords = _cavity_coords(cavity)
         if len(coords) == 0:
             continue
         overlap = compute_volumetric_overlap(coords, bbox_min, bbox_max)

@@ -39,7 +39,8 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.24",
-  "scipy>=1.10",
+  # >=1.11 for scipy.stats.false_discovery_control (Benjamini-Hochberg)
+  "scipy>=1.11",
   "pandas>=2.0",
   "joblib>=1.3",
   "biopython>=1.81",
@@ -58,11 +59,24 @@ dependencies = [
   "meeko>=0.5",
   "gdown>=4.7",
   "openbabel-wheel>=3.1",
+  # Imported at module level by the alignment and cleaning stages.
+  # Linux wheels are x86_64 only and glibc-gated (3.2.0a0 needs 2.35,
+  # 3.1.0a0 needs 2.34 and CPython 3.11). Run scripts/qpocket_doctor.py
+  # on the target machine before installing.
+  "pymol-open-source>=3.1.0a0",
 ]
 
 [project.optional-dependencies]
+# Dependencies of the explorer notebook (experiments/visualize_qpocket.py). The
+# qpocket_pipeline.viz package itself needs nothing beyond numpy and scipy.
+viz = [
+  "marimo>=0.23",
+  "plotly>=5.18",
+  "umap-learn>=0.5",
+]
 dev = [
   "pytest>=7.4",
+  "plotly>=5.18",
   "pytest-mock>=3.12",
   "ruff>=0.1",
   "mkdocs>=1.5",
@@ -87,7 +101,9 @@ include = ["qpocket_pipeline*", "cavitomix*", "qpocket_screen*", "plip*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.yml", "*.txt", "*.md"]
-"conf" = ["*.yaml"]
+"qpocket_pipeline" = ["conf/*.yaml"]
+# Vendored 3Dmol.js, so the pocket viewer works without network access.
+"qpocket_pipeline.viz" = ["vendor/*.js"]
 
 [tool.ruff]
 line-length = 88

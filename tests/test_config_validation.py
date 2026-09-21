@@ -5,7 +5,7 @@ import pytest
 
 from qpocket_pipeline.config import (
     BoundingBoxParams,
-    DistanceMatrix,
+    DistanceConfig,
     FragmentScreenParams,
     IOConfig,
     QueryParams,
@@ -32,20 +32,32 @@ def _ref(**kw) -> ReferenceParams:
     return ReferenceParams(**defaults)
 
 
-def _dm(**kw) -> DistanceMatrix:
+def _dm(**kw) -> DistanceConfig:
     defaults = dict(
         geo_graph_neighbor_radius=2.0,
-        paralell_jobs=-1,
+        parallel_jobs=-1,
         global_k=100,
         sigma=10.0,
         max_points=5000,
-        alpha=0.85,
-        beta=12.5,
-        affinity_damping=0.9,
-        affinity_max_iter=300,
+        shape_weight=0.85,
+        chem_scale=12.5,
     )
     defaults.update(kw)
-    return DistanceMatrix(**defaults)
+    return DistanceConfig(**defaults)
+
+
+def _single(**kw) -> DistanceConfig:
+    """A DistanceConfig whose single-stage clustering carries ``kw``.
+
+    ``damping`` and ``max_iter`` moved out of the top level in 0.2: they only
+    ever applied to affinity propagation, so they now live on the stage that
+    selects it.
+    """
+    from qpocket_pipeline.config import ClusteringParams, StageClustering
+
+    dm = _dm()
+    dm.clustering = ClusteringParams(single=StageClustering(method="affinity", **kw))
+    return dm
 
 
 # ---------------------------------------------------------------------------
@@ -289,21 +301,11 @@ def test_fragment_screen_reference_index_out_of_bounds():
         validate_config(cfg)
 
 
-def test_fragment_screen_interaction_padding_zero():
-    fs = FragmentScreenParams(
-        input_type="csv", csv_path="/p.csv", interaction_padding=0.0
-    )
-    cfg = make_config(mode="fragment_screen", fragment_screen=fs)
-    with pytest.raises(ValueError, match="interaction_padding"):
-        validate_config(cfg)
-
-
 def test_fragment_screen_valid_paths():
     fs = FragmentScreenParams(
         input_type="paths",
         structure_paths=["a.pdb", "b.pdb"],
         reference_index=1,
-        interaction_padding=5.0,
     )
     cfg = make_config(mode="fragment_screen", fragment_screen=fs)
     validate_config(cfg)
@@ -336,105 +338,105 @@ def test_io_valid_text_none():
 
 
 # ---------------------------------------------------------------------------
-# DistanceMatrix
+# DistanceConfig
 # ---------------------------------------------------------------------------
 
 def test_alpha_too_high():
-    cfg = make_config(spectral_distance_matrix=_dm(alpha=1.5))
-    with pytest.raises(ValueError, match="alpha"):
+    cfg = make_config(distance=_dm(shape_weight=1.5))
+    with pytest.raises(ValueError, match="shape_weight"):
         validate_config(cfg)
 
 
 def test_alpha_negative():
-    cfg = make_config(spectral_distance_matrix=_dm(alpha=-0.1))
-    with pytest.raises(ValueError, match="alpha"):
+    cfg = make_config(distance=_dm(shape_weight=-0.1))
+    with pytest.raises(ValueError, match="shape_weight"):
         validate_config(cfg)
 
 
 def test_alpha_boundary_zero_ok():
-    cfg = make_config(spectral_distance_matrix=_dm(alpha=0.0))
+    cfg = make_config(distance=_dm(shape_weight=0.0))
     validate_config(cfg)
 
 
 def test_alpha_boundary_one_ok():
-    cfg = make_config(spectral_distance_matrix=_dm(alpha=1.0))
+    cfg = make_config(distance=_dm(shape_weight=1.0))
     validate_config(cfg)
 
 
-def test_paralell_jobs_minus_two():
-    cfg = make_config(spectral_distance_matrix=_dm(paralell_jobs=-2))
-    with pytest.raises(ValueError, match="paralell_jobs"):
+def test_parallel_jobs_minus_two():
+    cfg = make_config(distance=_dm(parallel_jobs=-2))
+    with pytest.raises(ValueError, match="parallel_jobs"):
         validate_config(cfg)
 
 
-def test_paralell_jobs_minus_one_ok():
-    cfg = make_config(spectral_distance_matrix=_dm(paralell_jobs=-1))
+def test_parallel_jobs_minus_one_ok():
+    cfg = make_config(distance=_dm(parallel_jobs=-1))
     validate_config(cfg)
 
 
-def test_paralell_jobs_positive_ok():
-    cfg = make_config(spectral_distance_matrix=_dm(paralell_jobs=4))
+def test_parallel_jobs_positive_ok():
+    cfg = make_config(distance=_dm(parallel_jobs=4))
     validate_config(cfg)
 
 
 def test_geo_graph_neighbor_radius_zero():
-    cfg = make_config(spectral_distance_matrix=_dm(geo_graph_neighbor_radius=0.0))
+    cfg = make_config(distance=_dm(geo_graph_neighbor_radius=0.0))
     with pytest.raises(ValueError, match="geo_graph_neighbor_radius"):
         validate_config(cfg)
 
 
 def test_sigma_zero():
-    cfg = make_config(spectral_distance_matrix=_dm(sigma=0.0))
+    cfg = make_config(distance=_dm(sigma=0.0))
     with pytest.raises(ValueError, match="sigma"):
         validate_config(cfg)
 
 
 def test_beta_zero():
-    cfg = make_config(spectral_distance_matrix=_dm(beta=0.0))
-    with pytest.raises(ValueError, match="beta"):
+    cfg = make_config(distance=_dm(chem_scale=0.0))
+    with pytest.raises(ValueError, match="chem_scale"):
         validate_config(cfg)
 
 
 def test_global_k_zero():
-    cfg = make_config(spectral_distance_matrix=_dm(global_k=0))
+    cfg = make_config(distance=_dm(global_k=0))
     with pytest.raises(ValueError, match="global_k"):
         validate_config(cfg)
 
 
 def test_max_points_four():
-    cfg = make_config(spectral_distance_matrix=_dm(max_points=4))
+    cfg = make_config(distance=_dm(max_points=4))
     with pytest.raises(ValueError, match="max_points"):
         validate_config(cfg)
 
 
 def test_max_points_five_ok():
-    cfg = make_config(spectral_distance_matrix=_dm(max_points=5))
+    cfg = make_config(distance=_dm(max_points=5))
     validate_config(cfg)
 
 
 def test_affinity_damping_too_low():
-    cfg = make_config(spectral_distance_matrix=_dm(affinity_damping=0.4))
-    with pytest.raises(ValueError, match="affinity_damping"):
+    cfg = make_config(distance=_single(damping=0.4))
+    with pytest.raises(ValueError, match="damping"):
         validate_config(cfg)
 
 
 def test_affinity_damping_equals_one():
-    cfg = make_config(spectral_distance_matrix=_dm(affinity_damping=1.0))
-    with pytest.raises(ValueError, match="affinity_damping"):
+    cfg = make_config(distance=_single(damping=1.0))
+    with pytest.raises(ValueError, match="damping"):
         validate_config(cfg)
 
 
 def test_affinity_damping_valid():
-    cfg = make_config(spectral_distance_matrix=_dm(affinity_damping=0.7))
+    cfg = make_config(distance=_single(damping=0.7))
     validate_config(cfg)
 
 
 def test_affinity_max_iter_zero():
-    cfg = make_config(spectral_distance_matrix=_dm(affinity_max_iter=0))
-    with pytest.raises(ValueError, match="affinity_max_iter"):
+    cfg = make_config(distance=_single(max_iter=0))
+    with pytest.raises(ValueError, match="max_iter"):
         validate_config(cfg)
 
 
 def test_affinity_max_iter_positive_ok():
-    cfg = make_config(spectral_distance_matrix=_dm(affinity_max_iter=100))
+    cfg = make_config(distance=_single(max_iter=100))
     validate_config(cfg)
