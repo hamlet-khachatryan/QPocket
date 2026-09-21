@@ -787,7 +787,7 @@ def build_extraction_context(
 def save_extraction_context(dirs: Dict[str, Path], context: ExtractionContext) -> Path:
     """Persist the context so array tasks can reuse it."""
     path = dirs["metadata"] / "extraction_context.json"
-    path.write_text(json.dumps(context.to_json(), indent=2) + "\n")
+    path.write_text(json.dumps(context.to_json(), indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -802,7 +802,7 @@ def load_extraction_context(dirs: Dict[str, Path]) -> ExtractionContext:
         raise FileNotFoundError(
             f"{path} not found — run the prepare stage before per-structure tasks"
         )
-    return ExtractionContext.from_json(json.loads(path.read_text()))
+    return ExtractionContext.from_json(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _extract_reference_ligand(
@@ -832,7 +832,7 @@ def _extract_reference_ligand(
             res_name = choice.residue.get_resname().strip()
             block = pocket.extract_pdb_block(choice.residue, choice.chain_id)
             lig_out = dirs["extracted_ligands"] / f"{pdb_id}_{res_name}.pdb"
-            with open(lig_out, "w") as f:
+            with open(lig_out, "w", encoding="utf-8") as f:
                 f.write(block)
             smi = pocket.get_smiles_from_pdb_block(block)
             return str(lig_out), "BOUND_STATE", ((smi, res_name) if smi else None)
@@ -930,7 +930,7 @@ def process_one_structure(
         if write_part:
             (parts_dir(dirs) / f"{pdb_id}.json").write_text(
                 json.dumps(result.to_json(), indent=2) + "\n"
-            )
+            , encoding="utf-8")
 
         log_message(message_type="structure_processed", pdb_id=pdb_id, status=form)
         return result
@@ -957,7 +957,7 @@ def collect_structure_results(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None
         results: Dict[str, StructureResult] = {}
         for part in sorted(parts_dir(dirs).glob("*.json")):
             try:
-                result = StructureResult.from_json(json.loads(part.read_text()))
+                result = StructureResult.from_json(json.loads(part.read_text(encoding="utf-8")))
             except Exception as e:
                 log_message(
                     message_type="warning",
@@ -989,7 +989,7 @@ def collect_structure_results(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None
         # Written in master order rather than task-completion order, so the file
         # is identical whichever way the structures were processed.
         smi_path = dirs["screening"] / "actives.smi"
-        with open(smi_path, "w") as f:
+        with open(smi_path, "w", encoding="utf-8") as f:
             f.write("SMILES\tPDB_ID\tLigand_Name\n")
             for pid in df["pdb_id"]:
                 result = results.get(pid)

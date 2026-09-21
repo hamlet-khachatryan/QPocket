@@ -19,7 +19,7 @@ def configure(cfg: QPocketConfig, log_path: Path) -> None:
         cfg: QPocket configuration (reads ``cfg.io.log_format``).
         log_path: Path to the log output file.
     """
-    log_file = open(str(log_path), "w")
+    log_file = open(str(log_path), "w", encoding="utf-8")
     atexit.register(log_file.close)
 
     to_file(log_file)

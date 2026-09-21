@@ -129,13 +129,13 @@ def write_manifest(dirs: Dict[str, Path], stage: StageSpec, pdb_ids: Sequence[st
         Path to the manifest.
     """
     path = slurm_dir(dirs) / "manifests" / f"{stage.name}.txt"
-    path.write_text("".join(f"{pid}\n" for pid in pdb_ids))
+    path.write_text("".join(f"{pid}\n" for pid in pdb_ids), encoding="utf-8")
     return path
 
 
 def read_manifest(path: Path) -> List[str]:
     """Read a manifest back into a list of PDB IDs, ignoring blank lines."""
-    return [line.strip() for line in Path(path).read_text().splitlines() if line.strip()]
+    return [line.strip() for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def chunk_bounds(n_tasks: int, max_array_size: int) -> List[Tuple[int, int]]:
@@ -287,7 +287,7 @@ def write_scripts(
 
         if not stage.array:
             path = root / f"{stage.order:02d}_{stage.name}.sbatch"
-            path.write_text(render_sbatch(cfg, dirs, stage, config_path))
+            path.write_text(render_sbatch(cfg, dirs, stage, config_path), encoding="utf-8")
             path.chmod(0o755)
             written[stage.name] = [path]
             continue
@@ -304,7 +304,7 @@ def write_scripts(
                     n_tasks=size, offset=offset, manifest=manifest,
                     chunk=None if len(bounds) == 1 else index,
                 )
-            )
+            , encoding="utf-8")
             path.chmod(0o755)
             paths.append(path)
         written[stage.name] = paths
@@ -365,7 +365,7 @@ def write_submit_all(cfg, dirs: Dict[str, Path], scripts: Dict[str, List[Path]])
     lines += ['echo "All stages submitted."', ""]
 
     path = root / "submit_all.sh"
-    path.write_text("\n".join(lines))
+    path.write_text("\n".join(lines), encoding="utf-8")
     path.chmod(0o755)
     return path
 
@@ -420,7 +420,7 @@ def submit(dirs: Dict[str, Path], scripts: Dict[str, List[Path]],
                 previous = ids
 
     record = slurm_dir(dirs) / SUBMISSION_RECORD
-    record.write_text(json.dumps(submitted, indent=2) + "\n")
+    record.write_text(json.dumps(submitted, indent=2) + "\n", encoding="utf-8")
     return submitted
 
 

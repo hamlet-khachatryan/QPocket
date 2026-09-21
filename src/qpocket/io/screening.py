@@ -35,7 +35,7 @@ def parse_vina_output(pdbqt_path: Path) -> Tuple[Optional[float], Optional[Chem.
     in_first_model = False
 
     try:
-        with open(pdbqt_path) as fh:
+        with open(pdbqt_path, encoding="utf-8") as fh:
             for line in fh:
                 # Score lines: "REMARK VINA RESULT:  -8.5   0.000   0.000"
                 if line.startswith("REMARK VINA RESULT"):
@@ -76,7 +76,7 @@ def parse_vina_box(vina_box_txt: Path) -> Dict[str, float]:
         Dict with keys ``center_x/y/z``, ``size_x/y/z``, ``exhaustiveness``, ``num_modes``, ``energy_range``.
     """
     params: Dict[str, float] = {}
-    with open(vina_box_txt) as fh:
+    with open(vina_box_txt, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -152,7 +152,7 @@ def extract_vina_box(
     out_path = dirs['screening'] / "vina_box.txt"
     dirs['screening'].mkdir(parents=True, exist_ok=True)
 
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write(f"center_x = {box['center_x']:.3f}\n")
         f.write(f"center_y = {box['center_y']:.3f}\n")
         f.write(f"center_z = {box['center_z']:.3f}\n")
@@ -234,7 +234,7 @@ def prepare_protein_pdbqt(
 
             # Step 1: pdb2pqr
             pdb2pqr_cmd = [
-                "pdb2pqr",
+                shutil.which("pdb2pqr") or "pdb2pqr",
                 "--ff", "AMBER",
                 "--ffout", "AMBER",
                 "--nodebump",
@@ -303,7 +303,7 @@ def _pqr_to_pdbqt_fallback(input_path: Path, output_pdbqt: Path) -> bool:
     """Minimal PQR/PDB → PDBQT conversion (strips charge/radius columns)."""
     try:
         lines_out = []
-        with open(input_path) as fh:
+        with open(input_path, encoding="utf-8") as fh:
             for line in fh:
                 record = line[:6].strip()
                 if record not in ("ATOM", "HETATM"):
@@ -316,7 +316,7 @@ def _pqr_to_pdbqt_fallback(input_path: Path, output_pdbqt: Path) -> bool:
                 # Append partial charge column (mandatory in PDBQT)
                 lines_out.append(f"{pdb_part}  0.000\n")
 
-        with open(output_pdbqt, "w") as fh:
+        with open(output_pdbqt, "w", encoding="utf-8") as fh:
             fh.writelines(lines_out)
 
         log_message(
@@ -422,7 +422,7 @@ def _write_ligand_pdbqt_meeko(
         if not is_ok:
             raise RuntimeError(f"PDBQTWriterLegacy failed: {error_msg}")
 
-        with open(output_pdbqt, "w") as fh:
+        with open(output_pdbqt, "w", encoding="utf-8") as fh:
             fh.write(pdbqt_string)
 
         log_message(
@@ -469,7 +469,7 @@ def _write_ligand_pdbqt_sdf_fallback(
         writer.close()
 
         result = subprocess.run(
-            ["obabel", str(sdf_path), "-O", str(output_pdbqt), "--gen3d"],
+            [shutil.which("obabel") or "obabel", str(sdf_path), "-O", str(output_pdbqt), "--gen3d"],
             capture_output=True,
             text=True,
             timeout=60,

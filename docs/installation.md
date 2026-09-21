@@ -55,6 +55,20 @@ module instead of downloading an interpreter.
 PLIP and CavitOmiX are vendored under `src/` and install with the package;
 there is nothing extra to fetch.
 
+## Windows
+
+Everything installs with uv on Windows x86_64 except APBS, which has no Windows
+wheel. Install it from the [APBS releases](https://github.com/Electrostatics/apbs/releases)
+and either put `apbs.exe` on `PATH` or point Q-Pocket at it:
+
+```powershell
+$env:QPOCKET_APBS = "C:\APBS\bin\apbs.exe"
+uv run qpocket doctor
+```
+
+SLURM submission is Linux-only; on Windows run docking with
+`qpocket screen prepare --submit local` and `qpocket screen run-local`.
+
 ## Verify
 
 ```bash

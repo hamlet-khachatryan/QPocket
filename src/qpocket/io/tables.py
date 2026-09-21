@@ -47,7 +47,7 @@ def write_points(coords: np.ndarray, path: Path) -> None:
         coords: (N, 3) points.
         path: Target CSV.
     """
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("x,y,z\n")
         for pt in coords:
             f.write(f"{pt[0]},{pt[1]},{pt[2]}\n")
@@ -63,7 +63,7 @@ def read_pqr(pqr_path: Path) -> PQRAtoms:
         The atoms.
     """
     coords, charges, radii, names, residues, chains, seqs = [], [], [], [], [], [], []
-    with pqr_path.open("r") as f:
+    with pqr_path.open("r", encoding="utf-8") as f:
         for line in f:
             if not line.startswith(("ATOM", "HETATM")):
                 continue

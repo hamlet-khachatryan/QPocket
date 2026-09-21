@@ -467,10 +467,10 @@ def init(output: str):
         "# reference.ligand_id when pocket_definition is \"Interactions\".\n"
         "\n"
     )
-    body = source.read_text()
+    body = source.read_text(encoding="utf-8")
     # `defaults:` is Hydra's own composition list, meaningless in a user file.
     body = re.sub(r"^defaults:\n(  - .*\n)+\n?", "", body)
-    target.write_text(header + body)
+    target.write_text(header + body, encoding="utf-8")
 
     click.echo(f"Created {target}")
     click.echo("Edit it, then run:  qpocket run --config " + str(target))
@@ -654,13 +654,21 @@ def doctor(config: Optional[str], smoke: bool):
         ("h5py", ""), ("joblib", ""), ("hydra", ""), ("omegaconf", ""),
         ("eliot", ""), ("Bio", "biopython"), ("biopandas", ""), ("rdkit", ""),
         ("openbabel", ""), ("pdb2pqr", ""),
-        ("apbs_binary", "featurisation"),
     ):
         try:
             importlib.import_module(module)
             ok(f"import {module}", why)
         except Exception as e:
             bad(f"import {module}", f"{type(e).__name__}: {e}")
+
+    # --- APBS: the wheel, QPOCKET_APBS, or an apbs on PATH ---------------------
+    from qpocket.io.tools import ToolNotFound, apbs_command
+
+    try:
+        source, detail = apbs_command()
+        ok("apbs", f"{detail} ({source})")
+    except ToolNotFound as e:
+        bad("apbs", str(e))
 
     # --- external tools ---------------------------------------------------
     for tool, required in (("pdb2pqr", True), ("sbatch", False)):

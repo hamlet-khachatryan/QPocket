@@ -101,8 +101,14 @@ def test_arm_linux_explains_why(monkeypatch):
     assert any("aarch64" in a for a in advice)
 
 
-def test_windows_is_refused(monkeypatch):
-    rows, _ = verdict(monkeypatch, system="Windows", machine="AMD64", glibc=None)
+def test_windows_installs_but_needs_its_own_apbs(monkeypatch):
+    rows, advice = verdict(monkeypatch, system="Windows", machine="AMD64", glibc=None)
+    assert status_of(rows, "platform") == WARN
+    assert any("QPOCKET_APBS" in a for a in advice)
+
+
+def test_windows_on_arm_is_refused(monkeypatch):
+    rows, _ = verdict(monkeypatch, system="Windows", machine="ARM64", glibc=None)
     assert status_of(rows, "platform") == FAIL
 
 

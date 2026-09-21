@@ -64,7 +64,7 @@ def read_links(path: Path) -> Set[Tuple[AtomKey, AtomKey]]:
 
     serial_to_key: Dict[int, AtomKey] = {}
     conect: List[Tuple[int, int]] = []
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         record = line[:6]
         if record == "LINK  ":
             try:
@@ -112,6 +112,6 @@ def save(structure: Structure, path: Path,
     io = PDBIO()
     io.set_structure(structure)
     io.save(str(path), write_end=False)
-    lines = path.read_text().splitlines(keepends=True)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     lines = [l for l in lines if not l.startswith("END")]
-    path.write_text("".join(lines + _conect_lines(lines, links or set()) + ["END\n"]))
+    path.write_text("".join(lines + _conect_lines(lines, links or set()) + ["END\n"]), encoding="utf-8")

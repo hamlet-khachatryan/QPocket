@@ -131,7 +131,7 @@ def generate_decoys_lude(
     out_file = output_dir / "decoys.smi"
 
     if decoy_results:
-        with open(out_file, "w") as f:
+        with open(out_file, "w", encoding="utf-8") as f:
             for smi, label in decoy_results:
                 f.write(f"{smi}\t{label}\n")
 

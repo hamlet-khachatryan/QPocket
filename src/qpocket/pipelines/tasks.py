@@ -67,7 +67,7 @@ def resolve_pdb_id(manifest: Path, index: int) -> str:
     if not path.exists():
         raise TaskError(f"manifest not found: {path}")
 
-    entries = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    entries = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if not 0 <= index < len(entries):
         raise TaskError(
             f"index {index} is outside manifest {path.name}, which has "

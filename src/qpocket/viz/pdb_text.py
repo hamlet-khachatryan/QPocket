@@ -134,7 +134,7 @@ def read_protein_atoms(path: str) -> Tuple[Dict, ...]:
     """
     out: List[Dict] = []
     seen = set()
-    with open(path) as handle:
+    with open(path, encoding="utf-8") as handle:
         for line in handle:
             if line.startswith("ENDMDL"):
                 break
@@ -164,7 +164,7 @@ def ligand_pdb(path: str) -> str:
         PDB text, or ``""`` if the file holds no readable atoms.
     """
     lines: List[str] = []
-    with open(path) as handle:
+    with open(path, encoding="utf-8") as handle:
         for line in handle:
             if line.startswith(("ATOM", "HETATM")):
                 atom = parse_atom(line)

@@ -34,7 +34,7 @@ def load_settings(run_dir: Path) -> ClusteringParams:
     path = Path(run_dir) / "metadata" / "clustering_params.json"
     if not path.exists():
         return defaults
-    params = json.loads(path.read_text())
+    params = json.loads(path.read_text(encoding="utf-8"))
     return ClusteringParams(
         mode=params.get("mode", defaults.mode),
         min_cluster_size=int(params.get("min_cluster_size", defaults.min_cluster_size)),

@@ -583,7 +583,7 @@ def write_clustering(meta_dir: Path, ids: List[str], assignment: ClusterAssignme
     df_rep.to_csv(out_rep, index=False)
 
     out_params = meta_dir / "clustering_params.json"
-    out_params.write_text(json.dumps(assignment.params, indent=2) + "\n")
+    out_params.write_text(json.dumps(assignment.params, indent=2) + "\n", encoding="utf-8")
 
     log_message(
         message_type="clustering_saved",

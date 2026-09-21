@@ -58,10 +58,9 @@ def run_apbs_smoke_test(timeout: int = 300) -> Tuple[float, str]:
         ``(seconds, detail)`` where *detail* names the grid that was produced.
 
     Raises:
-        ImportError: If ``apbs_binary`` is not installed.
-        RuntimeError: If APBS exits non-zero, times out, or writes no grid.
+        RuntimeError: If APBS is missing, exits non-zero, times out, or writes no grid.
     """
-    from apbs_binary import popen_apbs
+    from qpocket.io.tools import apbs_process
 
     started = time.time()
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -69,12 +68,12 @@ def run_apbs_smoke_test(timeout: int = 300) -> Tuple[float, str]:
         pqr = tmp / "smoke.pqr"
         deck = tmp / "smoke.in"
         out = tmp / "smoke"
-        pqr.write_text(SMOKE_PQR)
-        deck.write_text(SMOKE_IN.format(pqr=pqr, out=out))
+        pqr.write_text(SMOKE_PQR, encoding="utf-8")
+        deck.write_text(SMOKE_IN.format(pqr=pqr, out=out), encoding="utf-8")
 
         # cwd=tmp for the same reason the pipeline does it: APBS drops an io.mc
         # beside the process, not beside its output.
-        process = popen_apbs(
+        process = apbs_process(
             [str(deck)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(tmp)
         )
         try:
@@ -106,10 +105,9 @@ def run_pdb2pqr_smoke_test(timeout: int = 300) -> Tuple[float, str]:
     Raises:
         RuntimeError: If pdb2pqr is missing, fails, or writes nothing.
     """
-    import shutil
+    from qpocket.io.tools import executable
 
-    if shutil.which("pdb2pqr") is None:
-        raise RuntimeError("pdb2pqr is not on PATH")
+    pdb2pqr = executable("pdb2pqr")
 
     started = time.time()
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -122,10 +120,11 @@ def run_pdb2pqr_smoke_test(timeout: int = 300) -> Tuple[float, str]:
             "ATOM      3  C   ALA A   1       2.009   1.420   0.000  1.00  0.00           C\n"
             "ATOM      4  O   ALA A   1       1.251   2.390   0.000  1.00  0.00           O\n"
             "ATOM      5  CB  ALA A   1       1.988  -0.773  -1.199  1.00  0.00           C\n"
-            "TER\nEND\n"
+            "TER\nEND\n",
+            encoding="utf-8",
         )
         done = subprocess.run(
-            ["pdb2pqr", "--ff=PARSE", "--whitespace", "--noopt", str(pdb), str(pqr)],
+            [pdb2pqr, "--ff=PARSE", "--whitespace", "--noopt", str(pdb), str(pqr)],
             capture_output=True, text=True, timeout=timeout, cwd=str(tmp),
         )
         if not pqr.exists() or pqr.stat().st_size == 0:

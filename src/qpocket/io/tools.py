@@ -1,9 +1,11 @@
 """External tools: pdb2pqr, APBS and the files they exchange."""
 from __future__ import annotations
 
+import os
+import shutil
 import tempfile
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 from subprocess import PIPE, Popen
 
 import numpy as np
@@ -17,16 +19,87 @@ from qpocket.constants import FP_DTYPE, ION_PARAMS, atomic_hydrophobicity
 from qpocket.core import features as ft
 from qpocket.types import PQRAtoms, StructureData
 
-try:
-    from apbs_binary import popen_apbs
-except ImportError:
-    raise ImportError("pip install apbs-binary")
+
+
+class ToolNotFound(RuntimeError):
+    """An external program Q-Pocket needs is not installed."""
+
+
+_HINTS = {
+    "apbs": "install APBS (github.com/Electrostatics/apbs/releases) and put it on PATH or set QPOCKET_APBS; "
+            "on Linux x86_64 and macOS `uv sync` installs it",
+    "pdb2pqr": "`uv sync` installs it; activate the environment",
+    "obabel": "`uv sync` installs openbabel-wheel; activate the environment",
+    "vina": "set docking.engine_path or put vina on PATH",
+}
+
+
+def executable(name: str, env_var: Optional[str] = None) -> str:
+    """Path of an external program: env override, then PATH (resolves .exe on Windows).
+
+    Args:
+        name: Program name without extension.
+        env_var: Environment variable that overrides the lookup.
+
+    Returns:
+        Path to the program.
+
+    Raises:
+        ToolNotFound: If it cannot be found.
+    """
+    override = os.environ.get(env_var) if env_var else None
+    if override:
+        if Path(override).exists():
+            return override
+        raise ToolNotFound(f"{env_var}={override} does not exist")
+    found = shutil.which(name)
+    if found:
+        return found
+    raise ToolNotFound(f"{name} not found: {_HINTS.get(name, 'install it and put it on PATH')}")
+
+
+def apbs_command() -> Tuple[str, str]:
+    """Where APBS comes from on this machine.
+
+    Returns:
+        (source, detail): "env" and the QPOCKET_APBS path, "wheel" and the apbs-binary
+        version, or "path" and the apbs on PATH.
+
+    Raises:
+        ToolNotFound: If there is no APBS at all.
+    """
+    if os.environ.get("QPOCKET_APBS"):
+        return "env", executable("apbs", "QPOCKET_APBS")
+    try:
+        import apbs_binary  # no Windows wheel
+
+        return "wheel", f"apbs-binary {getattr(apbs_binary, '__version__', '')}".strip()
+    except ImportError:
+        return "path", executable("apbs")
+
+
+def apbs_process(args: List[str], **popen_kwargs) -> Popen:
+    """Start APBS with arguments, from whichever source apbs_command finds.
+
+    Args:
+        args: APBS arguments (usually the input file).
+        **popen_kwargs: Passed to Popen (stdout, stderr, cwd).
+
+    Returns:
+        The running process.
+    """
+    source, detail = apbs_command()
+    if source == "wheel":
+        from apbs_binary import popen_apbs
+
+        return popen_apbs(args, **popen_kwargs)
+    return Popen([detail] + list(args), **popen_kwargs)
 
 
 def repair_pqr_with_missing_ions(pdb_path: Path, pqr_path: Path) -> None:
     """Append ions that pdb2pqr dropped to its PQR, with PARSE-style charges and radii."""
     pdb_ions = []
-    with pdb_path.open("r") as f:
+    with pdb_path.open("r", encoding="utf-8") as f:
         for line in f:
             if line.startswith("HETATM"):
                 # Fixed PDB columns: atom name 13-16, residue name 18-20.
@@ -60,7 +133,7 @@ def repair_pqr_with_missing_ions(pdb_path: Path, pqr_path: Path) -> None:
     # read existing PQR to see what survived
     existing_coords = []
     pqr_lines = []
-    with pqr_path.open("r") as f:
+    with pqr_path.open("r", encoding="utf-8") as f:
         for line in f:
             pqr_lines.append(line)
             if line.startswith(("ATOM", "HETATM")):
@@ -75,7 +148,7 @@ def repair_pqr_with_missing_ions(pdb_path: Path, pqr_path: Path) -> None:
 
     # missing ions
     injected_count = 0
-    with pqr_path.open("a") as f:
+    with pqr_path.open("a", encoding="utf-8") as f:
         for ion in pdb_ions:
             if len(existing_coords) > 0:
                 dists = np.linalg.norm(
@@ -115,7 +188,7 @@ def protonate(pdb_path: Path, out_pqr: Path) -> Path:
     """
     with start_action(action_type="run_pdb2pqr", pdb=str(pdb_path)):
         out_pqr = Path(out_pqr).resolve()
-        cmd = ["pdb2pqr", "--ff=PARSE", "--ffout=AMBER", "--whitespace", "--noopt",
+        cmd = [executable("pdb2pqr"), "--ff=PARSE", "--ffout=AMBER", "--whitespace", "--noopt",
                str(Path(pdb_path).resolve()), str(out_pqr)]
         # cwd: pdb2pqr drops working files beside the process, not its output.
         with tempfile.TemporaryDirectory() as scratch:
@@ -140,7 +213,7 @@ def read_dx_grid(dx_path: Path):
     Raises:
         RuntimeError: On a malformed file.
     """
-    with dx_path.open("r") as f:
+    with dx_path.open("r", encoding="utf-8") as f:
         return ft.parse_dx(f.read())
 
 
@@ -161,7 +234,7 @@ def apbs_potential(pqr_path: Path, point_cloud: np.ndarray) -> np.ndarray:
             return np.zeros(len(point_cloud), dtype=FP_DTYPE)
 
         prot_coords = []
-        with pqr.open() as f:
+        with pqr.open(encoding="utf-8") as f:
             for line in f:
                 if line.startswith("ATOM"):
                     try:
@@ -187,10 +260,14 @@ def apbs_potential(pqr_path: Path, point_cloud: np.ndarray) -> np.ndarray:
             temp_dir = Path(temp_dir_str)
             base = temp_dir / "mol"
             apbs_in = base.with_suffix(".in")
-            with apbs_in.open("w") as f:
+            with apbs_in.open("w", encoding="utf-8") as f:
                 f.write(ft.apbs_input(pqr, base, *box))
 
-            p = popen_apbs([str(apbs_in)], stdout=PIPE, stderr=PIPE, cwd=str(temp_dir))
+            try:
+                p = apbs_process([str(apbs_in)], stdout=PIPE, stderr=PIPE, cwd=str(temp_dir))
+            except ToolNotFound as e:
+                log_message(message_type="apbs_binary_fail", stderr=str(e))
+                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
             out, err = p.communicate()
 
             dx_file = base.with_suffix(".dx")
@@ -240,7 +317,7 @@ def run_cavfind(pdb_path: Path, name: str) -> List[np.ndarray]:
     Returns:
         One (N, 3) point cloud per cavity, in detection order.
     """
-    with open(pdb_path, "r") as f:
+    with open(pdb_path, "r", encoding="utf-8") as f:
         cf = CavFind(name=name, obj_name=name)
         cf.struct_from_pdb(f.read())
         # CavFind keeps the points on a private attribute; read it in one place.

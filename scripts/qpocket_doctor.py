@@ -120,9 +120,17 @@ def check_platform():
     else:
         detail = "{0} {1}".format(system, machine)
 
-    if system not in ("Linux", "Darwin"):
-        rows.append(("platform", FAIL, detail + " -- only Linux and macOS are supported"))
-        advice.append("Q-Pocket has only been built for Linux and macOS.")
+    if system == "Windows" and machine in ("AMD64", "x86_64"):
+        rows.append(("platform", WARN, detail + " -- APBS must be installed separately"))
+        advice.append(
+            "No APBS wheel exists for Windows. Install APBS from "
+            "github.com/Electrostatics/apbs/releases and put apbs.exe on PATH, or set "
+            "QPOCKET_APBS to its full path. Everything else installs with uv. SLURM "
+            "submission is Linux-only; use `qpocket screen run-local` for docking."
+        )
+    elif system not in ("Linux", "Darwin"):
+        rows.append(("platform", FAIL, detail + " -- only Linux, macOS and Windows x86_64 are supported"))
+        advice.append("Q-Pocket is built for Linux, macOS and Windows on x86_64.")
     elif system == "Linux" and machine not in ("x86_64", "AMD64"):
         rows.append(("platform", FAIL, detail + " -- no aarch64 wheels exist"))
         advice.append(
