@@ -1,10 +1,4 @@
-"""Structure alignment against a reference, and UniProt-based renumbering.
-
-Uses :mod:`qpocket.core.structure` (Biopython) rather than PyMOL,
-which has no pip wheel for most cluster operating systems. The superposition
-reproduces ``cmd.align``; on the 20 PARG structures every atom lands within
-0.0016 A of where PyMOL placed it.
-"""
+"""Structure alignment against a reference, and UniProt-based renumbering."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,28 +27,16 @@ def process_structure(
 ) -> Tuple[bool, float, str]:
     """Aligns a target structure to the reference and optionally renumbers residues.
 
-    Steps:
-
-    1. Load the target, strip water.
-    2. Select the chain with >= 20 % sequence identity to the reference (the
-       highest, if several).
-    3. Superimpose that chain onto *reference*, as ``cmd.align`` did.
-    4. If *renumber* and *uniprot_id* are given, remap residue numbers to
-       UniProt positions.
-    5. Save the aligned chain, ligands included, as a PDB file.
-
     Args:
         target_path: Path to the input CIF or PDB file.
         output_dir: Directory to write the output PDB.
-        reference: Amino-acid residues of the reference chain, already in the
-            reference frame.
+        reference: Amino-acid residues of the reference chain, already in the reference frame.
         ref_seq: Single-letter sequence of the reference chain.
         uniprot_id: UniProt accession used for renumbering (optional).
         renumber: Whether to apply UniProt-based renumbering.
 
     Returns:
-        ``(success, rmsd, output_file_path)`` -- on failure rmsd is ``-1.0``
-        and path is an empty string.
+        ``(success, rmsd, output_file_path)`` -- on failure rmsd is ``-1.0`` and path is an empty string.
     """
     target_path = Path(target_path)
     output_dir = Path(output_dir)
@@ -127,42 +109,22 @@ def process_structure_interface(
 ) -> Tuple[bool, float, str, Dict[str, str]]:
     """Aligns a multi-chain interface structure to the reference.
 
-    Extends :func:`process_structure` for binding pockets formed at the
-    interface between two or more chains:
-
-    1. Load the full target structure.
-    2. Identify the primary chain by sequence identity (>= 90 %) to *ref_seq*.
-    3. Fit on the primary chain and move the **whole structure**, so every
-       auxiliary chain arrives in the reference frame.
-    4. For each reference auxiliary chain, find the matching target chain via
-       :func:`~qpocket.core.sequence.match_auxiliary_chain` (sequence filter,
-       then C-alpha centroid proximity to separate homodimer copies).
-    5. Skip the structure if *require_all_chains* and any auxiliary chain is
-       unmatched.
-    6. Save the primary chain and all matched auxiliary chains.
-    7. Optionally renumber each chain to canonical UniProt positions.
-
     Args:
         target_path: Path to the input CIF or PDB file.
         output_dir: Directory to write the output PDB.
         reference: Amino-acid residues of the reference primary chain.
         ref_seq: Single-letter sequence of the reference primary chain.
         ref_aux_seqs: ``{ref_chain_id: sequence}`` for each auxiliary chain.
-        ref_aux_centroids: ``{ref_chain_id: centroid_xyz}`` of each reference
-            auxiliary chain's C-alpha atoms, in the reference frame.
+        ref_aux_centroids: ``{ref_chain_id: centroid_xyz}`` of each reference auxiliary chain's C-alpha atoms, in the reference frame.
         uniprot_id: UniProt accession for the primary chain (renumbering).
-        auxiliary_uniprot_ids: Per-chain UniProt accessions keyed by reference
-            chain ID. Chains absent from it are not renumbered.
+        auxiliary_uniprot_ids: Per-chain UniProt accessions keyed by reference chain ID.
         renumber: Whether to apply UniProt-based renumbering.
         min_auxiliary_identity: Minimum identity fraction for an auxiliary match.
-        max_auxiliary_centroid_deviation: Centroid deviation (A) above which a
-            match is reported as suspicious.
+        max_auxiliary_centroid_deviation: Centroid deviation (A) above which a match is reported as suspicious.
         require_all_chains: Fail the structure if any auxiliary chain is missing.
 
     Returns:
-        ``(success, rmsd, output_file_path, aux_mapping)``, where *aux_mapping*
-        maps each reference auxiliary chain to its matched target chain. On
-        failure: ``-1.0``, ``""`` and ``{}``.
+        ``(success, rmsd, output_file_path, aux_mapping)``, where *aux_mapping* maps each reference auxiliary chain to its matched target chain.
     """
     target_path = Path(target_path)
     output_dir = Path(output_dir)

@@ -1,28 +1,27 @@
-"""Single-stage entry points, one per SLURM array task.
+"""Single-stage entry points, one per SLURM array task."""
 
-``qpocket slurm generate`` writes scripts whose body is one ``qpocket task
-<stage>`` call. These are those stages. Each is a thin driver over the same
-functions the serial pipeline calls, which is deliberate: there is one
-implementation of the science and two ways of scheduling it, not two
-implementations.
-
-Three properties every task here holds to, because an array job makes all three
-load-bearing:
-
-*Idempotent.* A task whose output already exists does nothing and exits 0. A
-resubmitted array therefore re-runs only what is missing, and finishes in
-seconds when nothing is. ``--force`` overrides.
-
-*Isolated.* A per-structure task writes only inside ``pockets/<pdb_id>/``,
-``structures/extracted_ligands/`` and its own JSON sidecar. It never touches
-``master.csv``, the HDF5 files or ``actives.smi`` — those belong to ``collect``,
-which runs once.
-
-*Loud.* A task that produces no output raises. Several of the underlying
-functions return early and log on failure, which is right for a serial run that
-carries on to the next structure and wrong for an array task, where a silent
-success is indistinguishable from a real one until the next stage fails.
-"""
+# ``qpocket slurm generate`` writes scripts whose body is one ``qpocket task
+# <stage>`` call. These are those stages. Each is a thin driver over the same
+# functions the serial pipeline calls, which is deliberate: there is one
+# implementation of the science and two ways of scheduling it, not two
+# implementations.
+#
+# Three properties every task here holds to, because an array job makes all three
+# load-bearing:
+#
+# *Idempotent.* A task whose output already exists does nothing and exits 0. A
+# resubmitted array therefore re-runs only what is missing, and finishes in
+# seconds when nothing is. ``--force`` overrides.
+#
+# *Isolated.* A per-structure task writes only inside ``pockets/<pdb_id>/``,
+# ``structures/extracted_ligands/`` and its own JSON sidecar. It never touches
+# ``master.csv``, the HDF5 files or ``actives.smi`` — those belong to ``collect``,
+# which runs once.
+#
+# *Loud.* A task that produces no output raises. Several of the underlying
+# functions return early and log on failure, which is right for a serial run that
+# carries on to the next structure and wrong for an array task, where a silent
+# success is indistinguishable from a real one until the next stage fails.
 
 from __future__ import annotations
 
@@ -63,8 +62,6 @@ def resolve_pdb_id(manifest: Path, index: int) -> str:
 
     Raises:
         TaskError: If the manifest is missing or the index is out of range.
-            Both mean the scripts and the manifest have drifted apart, which is
-            worth stopping for rather than silently skipping a structure.
     """
     path = Path(manifest)
     if not path.exists():
@@ -98,11 +95,6 @@ def _master_row(dirs: Dict[str, Path], pdb_id: str) -> pd.Series:
 
 def task_prepare(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False) -> None:
     """Fetch, align and clean every structure, then locate the reference pocket.
-
-    Serial by necessity. PyMOL's ``cmd`` is a module-level singleton holding one
-    loaded reference object, so alignment cannot be shared between processes, and
-    the reference pocket bounding box constrains every other structure's cavity
-    selection.
 
     Args:
         cfg: QPocket configuration.
@@ -143,9 +135,6 @@ def task_featurize(
 ) -> None:
     """Extract, featurise and analyse one structure.
 
-    This is where APBS runs — 5.3s of a 6.8s featurisation, and the reason the
-    pipeline is worth distributing at all.
-
     Args:
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
@@ -178,11 +167,6 @@ def task_apbs(
 ) -> None:
     """Reserved for the split APBS stage.
 
-    Splitting APBS out needs the potential grid cached per structure, so that
-    featurisation can read it back instead of recomputing it. That cache is not
-    implemented yet, so this refuses rather than quietly doing the same work
-    twice.
-
     Raises:
         TaskError: Always.
     """
@@ -202,8 +186,7 @@ def task_collect(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False)
         force: Unused; collect always rebuilds from whatever sidecars exist.
 
     Raises:
-        TaskError: If no sidecars were written, which means every featurisation
-            task failed and going further would produce empty tables.
+        TaskError: If no sidecars were written, which means every featurisation task failed and going further would produce empty tables.
     """
     with start_action(action_type="task_collect"):
         parts = list(stages.parts_dir(dirs).glob("*.json"))
@@ -263,10 +246,6 @@ def task_geodesic(
 def task_distance(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False) -> None:
     """Fingerprint every pocket, build the distance matrices and cluster.
 
-    One job rather than an array: measured at 4.2s for 21 structures, with
-    ``joblib`` already parallelising the per-pocket work across the cores the
-    stage is given.
-
     Args:
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
@@ -285,10 +264,6 @@ def task_distance(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False
 
 def manifest_ids(cfg: QPocketConfig, dirs: Dict[str, Path], stage: str) -> List[str]:
     """Structures a stage should cover, read from what is already on disk.
-
-    ``geodesic`` works from the pockets that were actually featurised, so a
-    structure that failed earlier is simply absent rather than becoming a task
-    that is certain to fail.
 
     Args:
         cfg: QPocket configuration.
@@ -326,8 +301,7 @@ def run_task(
         force: Recompute rather than skipping completed work.
 
     Raises:
-        TaskError: On an unknown stage, or a per-structure stage without a
-            manifest and index.
+        TaskError: On an unknown stage, or a per-structure stage without a manifest and index.
     """
     if name not in TASK_NAMES:
         raise TaskError(f"unknown stage {name!r}; expected one of {TASK_NAMES}")

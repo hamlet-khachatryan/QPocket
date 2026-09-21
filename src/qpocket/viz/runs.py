@@ -1,15 +1,4 @@
-"""Finding Q-Pocket runs on disk, including somewhere the notebook did not look.
-
-A run is a directory holding ``metadata/master.csv`` and ``pockets/``. The
-notebook used to find them with ``glob("**/metadata/master.csv")``, which visits
-every file underneath the search root -- including each run's thousands of pocket
-and structure files. On a laptop that is instant; on a cluster's parallel
-filesystem it can take minutes, and pointing it at a scratch directory with many
-runs made the notebook look hung.
-
-So the walk here prunes the directories a run is made of, never descends into a
-run once it has found one, and stops at a fixed depth.
-"""
+"""Finding Q-Pocket runs on disk, including somewhere the notebook did not look."""
 
 from __future__ import annotations
 
@@ -34,8 +23,7 @@ class Location(NamedTuple):
     """What a typed-in path turned out to be.
 
     Attributes:
-        runs: Runs found there: the path itself when it is a run, or those
-            beneath it when it is a directory of runs.
+        runs: Runs found there: the path itself when it is a run, or those beneath it when it is a directory of runs.
         message: Why nothing was found, or ``None`` when something was.
     """
 
@@ -50,10 +38,7 @@ def is_run(path: Path) -> bool:
 
 
 def is_complete(path: Path) -> bool:
-    """Whether a run got as far as the distance matrix.
-
-    Without it there is no landscape and no clustering to show.
-    """
+    """Whether a run got as far as the distance matrix."""
     return (Path(path) / "metadata" / "spectral_distance_matrix.csv").is_file()
 
 
@@ -61,7 +46,7 @@ def find_runs(roots: Iterable[Path], max_depth: int = MAX_DEPTH) -> List[Path]:
     """Every run at or below ``roots``, without walking into runs themselves.
 
     Args:
-        roots: Directories to search. Missing ones are skipped.
+        roots: Directories to search.
         max_depth: Levels below each root to descend.
 
     Returns:
@@ -90,12 +75,7 @@ def find_runs(roots: Iterable[Path], max_depth: int = MAX_DEPTH) -> List[Path]:
 
 def default_roots(notebook_dir: Optional[Path] = None,
                   extra: Sequence[str] = ()) -> List[Path]:
-    """Where to look before the user types anything.
-
-    The notebook's own directory and ``experiments/``, anything in
-    ``$QPOCKET_RUNS``, and anything passed as ``extra`` -- the notebook forwards
-    ``marimo run ... -- --runs <dir>`` here.
-    """
+    """Where to look before the user types anything."""
     base = Path(notebook_dir) if notebook_dir else Path.cwd()
     roots = [base, base.parent / "experiments", Path.cwd() / "experiments"]
     roots += [Path(p) for p in os.environ.get(RUNS_ENV, "").split(os.pathsep) if p]
@@ -113,8 +93,7 @@ def resolve_location(text: str, max_depth: int = MAX_DEPTH) -> Location:
     """Turn whatever was typed into the runs it names.
 
     Args:
-        text: A run directory, a directory containing runs, or empty. ``~`` and
-            ``$VARIABLES`` are expanded.
+        text: A run directory, a directory containing runs, or empty.
         max_depth: Passed to :func:`find_runs`.
 
     Returns:

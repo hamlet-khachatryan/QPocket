@@ -19,8 +19,7 @@ def check_overlap(
         points_obj: Point(s) to test — 1-D for a single point, 2-D for many.
         box_points: Points that define the reference bounding box.
         tolerance: Padding (Å) added to every face of the bounding box.
-        use_majority: When ``True`` (default), passes if > 50 % of atoms are
-            inside; when ``False``, uses a 70 % threshold (legacy behaviour).
+        use_majority: When ``True`` (default), passes if > 50 % of atoms are inside; when ``False``, uses a 70 % threshold (legacy behaviour).
 
     Returns:
         ``True`` if the overlap criterion is satisfied.

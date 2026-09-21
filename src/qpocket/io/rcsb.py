@@ -14,7 +14,6 @@ RCSB_DOWNLOAD_URL = "https://files.rcsb.org/download/{pdb_id}.cif"
 
 def get_uniprot_accession(pdb_id: str, chain_id: str) -> Optional[str]:
     """Retrieves the UniProt accession ID for a specific PDB chain."""
-
     with start_action(action_type="fetch_uniprot", pdb_id=pdb_id, chain_id=chain_id):
         query = {
             "query": {
@@ -66,9 +65,7 @@ def fetch_structure_ids(
         experimental_method: Optional[str] = None,
         enforce_same_uniprot: bool = False
 ) -> List[str]:
-    """
-    Fetches PDB IDs based on sequence similarity and metadata.
-    """
+    """Fetches PDB IDs based on sequence similarity and metadata."""
     full_ref = f"{ref_pdb_id}_{ref_chain_id}"
 
     with start_action(action_type="fetch_structures", ref=full_ref):

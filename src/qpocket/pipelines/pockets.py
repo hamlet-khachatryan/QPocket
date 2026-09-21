@@ -1,21 +1,4 @@
-"""Pocket extraction, featurisation, and interaction analysis.
-
-This module provides three public functions:
-
-* :func:`extract_reference_pocket_bbox` — processes the reference structure,
-  finds the binding pocket via centroid overlap, and returns its axis-aligned
-  bounding box with 1 Å padding.
-
-* :func:`extract_pocket_from_structure` — extracts the binding pocket for an
-  arbitrary structure.  When a reference bounding box is supplied (all
-  non-reference structures) it replaces the centroid-check with a volumetric
-  overlap check, selecting the cavity with the largest overlap.  Ligand
-  selection picks the **largest** (most heavy atoms) heteroatom molecule
-  overlapping with the pocket.
-
-* :func:`run_analysis_step` — derives potential (geometric) and observed
-  (PLIP) interactions for a structure.
-"""
+"""Pocket extraction, featurisation, and interaction analysis."""
 from __future__ import annotations
 
 import warnings
@@ -165,23 +148,16 @@ def extract_reference_pocket_bbox(
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Finds the reference binding pocket and derives its bounding box.
 
-    Runs cavity detection on the reference structure, finds the cavity whose
-    point cloud overlaps with *ref_centroid*, writes the pocket CSV, and
-    returns the axis-aligned bounding box of that point cloud expanded by
-    *bbox_padding* Å on every face.
-
     Args:
         pdb_path: Path to the cleaned reference PDB file.
         pdb_id: PDB identifier (used for naming and logging).
-        ref_centroid: 3-element array — geometric centroid of the reference
-            ligand used to identify the correct cavity.
+        ref_centroid: 3-element array — geometric centroid of the reference ligand used to identify the correct cavity.
         pocket_save_dir: Directory in which to write the pocket CSV.
         save_intermediate: When *True*, also write the raw (pre-crop) CSV.
         bbox_padding: Expansion of the bounding box in Å (default 1 Å).
 
     Returns:
-        ``(bbox_min, bbox_max)`` numpy arrays of shape ``(3,)`` defining the
-        reference bounding box, or ``None`` if cavity detection fails.
+        ``(bbox_min, bbox_max)`` numpy arrays of shape ``(3,)`` defining the reference bounding box, or ``None`` if cavity detection fails.
     """
     with start_action(
         action_type="extract_reference_pocket_bbox",
@@ -261,49 +237,23 @@ def extract_pocket_from_structure(
 ) -> Tuple[Optional[str], str]:
     """Extracts the binding pocket and largest co-crystallised ligand.
 
-    Pocket identification strategy
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    * **bounding_box** mode: the pocket is defined by an explicit box supplied
-      via *bounding_box_center* / *bounding_box_dims*.
-    * **cavity_detection** mode (reference structure, ``ref_pocket_bbox`` is
-      ``None``): cavities are compared against *ref_centroid* using majority
-      overlap.
-    * **cavity_detection** mode (all other structures, ``ref_pocket_bbox``
-      provided): each cavity is scored by the number of its points inside the
-      reference bounding box; the cavity with the highest volumetric overlap
-      is selected.
-
-    Ligand selection
-    ~~~~~~~~~~~~~~~~
-    All heteroatom residues that overlap with the final pocket are collected;
-    the one with the most heavy atoms is returned.
-
     Args:
         row: DataFrame row with ``pdb_id``, ``cleaned_file``, ``aligned_file``.
         dirs: Directory path dictionary from ``setup_directory_hierarchy()``.
-        ref_centroid: Reference ligand centroid (used for reference structure
-            processing when ``ref_pocket_bbox`` is ``None``).
-        allowed_cofactors: ``"|"``-separated list of cofactor residue names to
-            exclude from ligand selection.
+        ref_centroid: Reference ligand centroid (used for reference structure processing when ``ref_pocket_bbox`` is ``None``).
+        allowed_cofactors: ``"|"``-separated list of cofactor residue names to exclude from ligand selection.
         pocket_mode: ``"cavity_detection"`` or ``"bounding_box"``.
         bounding_box_center: Box centre for bounding_box mode.
         bounding_box_dims: Box dimensions for bounding_box mode.
-        pocket_definition: ``"Solvent"`` (full cavity) or ``"Interactions"``
-            (cropped to interacting residues).
+        pocket_definition: ``"Solvent"`` (full cavity) or ``"Interactions"`` (cropped to interacting residues).
         interaction_padding: Crop radius around interacting residues (Å).
         observed_interactions: Interaction list for Interactions mode.
-        ref_pocket_bbox: Pre-computed reference bounding box
-            ``(bbox_min, bbox_max)`` used for non-reference structures.
+        ref_pocket_bbox: Pre-computed reference bounding box ``(bbox_min, bbox_max)`` used for non-reference structures.
         save_intermediate: Persist the pre-crop pocket point cloud.
-        force_featurize: When ``True``, delete any existing ``featurized.csv``
-            and re-run featurisation.  Required for the Interactions second
-            pass to keep ``featurized.csv`` consistent with the cropped
-            ``binding_site.csv``.
+        force_featurize: When ``True``, delete any existing ``featurized.csv`` and re-run featurisation.
 
     Returns:
-        ``(ligand_file_path_or_None, status_string)`` where status is one of
-        ``BOUND_STATE``, ``UNBOUND_STATE``, ``CAVITY_CLOSED``,
-        ``NO_ANY_CAVITY_FOUND``, or ``FAILED``.
+        ``(ligand_file_path_or_None, status_string)`` where status is one of ``BOUND_STATE``, ``UNBOUND_STATE``, ``CAVITY_CLOSED``, ``NO_ANY_CAVITY_FOUND``, or ``FAILED``.
     """
     pdb_id = row["pdb_id"]
     cleaned_file = row["cleaned_file"]
@@ -459,10 +409,6 @@ def run_analysis_step(
 ) -> Dict[str, List[str]]:
     """Derives potential and observed interactions for a structure.
 
-    Potential interactions are all protein residues within 4 Å of the pocket
-    point cloud.  Observed interactions are from PLIP analysis of the bound
-    ligand (if any).
-
     Args:
         row: DataFrame row with structure metadata.
         dirs: Directory path dictionary.
@@ -554,8 +500,7 @@ def _select_best_cavity_by_bbox(
         pdb_id: Used for logging only.
 
     Returns:
-        Point cloud array ``(N, 3)`` of the best cavity, or ``None`` if no
-        cavity overlaps at all.
+        Point cloud array ``(N, 3)`` of the best cavity, or ``None`` if no cavity overlaps at all.
     """
     best_coords, best_overlap = select_cavity_by_bbox(cavities, bbox_min, bbox_max)
 

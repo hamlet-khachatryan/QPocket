@@ -20,9 +20,6 @@ from qpocket.screen_config import PreparationConfig
 def parse_vina_output(pdbqt_path: Path) -> Tuple[Optional[float], Optional[Chem.Mol]]:
     """Parse an AutoDock Vina output PDBQT file.
 
-    Extracts the best (lowest) docking score from ``REMARK VINA RESULT``
-    lines and converts the first MODEL block to an RDKit Mol.
-
     Args:
         pdbqt_path: Path to the docking output PDBQT.
 
@@ -71,14 +68,11 @@ def parse_vina_output(pdbqt_path: Path) -> Tuple[Optional[float], Optional[Chem.
 def parse_vina_box(vina_box_txt: Path) -> Dict[str, float]:
     """Parse a Vina-style ``vina_box.txt`` file.
 
-    Expected line format: ``key = value``
-
     Args:
         vina_box_txt: Path to the box config file.
 
     Returns:
-        Dict with keys ``center_x/y/z``, ``size_x/y/z``,
-        ``exhaustiveness``, ``num_modes``, ``energy_range``.
+        Dict with keys ``center_x/y/z``, ``size_x/y/z``, ``exhaustiveness``, ``num_modes``, ``energy_range``.
     """
     params: Dict[str, float] = {}
     with open(vina_box_txt) as fh:
@@ -99,10 +93,7 @@ def extract_vina_box(
         cfg: Dict,
         dirs: Dict[str, Path]
 ):
-    """
-    Generates a Vina-compatible config.txt with bounding box coordinates.
-    Mode: 'ligand_based' (uses extracted ligands) or 'cavity_based' (uses pocket CSVs).
-    """
+    """Generates a Vina-compatible config.txt with bounding box coordinates."""
     mode = cfg.get('box_mode', 'ligand_based') # or 'cavity_based'
     padding = cfg.get('padding', 5.0)
 
@@ -177,13 +168,9 @@ def extract_vina_box(
 def download_chembl_dataset(url: str, local_dir: Union[str, Path]) -> Path:
     """Download a ChEMBL dataset from Google Drive (or any direct URL).
 
-    Uses ``gdown`` for Google Drive links.  Extracts ZIP archives if
-    necessary.  Skips the download entirely when ``.txt`` files are already
-    present in *local_dir*.
-
     Args:
         url: Google Drive share URL or direct download URL.
-        local_dir: Target directory.  Created if it does not exist.
+        local_dir: Target directory.
 
     Returns:
         Resolved path to *local_dir*.
@@ -228,11 +215,6 @@ def prepare_protein_pdbqt(
     cfg: PreparationConfig,
 ) -> bool:
     """Convert a protein PDB to PDBQT format for AutoDock Vina.
-
-    Steps:
-    1. ``pdb2pqr`` — add hydrogens and correct protonation at target pH.
-    2. ``mk_prepare_receptor`` (Meeko CLI) — convert PQR → PDBQT.
-       Falls back to a minimal manual conversion if Meeko is unavailable.
 
     Args:
         input_pdb: Path to the cleaned protein PDB file.
@@ -316,12 +298,7 @@ def prepare_protein_pdbqt(
 
 
 def _pqr_to_pdbqt_fallback(input_path: Path, output_pdbqt: Path) -> bool:
-    """Minimal PQR/PDB → PDBQT conversion (strips charge/radius columns).
-
-    This fallback writes ATOM/HETATM lines in PDBQT format with a generic
-    charge of 0.000 and no radius.  It is intended as a last resort when
-    the Meeko receptor tool is unavailable.
-    """
+    """Minimal PQR/PDB → PDBQT conversion (strips charge/radius columns)."""
     try:
         lines_out = []
         with open(input_path) as fh:
@@ -359,9 +336,6 @@ def prepare_ligand_pdbqt(
     ligand_id: str = "LIG",
 ) -> bool:
     """Convert a SMILES string to a 3-D PDBQT file for AutoDock Vina.
-
-    Uses RDKit ETKDGv3 for conformer generation + MMFF94 minimisation, then
-    Meeko ``MoleculePreparation`` / ``PDBQTWriterLegacy`` for the PDBQT.
 
     Args:
         smiles: Input SMILES string.
@@ -479,11 +453,7 @@ def _write_ligand_pdbqt_sdf_fallback(
     output_pdbqt: Path,
     ligand_id: str,
 ) -> bool:
-    """Minimal SDF → PDBQT via OpenBabel fallback.
-
-    Writes the conformer to a temporary SDF then converts it using
-    ``obabel`` CLI.  Requires OpenBabel to be installed as a command.
-    """
+    """Minimal SDF → PDBQT via OpenBabel fallback."""
     import tempfile
 
     from rdkit.Chem import SDWriter

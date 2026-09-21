@@ -83,8 +83,8 @@ def run_qpocket_pipeline(
         log_format: Eliot log format — ``"json"`` or ``"text"``.
         save_intermediate: Persist intermediate pocket files.
         compression: HDF5 compression — ``"gzip"`` or ``"none"``.
-        interaction_padding: Crop radius (Å) around interacting residues for
-            ``pocket_definition == "Interactions"`` mode.
+        interaction_padding: Crop radius (Å) around interacting residues for ``pocket_definition == "Interactions"`` mode.
+        extra_overrides: Dot-list overrides applied last.
     """
     overrides: List[str] = []
 

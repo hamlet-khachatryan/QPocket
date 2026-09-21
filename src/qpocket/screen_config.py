@@ -9,12 +9,14 @@ from omegaconf import OmegaConf
 
 @dataclass
 class ChemblDatasetConfig:
+    """Where the ChEMBL decoy pool is downloaded from and cached."""
     url: str = "PLACEHOLDER_GOOGLE_DRIVE_URL"
     local_dir: str = "~/.qpocket/chembl_data"
 
 
 @dataclass
 class DecoyConfig:
+    """Property-matching limits for decoy selection."""
     n_decoys_per_active: int = 50
     max_similarity: float = 0.2
     mw_diff: float = 20.0
@@ -27,12 +29,14 @@ class DecoyConfig:
 
 @dataclass
 class BoxConfig:
+    """Docking box: from the ligands or the cavities, plus padding (A)."""
     mode: str = "ligand_based"  # ligand_based | cavity_based
     padding: float = 5.0
 
 
 @dataclass
 class PreparationConfig:
+    """Ligand protonation pH and conformer generation."""
     ph: float = 7.4
     num_conformers: int = 50
     max_iters: int = 500
@@ -40,6 +44,7 @@ class PreparationConfig:
 
 @dataclass
 class DockingConfig:
+    """Docking engine and its search settings."""
     engine: str = "vina"  # vina | quickvina
     engine_path: str = "vina"
     exhaustiveness: int = 8
@@ -50,6 +55,7 @@ class DockingConfig:
 
 @dataclass
 class SlurmConfig:
+    """SLURM resources for docking arrays."""
     enabled: bool = False
     partition: str = "standard"
     cpus_per_task: int = 8
@@ -63,6 +69,7 @@ class SlurmConfig:
 
 @dataclass
 class AnalysisConfig:
+    """Pose RMSD threshold and enrichment metric settings."""
     rmsd_threshold: float = 2.0
     bedroc_alpha: float = 20.0
     ef_fractions: List[float] = field(default_factory=lambda: [0.001, 0.01, 0.03, 0.05, 0.1])
@@ -70,6 +77,7 @@ class AnalysisConfig:
 
 @dataclass
 class ScreenConfig:
+    """Full screening configuration."""
     run_mode: str = "cross_docking"  # cross_docking | virtual_screening
     chembl: ChemblDatasetConfig = field(default_factory=ChemblDatasetConfig)
     decoy: DecoyConfig = field(default_factory=DecoyConfig)
@@ -84,10 +92,8 @@ def load_screen_config(path: Optional[str] = None, **overrides) -> ScreenConfig:
     """Load ScreenConfig from a YAML file, optionally applying overrides.
 
     Args:
-        path: Path to a YAML config file.  When ``None`` the default values
-            from the dataclasses are used.
-        **overrides: Dot-separated key=value pairs that override any field
-            (e.g. ``run_mode="virtual_screening"``).
+        path: Path to a YAML config file.
+        **overrides: Dot-separated key=value pairs that override any field (e.g. ``run_mode="virtual_screening"``).
 
     Returns:
         A fully-populated :class:`ScreenConfig` instance.

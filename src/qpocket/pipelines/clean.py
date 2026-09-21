@@ -1,7 +1,4 @@
-"""Structure cleaning: keeps protein residues and allowed cofactors.
-
-Biopython rather than PyMOL; see :mod:`qpocket.core.structure`.
-"""
+"""Structure cleaning: keeps protein residues and allowed cofactors."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,15 +17,10 @@ def clean_structure(
 ) -> bool:
     """Filters a PDB file to retain only protein residues and allowed cofactors.
 
-    Removes water, ions, ligands and modified residues not named in
-    *allowed_cofactors*. Assumes *input_pdb_path* already holds only the
-    relevant chain(s).
-
     Args:
         input_pdb_path: Path to the aligned PDB file.
         output_pdb_path: Destination path for the cleaned PDB file.
-        allowed_cofactors: ``"|"``-separated residue names to keep
-            (e.g. ``"HEM|MG"``). ``None`` keeps only standard amino acids.
+        allowed_cofactors: ``"|"``-separated residue names to keep (e.g. ``"HEM|MG"``).
 
     Returns:
         ``True`` on success, ``False`` if cleaning failed or left nothing.

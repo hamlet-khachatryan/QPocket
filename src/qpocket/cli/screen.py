@@ -1,12 +1,4 @@
-"""CLI entry point for QPocket-Screen.
-
-Usage:
-    qpocket screen prepare --workdir <run> [--config screen.yaml] [--submit slurm|local]
-    qpocket screen run-local <run>/screening/docking_jobs.csv --workers 4
-    qpocket screen analyze  --workdir <run> [--config screen.yaml]
-
-``qpocket-screen`` is the same group under its old name.
-"""
+"""CLI entry point for QPocket-Screen."""
 from __future__ import annotations
 
 import click

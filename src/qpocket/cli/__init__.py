@@ -1,8 +1,4 @@
-"""
-QPocket Pipeline CLI Module
-
-Provides command-line interface for the QPocket pipeline.
-"""
+"""QPocket Pipeline CLI Module."""
 from __future__ import annotations
 
 import re
@@ -18,8 +14,7 @@ from qpocket.pipelines.run import run_qpocket_pipeline
 @click.group()
 @click.version_option(version="0.1.0")
 def cli():
-    """
-    QPocket - Protein Binding Pocket Analysis Pipeline
+    """QPocket - Protein Binding Pocket Analysis Pipeline.
 
     A framework for analysis and benchmarking of experimentally observed
     conformational space of protein binding pockets for drug design applications.
@@ -262,11 +257,9 @@ def run(
     save_intermediate: bool,
     compression: Optional[str],
 ):
-    """
-    Run the QPocket pipeline with specified parameters.
+    """Run the QPocket pipeline with specified parameters.
 
     Examples:
-
     \b
     # PDB query mode
     qpocket run --pdb-id 6HP0 --chain-id A --ligand-id LKQ --workdir ./results
@@ -413,11 +406,9 @@ def run(
 @cli.command()
 @click.argument("config_file", type=click.Path())
 def validate(config_file: str):
-    """
-    Validate a configuration file.
+    """Validate a configuration file.
 
     Example:
-
     \b
     qpocket validate config.yaml
     """
@@ -443,14 +434,12 @@ def validate(config_file: str):
     help="Where to write the configuration file.",
 )
 def init(output: str):
-    """
-    Write a configuration file containing every setting and its default.
+    """Write a configuration file containing every setting and its default.
 
     The file is a copy of the defaults the pipeline actually loads, so it can
     never fall behind them. Edit it and pass it with --config.
 
     Example:
-
     \b
     qpocket init
     qpocket run --config qpocket_config.yaml
@@ -505,8 +494,7 @@ def _load_run(config: Optional[str], workdir: Optional[str], overrides: List[str
 
 @cli.group()
 def slurm():
-    """
-    Generate and submit the pipeline as SLURM job arrays.
+    """Generate and submit the pipeline as SLURM job arrays.
 
     APBS dominates the runtime — 216s of a 366s 21-structure run — and every
     structure is independent, so featurisation runs as one array task each.
@@ -525,11 +513,9 @@ def slurm():
               help="Also run sbatch and print the job IDs.")
 def slurm_generate(config: str, workdir: Optional[str], stages: Optional[str],
                    submit: bool):
-    """
-    Write sbatch scripts for every stage, plus a dependency-chained driver.
+    """Write sbatch scripts for every stage, plus a dependency-chained driver.
 
     Example:
-
     \b
     qpocket slurm generate --config experiments/PARG.yaml
     bash <workdir>/<PDB>/slurm/submit_all.sh
@@ -587,8 +573,7 @@ def slurm_generate(config: str, workdir: Optional[str], stages: Optional[str],
 @click.option("--workdir", type=click.Path(), default=None,
               help="Override paths.workdir.")
 def slurm_status(config: str, workdir: Optional[str]):
-    """
-    Report how far each stage has got, judged by the files on disk.
+    """Report how far each stage has got, judged by the files on disk.
 
     Artifacts rather than sacct, so it keeps answering after the accounting
     database has rotated the jobs away.
@@ -610,9 +595,7 @@ def slurm_status(config: str, workdir: Optional[str]):
               help="Pipeline configuration file.")
 @click.pass_context
 def slurm_check(ctx, config: Optional[str]):
-    """
-    Verify the toolchain on a compute node. An alias for `qpocket doctor`.
-    """
+    """Verify the toolchain on a compute node. An alias for `qpocket doctor`."""
     ctx.invoke(doctor, config=config, smoke=True)
 
 
@@ -622,8 +605,7 @@ def slurm_check(ctx, config: Optional[str]):
 @click.option("--smoke/--no-smoke", default=True,
               help="Run APBS on a tiny synthetic system (a few seconds).")
 def doctor(config: Optional[str], smoke: bool):
-    """
-    Check that this machine can actually run the pipeline.
+    """Check that this machine can actually run the pipeline.
 
     Reports the platform, every import, the external tools, and -- unless
     --no-smoke -- runs APBS for real, which is the check that matters on Linux:
@@ -633,7 +615,6 @@ def doctor(config: Optional[str], smoke: bool):
     Run it on a compute node, not the login node; they are often different.
 
     Example:
-
     \b
     qpocket doctor
     srun -p compute qpocket doctor      # where the work will actually happen

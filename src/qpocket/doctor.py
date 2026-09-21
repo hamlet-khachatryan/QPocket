@@ -1,15 +1,4 @@
-"""Proving the toolchain works, rather than that it imports.
-
-``apbs_binary`` patches its library path only on macOS
-(``apbs_binary/executable.py``); on Linux the wheel's binary has to find its
-shared objects by itself. It imports cleanly either way, so an import check says
-nothing useful. The only honest test is to run APBS on a real input deck and
-look at what comes back.
-
-The system used here is deliberately tiny -- three atoms on a coarse grid -- so
-the check costs a second or two and can be run inside a SLURM allocation without
-thinking about it.
-"""
+"""Proving the toolchain works, rather than that it imports."""
 
 from __future__ import annotations
 
@@ -70,9 +59,7 @@ def run_apbs_smoke_test(timeout: int = 300) -> Tuple[float, str]:
 
     Raises:
         ImportError: If ``apbs_binary`` is not installed.
-        RuntimeError: If APBS exits non-zero, times out, or writes no grid. The
-            message carries APBS's own stderr, which is where a missing shared
-            object shows up on Linux.
+        RuntimeError: If APBS exits non-zero, times out, or writes no grid.
     """
     from apbs_binary import popen_apbs
 

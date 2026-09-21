@@ -194,11 +194,6 @@ def calculate_cp_lp(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Computes the charge potential (CP) and lipophilic potential (LP) at pocket points.
 
-    A KD-tree spatial pre-filter restricts computation to atoms within
-    ``_CP_LP_CUTOFF`` (12 Å) of any pocket point, reducing the number of
-    atom-pair evaluations by ~10× for typical systems without loss of accuracy
-    (contributions from atoms beyond 12 Å are negligible for both potentials).
-
     Args:
         points: Pocket grid points ``(N, 3)``.
         atom_coords: Protein atom coordinates ``(M, 3)``.

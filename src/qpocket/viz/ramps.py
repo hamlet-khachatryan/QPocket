@@ -1,28 +1,4 @@
-"""Colour ramps for pocket features, and the maths a viewer legend must mirror.
-
-Each feature gets a ramp keyed to what its numbers physically mean, taken from
-published schemes rather than picked by eye:
-
-======================  =========================================================
-``apbs``, ``cp``        ColorBrewer RdBu. Negative reads red and positive blue,
-                        the convention APBS and the molecular viewers established.
-``lp``                  ColorBrewer BrBG reversed: teal for hydrophilic, brown for
-                        lipophilic, as lipophilicity-potential maps are drawn.
-``h_donor``             Single-hue Blues, since donor features are drawn blue.
-``h_acceptor``          Single-hue Reds, since acceptor features are drawn red.
-``aromatic``            YlOrBr, the amber pi-stacking already carries elsewhere.
-======================  =========================================================
-
-Whether a feature is signed is a property of the feature, never of the values in
-view. APBS runs entirely negative in some pockets, and those still have to read
-red rather than being restretched onto a magnitude ramp.
-
-The stops produced here are consumed by 3Dmol's ``linear_…`` gradient, whose
-``CustomLinear`` implementation divides the range into equal bins and interpolates
-towards the next stop; the last bin has no successor and renders flat.
-:func:`linear_hex` reproduces that exactly, so a legend drawn with it cannot
-disagree with what the viewer shows.
-"""
+"""Colour ramps for pocket features, and the maths a viewer legend must mirror."""
 
 from __future__ import annotations
 
@@ -51,8 +27,7 @@ class ColourDomain(NamedTuple):
     Attributes:
         lo: Value at the start of the ramp.
         hi: Value at the end of the ramp.
-        zero_frac: Where zero falls in ``[lo, hi]``, or ``None`` when the feature
-            is unsigned and zero carries no special meaning.
+        zero_frac: Where zero falls in ``[lo, hi]``, or ``None`` when the feature is unsigned and zero carries no special meaning.
     """
 
     lo: float
@@ -173,8 +148,7 @@ def feature_ramp(feature: str, scheme: str = "feature-aware") -> RampSpec:
         scheme: Either ``"feature-aware"`` or :data:`PERCEPTUAL_SCHEME`.
 
     Returns:
-        The ramp to use. ``kind`` and ``ends`` never change with the scheme, so
-        a signed feature stays diverging whichever scheme is chosen.
+        The ramp to use.
     """
     spec = FEATURE_RAMP.get(feature, DEFAULT_RAMP)
     if scheme == PERCEPTUAL_SCHEME:
@@ -186,12 +160,6 @@ def colour_domain(
     values: Sequence[float], clip_pct: float, kind: str
 ) -> ColourDomain:
     """Value range for a ramp, with zero handled the way the feature needs.
-
-    Feature values are heavy-tailed, so the ends are clipped at percentiles. For
-    a signed feature zero is always inside the domain and always lands on the
-    ramp's neutral midpoint. When both signs are present the domain is made
-    symmetric too, so a unit is a fixed amount of colour on either arm —
-    otherwise ``+5`` would look as strongly positive as ``-20`` looks negative.
 
     Args:
         values: Every value the ramp has to cover.
@@ -226,9 +194,6 @@ def colour_domain(
 def scale_to_percent(values: Sequence[float], domain: ColourDomain) -> np.ndarray:
     """Rescale values onto ``0-100`` for the B-factor column.
 
-    Writing a scaled value rather than the raw one keeps colour precision the
-    same for every feature, whatever its units.
-
     Args:
         values: Raw feature values.
         domain: Range they should be mapped onto.
@@ -262,10 +227,7 @@ def ramp_stops(
 
     Args:
         scale: Key into :data:`RAMP_TABLES`.
-        zero_frac: Where zero falls in the domain, which is where the ramp's
-            neutral midpoint is pinned. ``None`` for a sequential ramp. A pocket
-            whose values are all negative gets ``1.0`` here and so uses the warm
-            arm alone instead of being stretched across both.
+        zero_frac: Where zero falls in the domain, which is where the ramp's neutral midpoint is pinned.
         n: Number of stops.
 
     Returns:
@@ -301,10 +263,6 @@ def linear_hex(
     value: float, stops: Sequence[str], lo: float = 0.0, hi: float = 100.0
 ) -> str:
     """Colour a value the way 3Dmol's ``CustomLinear`` gradient would.
-
-    Equal bins, interpolating towards the next stop, with the last bin flat
-    because it has no successor. Legends are drawn with this so they cannot
-    disagree with the viewer.
 
     Args:
         value: Value to colour.

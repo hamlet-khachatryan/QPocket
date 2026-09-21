@@ -1,32 +1,31 @@
-"""Turning the pipeline into SLURM job arrays.
+"""Turning the pipeline into SLURM job arrays."""
 
-The pipeline is one serial process, and profiling says almost all of it is one
-call: on a 21-structure run, ``calculate_apbs_potential`` accounts for 216s of a
-366s wall clock, invoked once per structure inside a ``for`` loop. Nothing about
-that loop is sequential — each structure reads its own cleaned PDB and writes its
-own pocket directory — so the fix is to hand each structure to its own array task.
-
-Three stages split that way: featurisation (optionally with APBS broken out into
-a stage of its own), and the geodesic graph. The rest cannot:
-
-``prepare``
-    PyMOL's ``cmd`` is a module-level singleton holding one loaded reference
-    object, so alignment cannot share a process. The reference pocket bounding
-    box is also a hard dependency of every other structure's cavity selection.
-
-``collect``
-    The HDF5 files, ``master.csv`` and the frequency tables each need every
-    structure's result, and none of them tolerates concurrent writers.
-
-``distance``
-    The feature scaler is fitted across all pockets at once, and the distance
-    matrix is N x N. Measured at 4.2s for 21 structures, so it is given cores
-    rather than tasks.
-
-What this module writes is plain sbatch text — no scheduler library, no daemon.
-You can read every script before spending an hour of cluster time on it, which is
-the point.
-"""
+# The pipeline is one serial process, and profiling says almost all of it is one
+# call: on a 21-structure run, ``calculate_apbs_potential`` accounts for 216s of a
+# 366s wall clock, invoked once per structure inside a ``for`` loop. Nothing about
+# that loop is sequential — each structure reads its own cleaned PDB and writes its
+# own pocket directory — so the fix is to hand each structure to its own array task.
+#
+# Three stages split that way: featurisation (optionally with APBS broken out into
+# a stage of its own), and the geodesic graph. The rest cannot:
+#
+# ``prepare``
+#     PyMOL's ``cmd`` is a module-level singleton holding one loaded reference
+#     object, so alignment cannot share a process. The reference pocket bounding
+#     box is also a hard dependency of every other structure's cavity selection.
+#
+# ``collect``
+#     The HDF5 files, ``master.csv`` and the frequency tables each need every
+#     structure's result, and none of them tolerates concurrent writers.
+#
+# ``distance``
+#     The feature scaler is fitted across all pockets at once, and the distance
+#     matrix is N x N. Measured at 4.2s for 21 structures, so it is given cores
+#     rather than tasks.
+#
+# What this module writes is plain sbatch text — no scheduler library, no daemon.
+# You can read every script before spending an hour of cluster time on it, which is
+# the point.
 
 from __future__ import annotations
 
@@ -50,8 +49,7 @@ class StageSpec(NamedTuple):
         name: Stage name, used for the config key, manifest and log prefix.
         order: Two-digit prefix that sorts the generated scripts.
         array: Whether this stage runs one task per structure.
-        artifact: Path of the file a finished task leaves behind, relative to
-            the run root. ``{pdb_id}`` is substituted for an array stage.
+        artifact: Path of the file a finished task leaves behind, relative to the run root.
         summary: One line describing the stage, written into the script.
     """
 
@@ -88,8 +86,7 @@ def active_stages(cfg) -> Tuple[StageSpec, ...]:
         cfg: A loaded :class:`~qpocket.config.QPocketConfig`.
 
     Returns:
-        Stage specs in dependency order. ``apbs`` is present only when it has
-        been split out; otherwise APBS runs inside ``featurize``.
+        Stage specs in dependency order.
     """
     split = bool(getattr(cfg.slurm, "split_apbs_stage", False))
     return tuple(s for s in STAGES if split or s.name != "apbs")
@@ -103,8 +100,7 @@ def stage_resources(cfg, stage_name: str):
         stage_name: One of the names in :data:`STAGES`.
 
     Returns:
-        An object carrying ``cpus``, ``mem`` and ``time``. OmegaConf hands back
-        a ``DictConfig`` rather than the dataclass, so this is duck-typed.
+        An object carrying ``cpus``, ``mem`` and ``time``.
     """
     overrides = getattr(cfg.slurm, "stages", None) or {}
     # DictConfig and dict both support __contains__ / __getitem__.
@@ -123,9 +119,6 @@ def slurm_dir(dirs: Dict[str, Path]) -> Path:
 
 def write_manifest(dirs: Dict[str, Path], stage: StageSpec, pdb_ids: Sequence[str]) -> Path:
     """Write one PDB ID per line for an array stage to index into.
-
-    A bare newline-delimited list rather than a CSV: the worker resolves its own
-    row by index, so nothing has to parse a comma inside a quoted path.
 
     Args:
         dirs: Directory map from ``setup_directory_hierarchy``.
@@ -148,16 +141,12 @@ def read_manifest(path: Path) -> List[str]:
 def chunk_bounds(n_tasks: int, max_array_size: int) -> List[Tuple[int, int]]:
     """Split ``n_tasks`` into ``(offset, size)`` chunks under the array cap.
 
-    SLURM refuses an array larger than its ``MaxArraySize``, so a big run becomes
-    several scripts whose offsets tile the manifest exactly once.
-
     Args:
         n_tasks: Total tasks wanted.
         max_array_size: Largest array the cluster accepts.
 
     Returns:
-        One ``(offset, size)`` per script. Empty when there is nothing to do,
-        which is what keeps an empty run from emitting ``--array=1-0``.
+        One ``(offset, size)`` per script.
     """
     if n_tasks <= 0:
         return []
@@ -209,8 +198,7 @@ def render_sbatch(
         stage: Stage to render.
         config_path: Config file the worker should load, made absolute.
         n_tasks: Tasks in this array, or ``None`` for a single job.
-        offset: Added to ``SLURM_ARRAY_TASK_ID`` to index the manifest, for a
-            stage split across several scripts.
+        offset: Added to ``SLURM_ARRAY_TASK_ID`` to index the manifest, for a stage split across several scripts.
         manifest: Manifest path, required for an array stage.
         chunk: Chunk number, appended to the job name when a stage is split.
 
@@ -284,11 +272,10 @@ def write_scripts(
         dirs: Directory map for the run.
         config_path: Config the workers should load.
         pdb_ids: Structures to process in the array stages.
-        stages: Restrict to these stage names. ``None`` writes them all.
+        stages: Restrict to these stage names.
 
     Returns:
-        Stage name to the scripts written for it, in submission order. A stage
-        with nothing to do contributes an empty list rather than a broken array.
+        Stage name to the scripts written for it, in submission order.
     """
     root = slurm_dir(dirs)
     wanted = None if stages is None else set(stages)
@@ -333,11 +320,6 @@ def write_scripts(
 
 def write_submit_all(cfg, dirs: Dict[str, Path], scripts: Dict[str, List[Path]]) -> Path:
     """Write the driver that submits every stage with the right dependencies.
-
-    Each stage waits on all of the previous stage's jobs. The default dependency
-    is ``afterany``, not ``afterok``: with ``afterok`` a single unparseable PDB
-    in a 200-task array blocks the entire chain, whereas every downstream stage
-    already skips inputs that are missing.
 
     Args:
         cfg: A loaded config.
@@ -445,17 +427,12 @@ def submit(dirs: Dict[str, Path], scripts: Dict[str, List[Path]],
 def stage_progress(cfg, dirs: Dict[str, Path]) -> List[Dict[str, object]]:
     """How far each stage has got, judged by the files on disk.
 
-    Artifacts rather than ``sacct``, so this answers the question that matters —
-    is the work done — and keeps answering it after the accounting database has
-    rotated the jobs away.
-
     Args:
         cfg: A loaded config.
         dirs: Directory map for the run.
 
     Returns:
-        One record per stage with ``stage``, ``expected``, ``complete`` and
-        ``missing`` (the first few incomplete PDB IDs).
+        One record per stage with ``stage``, ``expected``, ``complete`` and ``missing`` (the first few incomplete PDB IDs).
     """
     root = Path(dirs["root"])
     manifest_dir = slurm_dir(dirs) / "manifests"

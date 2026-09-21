@@ -1,8 +1,4 @@
-"""Virtual screening: prepare a docking campaign, run its jobs, analyse the results.
-
-Prepare writes the task list (docking_jobs.csv) and, depending on ``submit``,
-either SLURM array scripts or the command that runs everything locally.
-"""
+"""Virtual screening: prepare a docking campaign, run its jobs, analyse the results."""
 from __future__ import annotations
 
 import subprocess

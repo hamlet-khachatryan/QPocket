@@ -1,26 +1,4 @@
-"""Visualisation helpers behind the Q-Pocket explorer notebook.
-
-The notebook at ``experiments/visualize_qpocket.py`` is the user interface; the
-logic it needs lives here, where pytest can reach it:
-
-:mod:`~qpocket.viz.pdb_text`
-    Reading structures and emitting column-correct PDB for a browser viewer.
-:mod:`~qpocket.viz.ramps`
-    Per-feature colour ramps, and the gradient maths a legend has to mirror.
-:mod:`~qpocket.viz.embed`
-    Two-dimensional layouts of a precomputed distance matrix.
-:mod:`~qpocket.viz.cluster`
-    Re-clustering that matrix, and comparing the result to the stored labels.
-:mod:`~qpocket.viz.pockets`
-    Exact set arithmetic over pocket clouds: occupancy, overlap, field differences.
-:mod:`~qpocket.viz.runs`
-    Finding run directories, including one the user types in.
-:mod:`~qpocket.viz.assets`
-    The vendored 3Dmol.js build, for pages that must work offline.
-
-Nothing here imports plotly, marimo, umap or scikit-learn at module level, so the
-package stays importable without the notebook's own dependencies.
-"""
+"""Visualisation helpers behind the Q-Pocket explorer notebook."""
 
 from __future__ import annotations
 

@@ -1,26 +1,25 @@
-"""Structure operations, in Biopython, standing in for PyMOL.
+"""Structure operations, in Biopython, standing in for PyMOL."""
 
-The pipeline used PyMOL for four things -- loading, superposition, cleaning and
-saving -- and PyMOL is the one dependency with no pip wheel for older Linux
-(RHEL 8, glibc 2.28), which is most cluster nodes. Everything it did is done here
-with Biopython, which the pipeline already depends on, and numpy.
-
-Two behaviours are reproduced deliberately, because results depend on them:
-
-**Superposition** follows ``cmd.align``: a BLOSUM62 sequence alignment decides
-which residues correspond, every atom with a matching name in a matched pair
-is fitted, and the fit is refined for up to five cycles, each dropping pairs
-further than twice the current RMSD. The whole mobile structure then moves, not
-only the fitted chain, so auxiliary chains land in the reference frame too.
-
-**CONECT records** follow what PyMOL wrote, because PLIP -- which reads the
-aligned files -- uses them to perceive ligand bonds. Dropping them changed PLIP's
-hydrogen-bond calls on 5 of 16 PARG structures. PyMOL's rule, recovered from the
-files it wrote: bonds within a residue by covalent radii (+0.45 A), never between
-alternate locations; peptide C-N links between residues; and the covalent links
-annotated in the input (``_struct_conn`` in mmCIF, ``LINK`` or inter-residue
-``CONECT`` in PDB). Only pairs involving a HETATM are written, as PyMOL did.
-"""
+# The pipeline used PyMOL for four things -- loading, superposition, cleaning and
+# saving -- and PyMOL is the one dependency with no pip wheel for older Linux
+# (RHEL 8, glibc 2.28), which is most cluster nodes. Everything it did is done here
+# with Biopython, which the pipeline already depends on, and numpy.
+#
+# Two behaviours are reproduced deliberately, because results depend on them:
+#
+# **Superposition** follows ``cmd.align``: a BLOSUM62 sequence alignment decides
+# which residues correspond, every atom with a matching name in a matched pair
+# is fitted, and the fit is refined for up to five cycles, each dropping pairs
+# further than twice the current RMSD. The whole mobile structure then moves, not
+# only the fitted chain, so auxiliary chains land in the reference frame too.
+#
+# **CONECT records** follow what PyMOL wrote, because PLIP -- which reads the
+# aligned files -- uses them to perceive ligand bonds. Dropping them changed PLIP's
+# hydrogen-bond calls on 5 of 16 PARG structures. PyMOL's rule, recovered from the
+# files it wrote: bonds within a residue by covalent radii (+0.45 A), never between
+# alternate locations; peptide C-N links between residues; and the covalent links
+# annotated in the input (``_struct_conn`` in mmCIF, ``LINK`` or inter-residue
+# ``CONECT`` in PDB). Only pairs involving a HETATM are written, as PyMOL did.
 
 from __future__ import annotations
 
@@ -70,8 +69,7 @@ class Fit(NamedTuple):
         n_atoms_before: Matched atom pairs before refinement.
         n_residues: Residue pairs the sequence alignment matched.
         cycles: Refinement cycles run.
-        rotation: 3x3 matrix, applied as ``coord @ rotation + translation``
-            (Biopython's ``transform`` convention).
+        rotation: 3x3 matrix, applied as ``coord @ rotation + translation`` (Biopython's ``transform`` convention).
         translation: Length-3 vector.
     """
 
@@ -113,6 +111,18 @@ def without_water(structure: Structure) -> Tuple[Structure, int]:
 
 
 def atom_key(chain: str, resseq, icode: str, resname: str, atom: str) -> AtomKey:
+    """Hashable identity of an atom: chain, residue number, insertion code, residue and atom name.
+
+    Args:
+        chain: Chain ID.
+        resseq: Residue number.
+        icode: Insertion code.
+        resname: Residue name.
+        atom: Atom name.
+
+    Returns:
+        The key.
+    """
     icode = "" if icode in (None, "?", ".", " ") else str(icode).strip()
     return (str(chain).strip(), int(str(resseq).strip()), icode,
             str(resname).strip(), str(atom).strip())
@@ -124,19 +134,31 @@ def atom_key(chain: str, resseq, icode: str, resname: str, atom: str) -> AtomKey
 
 
 def is_polymer(residue: Residue) -> bool:
-    """An amino acid in the chain: it has the backbone N, CA and C.
-
-    Recognises modified residues (MSE, CME, CSO...) as polymer, which a residue
-    name list would miss, and never mistakes a ligand for one.
-    """
+    """An amino acid in the chain: it has the backbone N, CA and C."""
     return all(name in residue for name in ("N", "CA", "C"))
 
 
 def polymer_residues(chain: Chain) -> List[Residue]:
+    """Amino-acid residues of a chain, in order.
+
+    Args:
+        chain: Biopython chain.
+
+    Returns:
+        Residues with a backbone.
+    """
     return [r for r in chain if is_polymer(r)]
 
 
 def one_letter(residue: Residue) -> str:
+    """One-letter code of a residue, X when unknown.
+
+    Args:
+        residue: Biopython residue.
+
+    Returns:
+        Single letter.
+    """
     return THREE_TO_ONE_MAPPING.get(residue.get_resname().strip(), "X")
 
 
@@ -146,6 +168,14 @@ def chain_sequence(chain: Chain) -> str:
 
 
 def ca_coords(chain: Chain) -> np.ndarray:
+    """CA coordinates of a chain's amino acids.
+
+    Args:
+        chain: Biopython chain.
+
+    Returns:
+        (N, 3) array.
+    """
     return np.array([r["CA"].coord for r in chain if "CA" in r], dtype=float).reshape(-1, 3)
 
 
@@ -182,12 +212,7 @@ def residue_pairs(mobile: Sequence[Residue],
 
 
 def _atom_pairs(pairs: Sequence[Tuple[Residue, Residue]]) -> Tuple[np.ndarray, np.ndarray]:
-    """Atoms present under the same name in both residues of each pair.
-
-    Hydrogens included, as ``cmd.align`` includes them: on entries deposited with
-    riding hydrogens they are half the atoms, and leaving them out moved the RMSD
-    by ~0.01 A against PyMOL's.
-    """
+    """Atoms present under the same name in both residues of each pair."""
     mob, ref = [], []
     for res_m, res_r in pairs:
         for atom in res_m:
@@ -199,10 +224,7 @@ def _atom_pairs(pairs: Sequence[Tuple[Residue, Residue]]) -> Tuple[np.ndarray, n
 
 
 def kabsch(mobile: np.ndarray, reference: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Rotation and translation taking ``mobile`` onto ``reference``.
-
-    Returned in Biopython's convention: ``mobile @ rotation + translation``.
-    """
+    """Rotation and translation taking ``mobile`` onto ``reference``."""
     mc, rc = mobile.mean(axis=0), reference.mean(axis=0)
     h = (mobile - mc).T @ (reference - rc)
     u, _, vt = np.linalg.svd(h)
@@ -220,9 +242,6 @@ def _rmsd(a: np.ndarray, b: np.ndarray) -> float:
 def superpose(mobile: Sequence[Residue], reference: Sequence[Residue],
               cycles: int = ALIGN_CYCLES, cutoff: float = ALIGN_CUTOFF) -> Fit:
     """Fit ``mobile`` residues onto ``reference`` residues, as ``cmd.align``.
-
-    Nothing is moved; apply ``fit.rotation`` / ``fit.translation`` with
-    :func:`apply` to whatever should follow the fit.
 
     Raises:
         ValueError: If fewer than three atom pairs can be matched.
@@ -275,10 +294,7 @@ def moved(entity, fit: Fit):
 
 def keep_chains(structure: Structure, chain_ids: Iterable[str],
                 protein_only: bool = False) -> Structure:
-    """A new structure holding only ``chain_ids``, in that order.
-
-    ``protein_only`` keeps just amino-acid residues, as ``polymer.protein``.
-    """
+    """A new structure holding only ``chain_ids``, in that order."""
     wanted = list(dict.fromkeys(chain_ids))
     model = structure[0]
     out_structure = Structure(structure.id)
@@ -360,10 +376,6 @@ def count_atoms(structure: Structure) -> int:
 
 def renumbered(chain: Chain, old_to_new: Dict[int, int]) -> Tuple[Chain, int]:
     """Copy of a chain renumbered as ``cmd.alter`` + ``cmd.sort`` would.
-
-    Every residue whose number is a key takes the new number. On a clash the
-    later residue keeps its old number, or that number with a free insertion
-    code; no residue is dropped.
 
     Args:
         chain: Input chain (not modified).

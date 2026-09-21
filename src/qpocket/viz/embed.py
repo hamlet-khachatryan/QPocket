@@ -1,23 +1,4 @@
-"""Two-dimensional layouts of a precomputed pocket distance matrix.
-
-The three layouts disagree with each other, and each is right about something
-different:
-
-``PCA (classical MDS)``
-    Linear and deterministic. A distance matrix has no feature vectors for PCA to
-    work on, so the equivalent operation is classical multidimensional scaling:
-    double-centre the squared distances and take the leading eigenvectors of the
-    resulting Gram matrix. Its axes carry a variance share, which is the only one
-    of the three that says how much of the distance structure really is 2D.
-
-``UMAP``
-    Favours local neighbourhoods. Groups are meaningful, the gaps between them
-    are not distances.
-
-``t-SNE``
-    Separates tight groups hardest. Neither cluster sizes nor between-cluster
-    gaps carry meaning.
-"""
+"""Two-dimensional layouts of a precomputed pocket distance matrix."""
 
 from __future__ import annotations
 
@@ -44,11 +25,8 @@ class MDSResult(NamedTuple):
     Attributes:
         coords: ``(n, 2)`` embedding.
         eigenvalues: All eigenvalues, descending, for a scree plot.
-        variance_share: Share of the positive eigenvalue mass on each of the two
-            axes.
-        non_euclidean_share: Negative eigenvalue mass over positive mass. Above
-            zero means the distances are not exactly Euclidean, so no planar
-            picture can be faithful.
+        variance_share: Share of the positive eigenvalue mass on each of the two axes.
+        non_euclidean_share: Negative eigenvalue mass over positive mass.
     """
 
     coords: np.ndarray
@@ -115,9 +93,6 @@ def classical_mds(distances: np.ndarray, n_components: int = 2) -> MDSResult:
 def max_perplexity(n_samples: int) -> float:
     """Largest perplexity worth offering for ``n_samples`` points.
 
-    scikit-learn requires perplexity below the sample count, and past roughly
-    ``(n - 1) / 3`` a small run collapses into a single blob.
-
     Args:
         n_samples: Number of structures being embedded.
 
@@ -149,8 +124,7 @@ def embed_distances(
         The layout, its axis labels and a line on how to read it.
 
     Raises:
-        ValueError: If ``method`` is unknown, or t-SNE is asked for with fewer
-            than four structures.
+        ValueError: If ``method`` is unknown, or t-SNE is asked for with fewer than four structures.
     """
     d = symmetrise(distances)
     n = len(d)

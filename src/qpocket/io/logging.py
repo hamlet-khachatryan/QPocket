@@ -15,9 +15,6 @@ if TYPE_CHECKING:
 def configure(cfg: QPocketConfig, log_path: Path) -> None:
     """Sets up Eliot structured logging to file (and optionally stdout).
 
-    The log file handle is registered with ``atexit`` to ensure it is flushed
-    and closed on normal interpreter exit.
-
     Args:
         cfg: QPocket configuration (reads ``cfg.io.log_format``).
         log_path: Path to the log output file.

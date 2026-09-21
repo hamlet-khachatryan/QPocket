@@ -1,10 +1,4 @@
-"""PDB text in and out, for handing structures to a browser viewer.
-
-3Dmol.js parses PDB by fixed columns, so every record it receives has to be
-column-correct. Nothing is passed through from disk: records are parsed and
-re-emitted, which also repairs ligand files written before the column bug in
-:func:`qpocket.core.pocket.extract_pdb_block` was fixed.
-"""
+"""PDB text in and out, for handing structures to a browser viewer."""
 
 from __future__ import annotations
 
@@ -41,10 +35,6 @@ class ProteinModels(NamedTuple):
 
 def parse_atom(line: str) -> Optional[Dict]:
     """Parse one ATOM/HETATM record, tolerating a one-column shift.
-
-    Ligand files written before the ``extract_pdb_block`` fix pad 4-character
-    atom names to five, which shifts every later field one column right. Those
-    lines fail fixed-column parsing, so they fall back to whitespace tokens.
 
     Args:
         line: A single PDB record.
@@ -102,11 +92,6 @@ def _is_number(token: str) -> bool:
 def atom_line(serial: int, atom: Dict, b: float = 0.0, record: str = "ATOM") -> str:
     """Emit one record in the PDB fixed-column layout.
 
-    A 4-character atom name fills columns 13-16 and takes no leading space;
-    giving it one shifts the rest of the line and strict parsers reject the
-    record. Fields that could outgrow their columns are truncated for the same
-    reason: a misaligned line is worse than a shortened value.
-
     Args:
         serial: Atom serial number, wrapped at 100000.
         atom: Field dictionary as returned by :func:`parse_atom`.
@@ -140,9 +125,6 @@ def blocks_to_text(lines: Sequence[str]) -> str:
 @lru_cache(maxsize=64)
 def read_protein_atoms(path: str) -> Tuple[Dict, ...]:
     """Read heavy protein atoms of the first model.
-
-    Waters, hetero records and hydrogens are dropped, and alternate
-    conformations are collapsed to one atom per name per residue.
 
     Args:
         path: Path to a PDB file.
@@ -200,10 +182,6 @@ def pseudo_atom_pdb(
 ) -> str:
     """Emit a point cloud as HETATM pseudo-atoms.
 
-    Each point gets its own residue number: parsers that collapse duplicate
-    (residue, atom name) keys would otherwise keep only the first point of the
-    whole cloud.
-
     Args:
         coords: Sequence of xyz triples.
         b: Optional per-point B-factor values, for colouring by property.
@@ -243,9 +221,6 @@ def pseudo_atom_pdb(
 def bbox_corners(points: np.ndarray, pad: float = 2.0) -> np.ndarray:
     """Eight corners of the padded axis-aligned box around ``points``.
 
-    Framing every panel on this box, rather than on its own contents, is what
-    makes side-by-side panels the same scale.
-
     Args:
         points: ``(n, 3)`` coordinates.
         pad: Padding added on every side, in Ångström.
@@ -268,10 +243,6 @@ def pocket_context_models(
     contact_radius: float = 4.0,
 ) -> ProteinModels:
     """Split a protein into a local cartoon plus the side chains lining a pocket.
-
-    Distance is measured per residue as its closest approach to any pocket
-    point, so a residue counts as pocket-lining when any of its atoms reaches
-    the cloud.
 
     Args:
         pdb_path: Path to the aligned structure.
@@ -319,10 +290,6 @@ def pocket_context_models(
 
 def residue_model(pdb_path: str, residues: Sequence[str]) -> str:
     """PDB block for named residues, whatever their distance to a pocket.
-
-    Residue keys are the ``RESNAME_NUMBER_CHAIN`` form the interaction tables use,
-    e.g. ``"GLN_754_A"``. A residue is drawn regardless of the viewer's context
-    radius, so a highlight asked for is never silently absent from a panel.
 
     Args:
         pdb_path: Path to the aligned structure.

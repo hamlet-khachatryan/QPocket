@@ -1,3 +1,4 @@
+"""Physical constants, residue tables and feature parameters."""
 import numpy as np
 from typing import Set
 
@@ -61,6 +62,15 @@ AROMATIC_RESIDUES: Set[str] = {"PHE", "TYR", "TRP", "HIS", "HIP", "HIE", "HID"}
 
 
 def GET_ATOMIC_HYDROPHOBICITY(atom_name: str, res_name: str) -> float:
+    """Hydrophobicity score of a PDB atom, used by the lipophilic potential.
+
+    Args:
+        atom_name: PDB atom name.
+        res_name: Residue name.
+
+    Returns:
+        Score from -2 (charged) to 1 (aliphatic carbon).
+    """
     if not atom_name:
         return 0.0
     element = atom_name[0]

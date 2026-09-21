@@ -1,8 +1,4 @@
-"""Q-Pocket: pocket conformational space, as a library.
-
-    import qpocket as qp
-    result = qp.compare([qp.PocketSpec("7KG6", ligand="WDG"), qp.PocketSpec("4B1J", ligand="A1R")])
-"""
+"""Q-Pocket: pocket conformational space, as a library."""
 from importlib import import_module
 
 # Loaded on first use, so `import qpocket` (and the CLI) never needs APBS or PLIP.

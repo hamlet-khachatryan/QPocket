@@ -11,7 +11,7 @@ from qpocket.constants import FP_DTYPE
 def parse_pqr_data(
     pqr_path: Path,
 ) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
-    """Robust PQR parser handling variable whitespace"""
+    """Robust PQR parser handling variable whitespace."""
     coords = []
     charges = []
     atom_names = []

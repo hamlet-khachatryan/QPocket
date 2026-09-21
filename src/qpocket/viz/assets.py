@@ -1,10 +1,4 @@
-"""The 3Dmol.js build the viewer runs on.
-
-A vendored copy ships inside the package so the viewer works with no network
-access, which matters on a locked-down machine or an offline compute node. The
-CDN URL is kept as an alternative because inlining costs half a megabyte in every
-rendered page.
-"""
+"""The 3Dmol.js build the viewer runs on."""
 
 from __future__ import annotations
 
@@ -32,8 +26,7 @@ def threedmol_path() -> Path:
         Location of the minified JavaScript file.
 
     Raises:
-        FileNotFoundError: If the package was installed without its vendored
-            asset.
+        FileNotFoundError: If the package was installed without its vendored asset.
     """
     path = _VENDOR / f"3Dmol-{THREEDMOL_VERSION}.min.js"
     if not path.exists():
@@ -57,9 +50,7 @@ def threedmol_script(offline: bool = True) -> str:
     """Build the script tag that loads 3Dmol into a page.
 
     Args:
-        offline: Inline the vendored source, so the page needs no network. When
-            ``False`` the page fetches the pinned CDN build instead, which keeps
-            it around half a megabyte smaller.
+        offline: Inline the vendored source, so the page needs no network.
 
     Returns:
         HTML to place in the page.

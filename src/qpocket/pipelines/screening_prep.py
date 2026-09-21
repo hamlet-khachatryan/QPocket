@@ -19,10 +19,6 @@ def prepare_all_proteins(
 ) -> list[str]:
     """Prepare PDBQT files for all representative structures.
 
-    Reads ``selected_representatives.csv`` to identify which PDB IDs to
-    prepare, looks up their cleaned file paths in ``master.csv``, then calls
-    :func:`prepare_protein_pdbqt` for each.
-
     Args:
         screening_dir: Root screening directory (``screening/proteins/`` is created here).
         representatives_csv: Path to ``metadata/selected_representatives.csv``.
@@ -89,14 +85,12 @@ def prepare_all_ligands(
     Args:
         screening_dir: Root screening directory.
         actives_smi: Path to ``screening/actives.smi``.
-        decoys_smi: Path to ``screening/decoys.smi``; only used when
-            *mode* is ``"virtual_screening"``.
+        decoys_smi: Path to ``screening/decoys.smi``; only used when *mode* is ``"virtual_screening"``.
         cfg: Full :class:`~qpocket.screen_config.ScreenConfig`.
         mode: ``"cross_docking"`` or ``"virtual_screening"``.
 
     Returns:
-        Dict with keys ``"actives"`` and ``"decoys"``, each a list of
-        prepared ligand IDs.
+        Dict with keys ``"actives"`` and ``"decoys"``, each a list of prepared ligand IDs.
     """
     actives_dir = screening_dir / "actives"
     decoys_dir = screening_dir / "decoys"

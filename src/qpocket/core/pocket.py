@@ -32,9 +32,6 @@ def get_smiles_from_pdb_block(pdb_block: str) -> str:
 def is_residue_ligand(residue, allowed_cofactors: List[str]) -> bool:
     """Determines whether a residue is a candidate ligand.
 
-    Returns ``False`` for standard amino acids, water molecules, cofactors in
-    *allowed_cofactors*, and entries in the global exclusion list.
-
     Args:
         residue: BioPython residue object.
         allowed_cofactors: List of cofactor residue names to exclude.
@@ -56,8 +53,6 @@ def is_residue_ligand(residue, allowed_cofactors: List[str]) -> bool:
 
 def extract_pdb_block(residue, chain_id: str) -> str:
     """Constructs a PDB-compliant HETATM block for a single residue.
-
-    Follows the PDB fixed-column format (80 chars per record).
 
     Args:
         residue: BioPython residue object.

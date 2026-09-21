@@ -22,13 +22,6 @@ def generate_decoys_lude(
 ) -> None:
     """Property-matched decoy generation following LUDe methodology.
 
-    Reads actives from *actives_path* (tab-separated: SMILES, PDB_ID, Ligand_Name),
-    searches *chembl_dir* ``.txt`` files for property-matched, dissimilar
-    molecules, and writes ``decoys.smi`` to *output_dir*.
-
-    The output format is ``SMILES\\tActive_ID_decoy_N`` — consistent with
-    ``actives.smi``.
-
     Args:
         actives_path: Path to ``actives.smi`` (tab-separated).
         chembl_dir: Directory containing ChEMBL ``.txt`` / ``.csv`` files.

@@ -1,16 +1,4 @@
-"""Set arithmetic over pocket point clouds.
-
-Every pocket in a run is sampled on the same regular lattice — 0.7 Å in the runs
-checked so far — and the structures are pre-aligned, so two pockets that overlap
-in space land on exactly the same lattice sites. That makes comparison exact:
-occupancy, overlap and field differences are set operations on integer voxel
-indices, with no interpolation and so no resampling error to reason about.
-
-The spacing is not recorded in the pipeline config, since it comes from the cavity
-detector upstream. It is therefore inferred from the coordinates, and
-:func:`lattice_deviation` checks that the inference holds before anything is
-compared on the strength of it.
-"""
+"""Set arithmetic over pocket point clouds."""
 
 from __future__ import annotations
 
@@ -77,8 +65,7 @@ def lattice_deviation(points: np.ndarray, spacing: float) -> float:
         spacing: Lattice spacing.
 
     Returns:
-        ``0.0`` for points exactly on the lattice, ``0.5`` for the worst possible
-        case of sitting halfway between sites.
+        ``0.0`` for points exactly on the lattice, ``0.5`` for the worst possible case of sitting halfway between sites.
     """
     pts = np.asarray(points, dtype=float).reshape(-1, 3)
     if not len(pts):
@@ -96,22 +83,15 @@ NOISE_FLOOR = 1e-3
 def infer_spacing(points: np.ndarray, tolerance: float = LATTICE_TOLERANCE) -> float:
     """Infer the lattice spacing from one or more pooled point clouds.
 
-    Neighbouring occupied sites are the most common relationship in a cloud, so
-    the most frequent gap between distinct coordinates is the spacing. The result
-    is checked against the coordinates before being returned, since a wrong
-    spacing silently turns every later set operation into nonsense.
-
     Args:
         points: ``(n, 3)`` coordinates, possibly several clouds stacked.
-        tolerance: Allowed deviation from the lattice, as a fraction of the
-            spacing.
+        tolerance: Allowed deviation from the lattice, as a fraction of the spacing.
 
     Returns:
         The spacing in Ångström.
 
     Raises:
-        ValueError: If the cloud is too small to tell, or no candidate spacing
-            puts the coordinates on a lattice.
+        ValueError: If the cloud is too small to tell, or no candidate spacing puts the coordinates on a lattice.
     """
     pts = np.asarray(points, dtype=float).reshape(-1, 3)
     if len(pts) < 2:
@@ -184,9 +164,6 @@ def _keys(index: np.ndarray) -> np.ndarray:
 def pocket_metrics(points: np.ndarray, spacing: float) -> PocketMetrics:
     """Occupied site count and volume of one pocket.
 
-    Sites are de-duplicated first, so a cloud that repeats a site is not counted
-    twice.
-
     Args:
         points: ``(n, 3)`` coordinates.
         spacing: Lattice spacing.
@@ -201,9 +178,6 @@ def pocket_metrics(points: np.ndarray, spacing: float) -> PocketMetrics:
 
 def occupancy(clouds: Sequence[np.ndarray], spacing: float) -> Occupancy:
     """Count how many pockets occupy each site across a set of pockets.
-
-    This is the consensus cloud: sites at fraction 1.0 are open in every pocket of
-    the set, and low fractions mark sub-pockets that only some conformations have.
 
     Args:
         clouds: One point cloud per pocket.
@@ -237,8 +211,7 @@ def jaccard(a: np.ndarray, b: np.ndarray, spacing: float) -> float:
         spacing: Lattice spacing.
 
     Returns:
-        ``1.0`` for identical pockets, ``0.0`` for disjoint ones, and ``1.0`` when
-        both are empty, since nothing distinguishes them.
+        ``1.0`` for identical pockets, ``0.0`` for disjoint ones, and ``1.0`` when both are empty, since nothing distinguishes them.
     """
     keys_a = np.unique(_keys(voxel_index(a, spacing)))
     keys_b = np.unique(_keys(voxel_index(b, spacing)))
@@ -292,11 +265,6 @@ def field_difference(
     spacing: float,
 ) -> FieldDifference:
     """Difference between two pockets' fields, on the sites they share.
-
-    Because both clouds sit on the same lattice this is a lookup rather than an
-    interpolation, so the only approximation is the sampling that produced the
-    clouds. Sites only one pocket occupies have no difference to report and are
-    counted separately instead of being filled in.
 
     Args:
         reference_points: ``(n, 3)`` coordinates of the reference pocket.

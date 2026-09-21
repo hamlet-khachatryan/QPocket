@@ -1,3 +1,4 @@
+"""Run configuration: dataclasses, legacy-key migration, defaults and validation."""
 from __future__ import annotations
 
 import re
@@ -50,15 +51,11 @@ class FragmentScreenParams:
     """Parameters for fragment screening mode.
 
     Attributes:
-        input_type: ``"csv"`` reads paths from a ``pdb_path`` column;
-            ``"paths"`` takes ``structure_paths`` directly.
+        input_type: ``"csv"`` reads paths from a ``pdb_path`` column; ``"paths"`` takes ``structure_paths`` directly.
         csv_path: CSV of structure paths, when ``input_type == "csv"``.
         structure_paths: Structure paths, when ``input_type == "paths"``.
-        reference_path: The reference structure.  Preferred over
-            ``reference_index``: it names the run and defines the pocket every
-            other structure is measured against.
-        reference_index: Index of the reference among the ingested structures,
-            used only when ``reference_path`` is unset.
+        reference_path: The reference structure.
+        reference_index: Index of the reference among the ingested structures, used only when ``reference_path`` is unset.
     """
     input_type: Literal["csv", "paths"] = "csv"
     csv_path: Optional[str] = None
@@ -87,24 +84,12 @@ class AlignParams:
     """Parameters specific for sequence alignment.
 
     Attributes:
-        renumber_residues: Remap PDB residue numbers to canonical UniProt
-            positions.  ``None`` means auto: on for ``pdb_query``, off for
-            ``fragment_screen``, where local or modelled structures usually have
-            no UniProt entry and the lookup would silently degrade.  An explicit
-            ``True``/``False`` always wins.
+        renumber_residues: Remap PDB residue numbers to canonical UniProt positions.
         manual_uniprot_id: Override the auto-detected UniProt ID for the primary chain.
-        auxiliary_uniprot_ids: Per-chain UniProt overrides for auxiliary chains, keyed
-            by the **reference** chain ID (e.g. ``{"B": "P00533"}``).  Chains whose ID
-            is absent are auto-detected.
-        min_auxiliary_identity: Minimum sequence identity (fraction, ``(0, 1]``) for a
-            target chain to be considered a match to a reference auxiliary chain.
-        max_auxiliary_centroid_deviation: Maximum allowed Cα centroid distance (Å)
-            between the matched target chain and the expected reference auxiliary chain
-            position.  Matches exceeding this threshold emit a warning but are still
-            accepted (use ``require_all_chains`` to hard-fail instead).
-        require_all_chains: When ``True`` (default), structures for which any auxiliary
-            chain cannot be matched are silently skipped.  When ``False``, the structure
-            is processed with only the successfully matched chains.
+        auxiliary_uniprot_ids: Per-chain UniProt overrides for auxiliary chains, keyed by the **reference** chain ID (e.g. ``{"B": "P00533"}``).
+        min_auxiliary_identity: Minimum sequence identity (fraction, ``(0, 1]``) for a target chain to be considered a match to a reference auxiliary chain.
+        max_auxiliary_centroid_deviation: Maximum allowed Cα centroid distance (Å) between the matched target chain and the expected reference auxiliary chain position.
+        require_all_chains: When ``True`` (default), structures for which any auxiliary chain cannot be matched are silently skipped.
     """
     renumber_residues: Optional[bool] = None
     manual_uniprot_id: Optional[str] = None
@@ -125,13 +110,9 @@ class IOConfig:
     """Configuration for I/O behaviour.
 
     Attributes:
-        log_format: Eliot log serialisation format.  ``"json"`` produces
-            machine-readable NDJSON; ``"text"`` produces human-readable output.
-        save_intermediate: When ``True`` the initial (pre-cropping) pocket
-            point cloud is written alongside the final one.
+        log_format: Eliot log serialisation format.
+        save_intermediate: When ``True`` the initial (pre-cropping) pocket point cloud is written alongside the final one.
         compression: Compression algorithm used when writing HDF5 datasets.
-            ``"gzip"`` reduces file size at the cost of slightly higher write
-            latency; ``"none"`` disables compression.
     """
     log_format: Literal["json", "text"] = "json"
     save_intermediate: bool = False
@@ -143,18 +124,12 @@ class StageClustering:
     """Clustering settings for one stage of a two-stage grouping.
 
     Attributes:
-        method: ``"hierarchical"`` cuts a linkage tree, ``"kmedoids"`` partitions
-            around medoids, ``"affinity"`` lets Affinity Propagation choose its
-            own cluster count and ignores ``k`` / ``k_range``.
-        linkage: Linkage used when ``method`` is ``"hierarchical"``.  Only
-            linkages defined for a precomputed distance matrix are allowed.
-        k: Pinned cluster count.  ``None`` selects ``k`` automatically as the
-            value in ``k_range`` with the best mean silhouette.
+        method: ``"hierarchical"`` cuts a linkage tree, ``"kmedoids"`` partitions around medoids, ``"affinity"`` lets Affinity Propagation choose its own cluster count and ignores ``k`` / ``k_range``.
+        linkage: Linkage used when ``method`` is ``"hierarchical"``.
+        k: Pinned cluster count.
         k_range: Inclusive ``[lo, hi]`` bounds scanned when ``k`` is ``None``.
-            Clipped to the sample count at run time.
-        damping: Affinity Propagation damping, in ``[0.5, 1.0)``.  Ignored by
-            the other methods.
-        max_iter: Affinity Propagation iteration cap.  Ignored by the others.
+        damping: Affinity Propagation damping, in ``[0.5, 1.0)``.
+        max_iter: Affinity Propagation iteration cap.
     """
     method: Literal["hierarchical", "kmedoids", "affinity"] = "hierarchical"
     linkage: Literal["average", "complete", "single", "weighted"] = "average"
@@ -169,16 +144,11 @@ class ClusteringParams:
     """How pockets are grouped once the distance matrices exist.
 
     Attributes:
-        mode: ``"two_stage"`` groups on shape, then subdivides each group on
-            physicochemistry.  ``"single"`` reproduces the original behaviour of
-            clustering the blended matrix in one pass.
-        min_cluster_size: A stage-one cluster with fewer members than this is
-            not subdivided: a split that small cannot be supported by a
-            silhouette.  Applied once, not per stage.
+        mode: ``"two_stage"`` groups on shape, then subdivides each group on physicochemistry.
+        min_cluster_size: A stage-one cluster with fewer members than this is not subdivided: a split that small cannot be supported by a silhouette.
         single: Settings used when ``mode == "single"``.
         shape: Stage-one settings, applied to the shape distance matrix.
-        chem: Stage-two settings, applied to the physicochemical distance
-            submatrix of each stage-one cluster.
+        chem: Stage-two settings, applied to the physicochemical distance submatrix of each stage-one cluster.
     """
     mode: Literal["two_stage", "single"] = "two_stage"
     min_cluster_size: int = 4
@@ -212,20 +182,14 @@ class SlurmConfig:
     """Cluster submission settings for ``qpocket slurm``.
 
     Attributes:
-        account: ``--account``.  ``None`` omits the directive.
+        account: ``--account``.
         partition: ``--partition``.
-        qos: ``--qos``.  ``None`` omits the directive.
-        max_concurrent: Simultaneously running array tasks, the ``%N`` in
-            ``--array``.
-        max_array_size: Cluster's ``MaxArraySize``.  Larger stages are split
-            across several scripts with an index offset.
-        dependency: ``"afterany"`` lets later stages start once an array has
-            finished and skip whatever is missing; ``"afterok"`` blocks the whole
-            chain if any single task fails.
-        split_apbs_stage: Give APBS its own array stage, caching the potential
-            grid per structure, instead of running it inside featurisation.
-        environment: Shell lines injected verbatim at the top of every script,
-            for ``module load`` / ``conda activate`` / ``source .../activate``.
+        qos: ``--qos``.
+        max_concurrent: Simultaneously running array tasks, the ``%N`` in ``--array``.
+        max_array_size: Cluster's ``MaxArraySize``.
+        dependency: ``"afterany"`` lets later stages start once an array has finished and skip whatever is missing; ``"afterok"`` blocks the whole chain if any single task fails.
+        split_apbs_stage: Give APBS its own array stage, caching the potential grid per structure, instead of running it inside featurisation.
+        environment: Shell lines injected verbatim at the top of every script, for ``module load`` / ``conda activate`` / ``source .../activate``.
         defaults: Resources for any stage without an entry in ``stages``.
         stages: Per-stage resource overrides, keyed by stage name.
     """
@@ -245,28 +209,13 @@ class SlurmConfig:
 class DistanceConfig:
     """Parameters for spectral distance calculation and clustering.
 
-    Clustering uses Affinity Propagation which determines the number of
-    clusters automatically via message passing — no ``k`` needs to be
-    specified in advance.
-
     Attributes:
-        geo_graph_neighbor_radius: Maximum Euclidean distance (Å) between
-            two pocket points to be considered neighbours in the geodesic
-            graph.
-        parallel_jobs: Number of parallel workers passed to ``joblib``
-            (``-1`` = all available cores).
-        global_k: Length of the spectral fingerprint vector.  Eigenvalues
-            and GFT features are padded / truncated to this size.
-        sigma: Standard deviation of the Heat Gaussian kernel used when
-            constructing the normalised graph Laplacian.
-        max_points: Point clouds with more points than this threshold are
-            skipped during spectral embedding to avoid excessive memory use.
-        shape_weight: Weight of the shape (Laplacian eigenvalue) term in the
-            blended matrix, in ``[0, 1]``.  The blend is
-            ``shape_weight * d_shape + (1 - shape_weight) * chem_scale * d_chem``.
-            In ``clustering.mode == "two_stage"`` the blend groups nothing --
-            each stage clusters its own matrix -- and only decides which member
-            of a cluster is named its representative.
+        geo_graph_neighbor_radius: Maximum Euclidean distance (Å) between two pocket points to be considered neighbours in the geodesic graph.
+        parallel_jobs: Number of parallel workers passed to ``joblib`` (``-1`` = all available cores).
+        global_k: Length of the spectral fingerprint vector.
+        sigma: Standard deviation of the Heat Gaussian kernel used when constructing the normalised graph Laplacian.
+        max_points: Point clouds with more points than this threshold are skipped during spectral embedding to avoid excessive memory use.
+        shape_weight: Weight of the shape (Laplacian eigenvalue) term in the blended matrix, in ``[0, 1]``.
         chem_scale: Scale applied to the physicochemical term of that blend.
     """
     geo_graph_neighbor_radius: float = 2.0
@@ -280,12 +229,7 @@ class DistanceConfig:
 
 
 def _plain(value):
-    """Recursively reduce a config to dicts, lists and scalars.
-
-    OmegaConf 2.3 cannot introspect a ``Literal`` annotation, so rendering a
-    structured config that uses one raises. Every config here uses several, so
-    the dataclass has to be flattened before it can be shown.
-    """
+    """Recursively reduce a config to dicts, lists and scalars."""
     if is_dataclass(value) and not isinstance(value, type):
         return {f.name: _plain(getattr(value, f.name)) for f in fields(value)}
     if isinstance(value, (DictConfig, ListConfig)):
@@ -312,12 +256,7 @@ class QPocketConfig:
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
 
     def __str__(self) -> str:
-        """YAML rendering of this configuration.
-
-        Goes through plain containers: ``OmegaConf.to_yaml`` on the dataclass
-        itself raises on the ``Literal`` fields, which made ``qpocket validate``
-        fail for every config it was given, immediately after reporting it valid.
-        """
+        """YAML rendering of this configuration."""
         try:
             return OmegaConf.to_yaml(OmegaConf.create(_plain(self)))
         except Exception:  # pragma: no cover - display must never break a command
@@ -381,19 +320,11 @@ def _config_keys(node: object, prefix: str = "") -> set:
 def migrate_legacy(cfg: DictConfig) -> List[str]:
     """Rewrite renamed keys in place and report what needs changing.
 
-    Called after Hydra has merged everything and before the dataclasses are
-    built. Renaming a config key is cheap; silently ignoring the old one is not,
-    so every legacy key is moved to its new home and named in the return value.
-
-    An explicitly set new key wins: a config carrying both is assumed to have
-    been half-migrated, and the new name is the intended one.
-
     Args:
         cfg: The merged configuration.
 
     Returns:
-        Human-readable warnings, one per legacy or unrecognised key. Empty when
-        the config is already current.
+        Human-readable warnings, one per legacy or unrecognised key.
     """
     warnings: List[str] = []
     renamed: Dict[str, List[str]] = {}
@@ -473,16 +404,6 @@ def migrate_legacy(cfg: DictConfig) -> List[str]:
 
 def fill_defaults(cfg: DictConfig) -> DictConfig:
     """Insert every schema key the config does not mention, with its default.
-
-    The shipped YAML deliberately omits settings a chosen method ignores --
-    ``linkage`` under ``kmedoids``, for instance -- and a user's own file may
-    omit whole sections. Without this, every reader would need a defaulting
-    ``getattr`` and one missed call site would be an ``AttributeError`` mid-run.
-
-    Filling once, here, keeps the YAML short and the readers simple. It cannot
-    be done with ``OmegaConf.merge`` against a structured schema because
-    OmegaConf 2.3 refuses to introspect the ``Literal`` annotations this schema
-    uses throughout.
 
     Args:
         cfg: The merged configuration, modified in place.

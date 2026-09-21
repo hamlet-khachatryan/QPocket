@@ -1,3 +1,4 @@
+"""Distance stage: geodesics, fingerprints, distance matrices and clustering for a run."""
 from __future__ import annotations
 
 import json
@@ -20,23 +21,12 @@ from qpocket.types import Fingerprint
 def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path, None]:
     """Builds a geodesic distance matrix from a featurised pocket CSV.
 
-    Loads point coordinates and pharmacophoric features from *csv_path*,
-    constructs a sparse neighbourhood graph via a KD-tree radius query
-    (edges between points whose Euclidean distance is ≤ *neighbor_radius*),
-    and computes all-pairs shortest-path distances via Dijkstra's algorithm.
-    The result is cached as a compressed NPZ file alongside the CSV.
-
-    The KD-tree approach avoids materialising the full O(N²) dense distance
-    matrix and scales comfortably to several thousand pocket points.
-
     Args:
         csv_path: Path to a featurised pocket CSV with columns x, y, z, …features….
-        neighbor_radius: Maximum Euclidean distance (Å) to connect two points
-            in the neighbourhood graph.
+        neighbor_radius: Maximum Euclidean distance (Å) to connect two points in the neighbourhood graph.
 
     Returns:
-        Path to the cached ``geospectral_cache.npz`` file, or ``None`` if the
-        point cloud has fewer than 5 points or an error occurs.
+        Path to the cached ``geospectral_cache.npz`` file, or ``None`` if the point cloud has fewer than 5 points or an error occurs.
     """
     cache_path = csv_path.with_name("geospectral_cache.npz")
 
@@ -119,10 +109,6 @@ def compute_spectral_fingerprint(
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """Converts a geodesic matrix and feature matrix into a spectral fingerprint.
 
-    Constructs a Gaussian heat kernel on the geodesic graph, computes the
-    normalised graph Laplacian, performs eigen-decomposition, and applies the
-    Graph Fourier Transform to produce a rotationally invariant fingerprint.
-
     Args:
         D_geo: Square geodesic distance matrix (N × N).
         F: Feature matrix (N × D).
@@ -130,9 +116,7 @@ def compute_spectral_fingerprint(
         sigma: Standard deviation of the Gaussian heat kernel.
 
     Returns:
-        Tuple of ``(eigenvalues, spectral_feature_vector)``.  Both arrays are
-        of length *global_k* (padded / truncated as necessary).  Returns
-        ``(None, None)`` when the matrix is too small.
+        Tuple of ``(eigenvalues, spectral_feature_vector)``.
     """
     with start_action(action_type="compute_spectral_fingerprint", n_points=D_geo.shape[0]):
         return sp.spectral_fingerprint(D_geo, F, global_k, sigma)
@@ -231,9 +215,7 @@ class ClusterAssignment(NamedTuple):
         shape_labels: Stage-one index, or all zeros in single-stage mode.
         chem_labels: Stage-two index within the shape cluster, or all zeros.
         exemplar_positions: Row position of each cluster's representative.
-        params: What was actually run, for ``clustering_params.json``. Stored
-            because the default changed: without it, a stored run cannot say
-            which algorithm produced its labels.
+        params: What was actually run, for ``clustering_params.json``.
     """
 
     labels: np.ndarray
@@ -252,8 +234,6 @@ def pocket_manifest(cfg: QPocketConfig, dirs: Dict[str, Path]) -> Tuple[List[Pat
 
     Returns:
         Parallel lists of ``featurized.csv`` paths and PDB IDs, in master order.
-        A structure with no featurised pocket is skipped, so a partially failed
-        array job still yields a usable manifest.
 
     Raises:
         FileNotFoundError: If ``master.csv`` is absent.
@@ -282,17 +262,6 @@ def build_distance_matrices(
     ids: List[str],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Turn spectral fingerprints into the three distance matrices.
-
-    The fingerprint has two halves that mean different things, and they are kept
-    apart here rather than being summed on the spot as they used to be:
-
-    *shape*
-        L2 between Laplacian eigenvalue vectors. Geometry only.
-    *chemistry*
-        L2 between Graph-Fourier power spectra. The pharmacophoric fields.
-    *combined*
-        ``shape_weight*shape + (1-shape_weight)*chem_scale*chem``, the blend the
-        pipeline has always clustered and the one downstream code reads.
 
     Args:
         cfg: QPocket configuration.
@@ -335,11 +304,6 @@ def assign_clusters(
     combined: np.ndarray,
 ) -> ClusterAssignment:
     """Group the pockets, in one pass or two depending on the config.
-
-    Two-stage is the default: shape decides the group, chemistry decides the
-    subgroup. ``clustering.mode: single`` restores the original behaviour of
-    clustering the blended matrix once, which is the escape hatch for
-    reproducing a run made before the default changed.
 
     Args:
         cfg: QPocket configuration.
@@ -447,16 +411,6 @@ def compute_spectral_distance_matrix(
     dirs: Dict[str, Path],
 ) -> None:
     """Orchestrates spectral fingerprinting, pairwise distances, and clustering.
-
-    Pipeline:
-        1. Reads pocket file paths from ``master.csv``.
-        2. Computes / loads geodesic distance caches in parallel.
-        3. Normalises features and computes spectral fingerprints.
-        4. Builds the shape, chemistry and combined distance matrices.
-        5. Groups the pockets, in two stages by default.
-        6. Writes the three matrices, ``clustering_metadata.csv``,
-           ``selected_representatives.csv`` and ``clustering_params.json``
-           to the metadata directory.
 
     Args:
         cfg: QPocket configuration.

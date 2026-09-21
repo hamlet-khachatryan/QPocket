@@ -1,3 +1,4 @@
+"""Conformational pipeline stages and config loading; each stage takes (cfg, dirs)."""
 from __future__ import annotations
 
 import json
@@ -36,11 +37,6 @@ from qpocket.core import structure as st
 def _find_conf_dir() -> Path:
     """Locate the Hydra config directory.
 
-    Normally this is ``conf/`` inside the installed package. A working copy may
-    not have it: the packaged copy is generated from the repo-root ``conf/`` and
-    is easy to leave out of a commit, and a checkout missing it would otherwise
-    fail on every command with a Hydra error that names neither file.
-
     Returns:
         The first directory that contains ``config.yaml``.
 
@@ -72,12 +68,9 @@ def load_qpocket_config(
 ) -> QPocketConfig:
     """Loads, merges, and validates QPocket configuration.
 
-    Configuration priority: CLI overrides > external file > built-in defaults.
-
     Args:
         config_path: Path to an external YAML configuration file.
-        overrides: Dot-notation override strings
-            (e.g. ``["mode=fragment_screen", "reference.pdb_id=6HP0"]``).
+        overrides: Dot-notation override strings (e.g. ``["mode=fragment_screen", "reference.pdb_id=6HP0"]``).
 
     Returns:
         Fully validated :class:`~qpocket.config.QPocketConfig`.
@@ -144,10 +137,7 @@ def sanitise_id(name: str) -> str:
         name: A file stem, or any label.
 
     Returns:
-        The stem with every character outside ``[A-Za-z0-9_-]`` replaced by an
-        underscore, truncated to 64 characters. Empty input becomes
-        ``"structure"`` so a path like ``"/data/.pdb"`` cannot produce a
-        directory with no name.
+        The stem with every character outside ``[A-Za-z0-9_-]`` replaced by an underscore, truncated to 64 characters.
     """
     cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", str(name)).strip("_")[:64]
     return cleaned or "structure"
@@ -156,10 +146,6 @@ def sanitise_id(name: str) -> str:
 def run_id(cfg: QPocketConfig) -> str:
     """Name of this run's workspace directory.
 
-    In ``pdb_query`` mode that is the reference PDB accession. In
-    ``fragment_screen`` mode there is no accession, so the reference file's stem
-    is used unless ``reference.pdb_id`` names the run explicitly.
-
     Args:
         cfg: QPocket configuration.
 
@@ -167,8 +153,7 @@ def run_id(cfg: QPocketConfig) -> str:
         A directory-safe identifier.
 
     Raises:
-        ValueError: If neither a ``pdb_id`` nor a ``reference_path`` is set, so
-            the run has no name at all.
+        ValueError: If neither a ``pdb_id`` nor a ``reference_path`` is set, so the run has no name at all.
     """
     if cfg.reference.pdb_id:
         return sanitise_id(cfg.reference.pdb_id)
@@ -191,14 +176,9 @@ def inputs_table(dirs: Dict[str, Path]) -> Optional[pd.DataFrame]:
 def reference_id(cfg: QPocketConfig, dirs: Optional[Dict[str, Path]] = None) -> str:
     """The ``pdb_id`` of the reference structure, whatever the mode.
 
-    Three places used to decide this inline by comparing against
-    ``cfg.reference.pdb_id``, which in fragment-screen mode matches nothing at
-    all — so no row was ever the reference and the pocket bounding box was
-    silently never computed. They all route through here now.
-
     Args:
         cfg: QPocket configuration.
-        dirs: Directory map. When given, the ingest record is authoritative.
+        dirs: Directory map.
 
     Returns:
         The identifier the reference structure was ingested under.
@@ -228,13 +208,7 @@ def reference_id(cfg: QPocketConfig, dirs: Optional[Dict[str, Path]] = None) -> 
 
 
 def should_renumber(cfg: QPocketConfig) -> bool:
-    """Whether to remap residue numbers onto UniProt positions.
-
-    ``alignment.renumber_residues: null`` means auto. Renumbering needs a UniProt
-    accession looked up from a real PDB entry, which a local or modelled
-    structure does not have, so auto is off for fragment screening and on for a
-    PDB query.
-    """
+    """Whether to remap residue numbers onto UniProt positions."""
     configured = cfg.alignment.renumber_residues
     if configured is None:
         return cfg.mode != "fragment_screen"
@@ -353,16 +327,6 @@ def fetch_structures(cfg: QPocketConfig, output_dir: Union[str, Path]) -> List[s
 
 def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
     """Aligns all downloaded structures to the reference using PyMOL.
-
-    The aligned reference is saved first; then every other structure is
-    aligned and optionally residue-renumbered to match UniProt positions.
-    Results are written to ``metadata/master.csv``.
-
-    When ``reference.auxiliary_chain_ids`` is set the pipeline operates in
-    **interface mode**: both the primary and auxiliary chains are carried
-    through alignment and saved in the output PDB.  Structures where any
-    auxiliary chain cannot be matched are skipped (controlled by
-    ``alignment.require_all_chains``).
 
     Args:
         cfg: QPocket configuration.
@@ -567,9 +531,6 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
 def clean_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
     """Removes non-standard residues from aligned structures.
 
-    Reads ``metadata/master.csv``, cleans each aligned structure, and updates
-    the CSV with ``cleaned_file`` paths.
-
     Args:
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
@@ -641,17 +602,11 @@ def clean_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
 class ExtractionContext(NamedTuple):
     """Everything a single structure needs that had to be decided run-wide.
 
-    The reference pocket is found once and constrains every other structure's
-    cavity selection, so it cannot be recomputed per task. Persisting it is what
-    lets the per-structure work run as independent SLURM array tasks.
-
     Attributes:
-        ref_centroid: Reference ligand centroid, or ``None`` outside
-            cavity-detection mode.
+        ref_centroid: Reference ligand centroid, or ``None`` outside cavity-detection mode.
         bbox_center: User-supplied box centre, or ``None``.
         bbox_dims: User-supplied box dimensions, or ``None``.
-        ref_pocket_bbox: ``(lower, upper)`` corners of the reference pocket, or
-            ``None`` when it could not be derived.
+        ref_pocket_bbox: ``(lower, upper)`` corners of the reference pocket, or ``None`` when it could not be derived.
     """
 
     ref_centroid: Optional[np.ndarray]
@@ -695,8 +650,7 @@ class StructureResult(NamedTuple):
     Attributes:
         pdb_id: The structure.
         ligand_file: Path to the extracted ligand, or ``None``.
-        protein_state: ``BOUND_STATE``, ``UNBOUND_STATE``, ``REFERENCE``,
-            ``FAILED`` or ``NO_ANY_CAVITY_FOUND``.
+        protein_state: ``BOUND_STATE``, ``UNBOUND_STATE``, ``REFERENCE``, ``FAILED`` or ``NO_ANY_CAVITY_FOUND``.
         potential: Residues within reach of the pocket cloud.
         observed: ``RESIDUE|InteractionType`` entries from PLIP.
         smiles: ``(smiles, ligand_name)`` when a ligand was extracted.
@@ -710,6 +664,11 @@ class StructureResult(NamedTuple):
     smiles: Optional[Tuple[str, str]]
 
     def to_json(self) -> Dict[str, object]:
+        """Plain-JSON form, for the sidecar files array tasks exchange.
+
+        Returns:
+            JSON-serialisable dict.
+        """
         return {
             "pdb_id": self.pdb_id,
             "ligand_file": self.ligand_file,
@@ -721,6 +680,14 @@ class StructureResult(NamedTuple):
 
     @classmethod
     def from_json(cls, payload: Dict[str, object]) -> "StructureResult":
+        """Rebuild from the output of to_json.
+
+        Args:
+            payload: Dict written by to_json.
+
+        Returns:
+            The instance.
+        """
         smiles = payload.get("smiles")
         return cls(
             pdb_id=payload["pdb_id"],
@@ -733,14 +700,7 @@ class StructureResult(NamedTuple):
 
 
 def parts_dir(dirs: Dict[str, Path]) -> Path:
-    """Directory holding one JSON sidecar per structure.
-
-    Array tasks cannot share ``master.csv``, the HDF5 files or ``actives.smi``:
-    every one of them is a read-modify-write of a whole file. Each task writes
-    its own sidecar here instead, and ``collect_structure_results`` merges them.
-    The serial pipeline takes the same route, so there is only one code path to
-    trust.
-    """
+    """Directory holding one JSON sidecar per structure."""
     path = dirs["metadata"] / "parts"
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -759,8 +719,7 @@ def build_extraction_context(
         df: ``master.csv`` contents.
 
     Returns:
-        The context, or ``None`` when the reference ligand centroid is required
-        but cannot be computed.
+        The context, or ``None`` when the reference ligand centroid is required but cannot be computed.
     """
     save_intermediate = cfg.io.save_intermediate
 
@@ -896,18 +855,12 @@ def process_one_structure(
 ) -> StructureResult:
     """Extract, featurise and analyse a single structure.
 
-    This is the body of the old extraction loop, lifted out so one structure can
-    be handed to one SLURM array task. It touches only ``pockets/<pdb_id>/``,
-    ``structures/extracted_ligands/`` and its own sidecar, so any number of
-    copies can run at once.
-
     Args:
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
         row: One row of ``master.csv``.
         context: Run-wide reference geometry.
-        write_part: Write the JSON sidecar. Off only for callers that want the
-            result in memory without touching disk.
+        write_part: Write the JSON sidecar.
 
     Returns:
         This structure's contribution to the run-wide tables.
@@ -985,11 +938,6 @@ def process_one_structure(
 
 def collect_structure_results(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
     """Merge the per-structure sidecars into the run-wide tables.
-
-    The single writer of ``master.csv``'s ``ligand_file`` / ``protein_state``
-    columns, of both HDF5 files, of ``actives.smi`` and of the frequency tables.
-    Rows are matched by ``pdb_id`` rather than by position, so a structure whose
-    task failed keeps an empty cell instead of shifting every later row up.
 
     Args:
         cfg: QPocket configuration.
@@ -1082,27 +1030,6 @@ def extract_pockets_and_interactions(
 ) -> None:
     """Extracts binding pockets and analyses interactions for all structures.
 
-    Two-phase pocket extraction:
-
-    1. **Reference structure** — the pocket is identified by centroid overlap.
-       Its point cloud is used to derive a reference bounding box (1 Å padding).
-    2. **All other structures** — cavities are ranked by volumetric overlap
-       with the reference bounding box; the cavity with the highest overlap
-       is selected.
-
-    After pocket extraction, ligand files are generated, PLIP interactions
-    are analysed, and frequency statistics are written to the metadata
-    directory.
-
-    When ``pocket_definition == "Interactions"``, a second-pass extraction
-    crops each pocket to the neighbourhood of its observed PLIP contacts.
-    The featurisation is re-run on the cropped point cloud so that
-    ``featurized.csv`` and ``binding_site.csv`` are always consistent.
-
-    This is the serial driver. It is built from the same three pieces the SLURM
-    path uses — :func:`build_extraction_context`, :func:`process_one_structure`
-    and :func:`collect_structure_results` — so the two cannot drift apart.
-
     Args:
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
@@ -1158,14 +1085,11 @@ def _resolve_reference_file(
 def _fragment_input_paths(cfg: QPocketConfig) -> List[Path]:
     """Structure paths named by the config, reference first.
 
-    The reference is ingested first and only once, whether or not it also
-    appears in ``structure_paths``, so the reference row is always present.
-
     Args:
         cfg: QPocket configuration.
 
     Returns:
-        Absolute paths in ingest order. Empty when the config names none.
+        Absolute paths in ingest order.
     """
     listed: List[str] = []
 
@@ -1216,10 +1140,6 @@ def _load_fragment_screen_structures(
     output_dir: Union[str, Path],
 ) -> List[str]:
     """Copy local structures into the run and record where each came from.
-
-    Structures are identified by their filename rather than by position. The
-    previous ``fragment_0000`` scheme kept the source name only in the log, so
-    nothing on disk mapped a cluster back to the crystal it came from.
 
     Args:
         cfg: QPocket configuration.

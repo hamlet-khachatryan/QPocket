@@ -1,21 +1,20 @@
-"""Grouping pockets from a precomputed distance matrix.
+"""Grouping pockets from a precomputed distance matrix."""
 
-The pipeline blends two distances into one before it clusters: a shape distance
-between Laplacian eigenvalue vectors, and a physicochemical distance between
-Graph-Fourier power spectra. Clustering the blend answers "which pockets are
-alike", but it cannot answer "alike in shape, different in chemistry", because by
-the time the clustering runs the two have been added together.
-
-:func:`two_stage_labels` keeps them apart: it groups on shape alone, then
-subdivides each shape group on chemistry alone. The result is a two-level label
-that says which pockets share a fold and, within that, which share a
-pharmacophore.
-
-Everything here takes a square distance matrix and nothing else, so the same
-functions serve the pipeline and the explorer notebook. Only linkages defined for
-an arbitrary distance matrix are offered: ward, centroid and median all assume
-Euclidean coordinates and return nonsense when handed condensed distances.
-"""
+# The pipeline blends two distances into one before it clusters: a shape distance
+# between Laplacian eigenvalue vectors, and a physicochemical distance between
+# Graph-Fourier power spectra. Clustering the blend answers "which pockets are
+# alike", but it cannot answer "alike in shape, different in chemistry", because by
+# the time the clustering runs the two have been added together.
+#
+# :func:`two_stage_labels` keeps them apart: it groups on shape alone, then
+# subdivides each shape group on chemistry alone. The result is a two-level label
+# that says which pockets share a fold and, within that, which share a
+# pharmacophore.
+#
+# Everything here takes a square distance matrix and nothing else, so the same
+# functions serve the pipeline and the explorer notebook. Only linkages defined for
+# an arbitrary distance matrix are offered: ward, centroid and median all assume
+# Euclidean coordinates and return nonsense when handed condensed distances.
 
 from __future__ import annotations
 
@@ -64,9 +63,6 @@ RANDOM_STATE = 42
 def symmetrise(distances: np.ndarray) -> np.ndarray:
     """Force a saved distance matrix to be a clean symmetric matrix.
 
-    Matrices written to CSV come back asymmetric in the last digits, and every
-    method here requires symmetry with a zero diagonal.
-
     Args:
         distances: Square distance matrix.
 
@@ -89,16 +85,13 @@ class Clustering(NamedTuple):
 
     Attributes:
         labels: Cluster index per structure, 0-based, largest cluster first.
-        linkage_matrix: The scipy linkage used, reusable for a dendrogram, or
-            ``None`` for a method that builds no tree.
+        linkage_matrix: The scipy linkage used, reusable for a dendrogram, or ``None`` for a method that builds no tree.
         method: One of :data:`METHODS`.
         n_clusters: Number of clusters produced.
         threshold: Cut height for a hierarchical method, otherwise ``nan``.
-        silhouette: Mean silhouette over all structures, or ``None`` when it is
-            undefined (fewer than two clusters, or one cluster per structure).
+        silhouette: Mean silhouette over all structures, or ``None`` when it is undefined (fewer than two clusters, or one cluster per structure).
         silhouette_per_structure: Per-structure silhouette, or ``None``.
-        exemplar_positions: Positions the method itself nominated as cluster
-            representatives, when it nominates any.
+        exemplar_positions: Positions the method itself nominated as cluster representatives, when it nominates any.
     """
 
     labels: np.ndarray
@@ -118,8 +111,7 @@ class ClusterComparison(NamedTuple):
         ari: Adjusted Rand index. 1.0 is identical, 0.0 is chance agreement.
         n_clusters_a: Cluster count in the first grouping.
         n_clusters_b: Cluster count in the second grouping.
-        n_moved: Structures that change group once clusters are matched up as
-            well as they can be.
+        n_moved: Structures that change group once clusters are matched up as well as they can be.
         moved: Which structures those are, by position.
         pairs_split: Pairs together in the first grouping but apart in the second.
         pairs_joined: Pairs apart in the first grouping but together in the second.
@@ -154,15 +146,11 @@ class TwoStageClustering(NamedTuple):
     """A grouping made in two passes: shape first, then chemistry within it.
 
     Attributes:
-        labels: Final composite cluster index per structure, 0-based, largest
-            cluster first. This is what the pipeline writes as ``cluster_id``.
+        labels: Final composite cluster index per structure, 0-based, largest cluster first.
         shape_labels: Stage-one cluster index per structure.
-        chem_labels: Stage-two cluster index per structure, numbered **within**
-            its shape cluster, so ``0`` in one shape cluster is unrelated to
-            ``0`` in another. Always ``0`` for a cluster left undivided.
+        chem_labels: Stage-two cluster index per structure, numbered **within** its shape cluster, so ``0`` in one shape cluster is unrelated to ``0`` in another.
         shape_clustering: The stage-one result, with its silhouette.
-        chem_clusterings: Stage-two result per shape cluster, or ``None`` where
-            the cluster was too small to subdivide.
+        chem_clusterings: Stage-two result per shape cluster, or ``None`` where the cluster was too small to subdivide.
         exemplar_positions: Medoid position of each final cluster.
     """
 
@@ -185,8 +173,7 @@ def linkage_matrix(distances: np.ndarray, method: str = "average") -> np.ndarray
         The scipy linkage matrix.
 
     Raises:
-        ValueError: If ``method`` is not a linkage valid for precomputed
-            distances. Affinity Propagation builds no tree and is refused here.
+        ValueError: If ``method`` is not a linkage valid for precomputed distances.
     """
     if method not in LINKAGES:
         raise ValueError(
@@ -219,11 +206,7 @@ def threshold_for_clusters(link: np.ndarray, n_clusters: int) -> float:
 
 
 def _relabel_by_size(labels: np.ndarray) -> np.ndarray:
-    """Renumber labels 0, 1, 2… with the largest cluster first.
-
-    Cluster numbers from ``fcluster`` follow tree order, which shuffles as the cut
-    moves. Ordering by size keeps a colour attached to the same kind of group.
-    """
+    """Renumber labels 0, 1, 2… with the largest cluster first."""
     values, counts = np.unique(labels, return_counts=True)
     # Size descending, original label ascending as the tie-break.
     order = values[np.lexsort((values, -counts))]
@@ -241,8 +224,7 @@ def silhouette(
         labels: Cluster index per structure.
 
     Returns:
-        Mean silhouette and per-structure values, or ``(None, None)`` when the
-        grouping has too few or too many clusters for it to be defined.
+        Mean silhouette and per-structure values, or ``(None, None)`` when the grouping has too few or too many clusters for it to be defined.
     """
     from sklearn.metrics import silhouette_samples
 
@@ -262,21 +244,10 @@ def affinity_labels(
 ) -> Clustering:
     """Cluster by Affinity Propagation, the way the pipeline does.
 
-    The pipeline negates the distance matrix into a similarity matrix and leaves
-    the preference at scikit-learn's default, the median of that matrix. The
-    percentile here generalises that: it sets how much self-similarity a structure
-    needs before it can become an exemplar, so a low percentile tends towards
-    fewer, larger clusters and a high one towards more, smaller ones.
-
-    The trend holds between the extremes but not step by step. Message passing can
-    settle on a different fixed point for a small change in preference, so the
-    cluster count may jump around rather than climb smoothly.
-
     Args:
         distances: Square, symmetric distance matrix.
         damping: Damping factor, in ``[0.5, 1.0)``.
-        preference_percentile: Percentile of the similarity matrix used as the
-            preference. ``50`` is the median, and so the pipeline's behaviour.
+        preference_percentile: Percentile of the similarity matrix used as the preference.
         max_iter: Iteration cap.
 
     Returns:
@@ -328,14 +299,7 @@ def _medoid_of(d: np.ndarray, members: np.ndarray) -> int:
 
 
 def _kmedoids_seed(d: np.ndarray, k: int, rng: np.random.Generator) -> List[int]:
-    """Choose ``k`` starting medoids, spread out, deterministically seeded.
-
-    This is k-means++ carried over to a distance matrix. The first medoid is the
-    most central point rather than a random one, so a given matrix always starts
-    the same way regardless of the seed; the rest are drawn with probability
-    proportional to the squared distance from the nearest medoid chosen so far,
-    which is what keeps them apart.
-    """
+    """Choose ``k`` starting medoids, spread out, deterministically seeded."""
     n = len(d)
     first = int(np.argmin(d.sum(axis=1)))
     chosen = [first]
@@ -366,18 +330,10 @@ def kmedoids_labels(
 ) -> Clustering:
     """Partition around medoids, for a matrix with no underlying coordinates.
 
-    k-means needs coordinates to average; a distance matrix has none, so the
-    cluster centre has to be an actual member — the medoid, the member with the
-    smallest total distance to the rest of its cluster. This alternates assigning
-    every structure to its nearest medoid with recomputing each medoid, which is
-    the Voronoi form of PAM: cheaper than full PAM swapping and, on the pocket
-    counts this pipeline sees, indistinguishable in result.
-
     Args:
         distances: Square, symmetric distance matrix.
         n_clusters: Wanted cluster count, clipped to ``[1, n]``.
-        max_iter: Cap on assign/update rounds. Convergence is detected before
-            this in practice; the cap only bounds a pathological oscillation.
+        max_iter: Cap on assign/update rounds.
         random_state: Seed for the medoid seeding draw.
 
     Returns:
@@ -435,12 +391,8 @@ def cluster_labels(
 
     Args:
         distances: Square, symmetric distance matrix.
-        method: One of :data:`ALL_METHODS`. Affinity Propagation ignores
-            ``criterion``, ``n_clusters`` and ``threshold``; k-medoids uses
-            ``n_clusters`` only; the hierarchical linkages ignore ``damping``
-            and ``preference_percentile``.
-        criterion: ``"cluster count"`` to ask for a number of clusters, or
-            ``"distance threshold"`` to cut at a height.
+        method: One of :data:`ALL_METHODS`.
+        criterion: ``"cluster count"`` to ask for a number of clusters, or ``"distance threshold"`` to cut at a height.
         n_clusters: Wanted cluster count, used by the count criterion.
         threshold: Cut height, used by the threshold criterion.
         damping: Affinity Propagation damping.
@@ -495,16 +447,9 @@ def best_k_by_silhouette(
 ) -> Clustering:
     """Cluster at the ``k`` with the best silhouette over a range.
 
-    Silhouette is undefined below two clusters and at one cluster per structure,
-    so the range is clipped to ``[2, n - 1]`` before scanning. When nothing in
-    the range scores — which happens for three structures or fewer — the lowest
-    ``k`` is returned unscored rather than raising, because a tiny run should
-    still produce a grouping.
-
     Args:
         distances: Square, symmetric distance matrix.
-        method: One of :data:`ALL_METHODS`, excluding Affinity Propagation, which
-            chooses its own cluster count.
+        method: One of :data:`ALL_METHODS`, excluding Affinity Propagation, which chooses its own cluster count.
         k_range: Inclusive ``(lo, hi)`` bounds on the cluster count.
         **kwargs: Passed through to :func:`cluster_labels`.
 
@@ -572,28 +517,19 @@ def two_stage_labels(
 ) -> TwoStageClustering:
     """Group on shape, then subdivide each group on chemistry.
 
-    Stage two sees only the submatrix of ``chem_distances`` for the members of one
-    shape cluster, so a pocket's chemistry is compared against its own fold rather
-    than against the whole run. A shape cluster with fewer than
-    ``min_cluster_size`` members is left whole: splitting three pockets into two
-    groups reports a difference that a silhouette cannot support.
-
     Args:
         shape_distances: Square shape distance matrix.
         chem_distances: Square physicochemical distance matrix, same order.
         shape_method: ``"hierarchical"``, ``"kmedoids"`` or ``"affinity"``.
         shape_linkage: Linkage used when ``shape_method`` is hierarchical.
-        shape_k: Pinned stage-one cluster count, or ``None`` to choose by
-            silhouette.
+        shape_k: Pinned stage-one cluster count, or ``None`` to choose by silhouette.
         shape_k_range: Inclusive bounds scanned when ``shape_k`` is ``None``.
         chem_method: As ``shape_method``, for stage two.
         chem_linkage: As ``shape_linkage``, for stage two.
         chem_k: As ``shape_k``, for stage two.
         chem_k_range: As ``shape_k_range``, for stage two.
         min_cluster_size: Shape clusters smaller than this are not subdivided.
-        combined_distances: Matrix used to pick each final cluster's medoid. The
-            pipeline passes its blended matrix so ``dist_to_exemplar`` keeps
-            meaning what it has always meant. Defaults to ``shape_distances``.
+        combined_distances: Matrix used to pick each final cluster's medoid.
 
     Returns:
         The two-level grouping.
@@ -660,10 +596,6 @@ def two_stage_labels(
 def compare_labelings(a: Sequence[int], b: Sequence[int]) -> ClusterComparison:
     """Measure how far two groupings of the same structures are apart.
 
-    Cluster numbers carry no meaning across two groupings, so the two are matched
-    up as well as they can be before counting what moved. Pair counts need no
-    matching at all and are the more robust half of the answer.
-
     Args:
         a: Cluster index per structure in the first grouping.
         b: Cluster index per structure in the second grouping.
@@ -715,10 +647,8 @@ def block_order(
 
     Args:
         distances: Square, symmetric distance matrix.
-        labels: Cluster index per structure. When given, the order is
-            cluster-major, and hierarchical inside each cluster.
+        labels: Cluster index per structure.
         within_cluster: Order inside each cluster by average-linkage leaf order.
-            Turn off to keep input order inside a cluster.
 
     Returns:
         Positions in display order.
@@ -750,8 +680,7 @@ def exemplars(distances: np.ndarray, labels: Sequence[int]) -> Dict[int, int]:
         labels: Cluster index per structure.
 
     Returns:
-        Cluster index to the position of its medoid, the member with the smallest
-        total distance to the rest of its cluster.
+        Cluster index to the position of its medoid, the member with the smallest total distance to the rest of its cluster.
     """
     d = symmetrise(distances)
     lab = np.asarray(labels)
@@ -768,8 +697,7 @@ def dendrogram_segments(
 
     Args:
         link: A scipy linkage matrix.
-        threshold: Colour threshold, only used to decide leaf ordering the same
-            way a coloured dendrogram would.
+        threshold: Colour threshold, only used to decide leaf ordering the same way a coloured dendrogram would.
 
     Returns:
         Segments in leaf-position units, where leaf ``i`` sits at ``10 * i + 5``.

@@ -24,8 +24,7 @@ def collect_docking_scores(
         jobs_csv: Path to ``docking_jobs.csv``.
 
     Returns:
-        DataFrame with columns: job_id, ligand_id, pdb_id, molecule_type,
-        score, output_exists.
+        DataFrame with columns: job_id, ligand_id, pdb_id, molecule_type, score, output_exists.
     """
     df_jobs = pd.read_csv(jobs_csv)
     records = []
@@ -55,9 +54,6 @@ def collect_docking_scores(
 
 def compute_rmsd_mcs(docked_mol: Chem.Mol, crystal_mol: Chem.Mol) -> Optional[float]:
     """Compute RMSD between a docked pose and the crystal ligand using MCS.
-
-    Uses Maximum Common Substructure (MCS) atom mapping so that partial
-    matches are handled gracefully.
 
     Args:
         docked_mol: RDKit Mol from a docked pose.
@@ -227,13 +223,6 @@ def compute_enrichment_metrics(
 ) -> Dict:
     """Compute VS enrichment metrics from a scored compound list.
 
-    Requires a ``molecule_type`` column with values ``"actives"`` / ``"decoys"``.
-
-    Metrics computed:
-    - ROC-AUC
-    - BEDROC (alpha = cfg.bedroc_alpha)
-    - EF(x%) for each fraction in cfg.ef_fractions
-
     Args:
         scores_df: DataFrame from :func:`collect_docking_scores` with scores.
         cfg: Analysis config.
@@ -378,10 +367,6 @@ def run_full_analysis(
     cfg: ScreenConfig,
 ) -> None:
     """Run the complete post-docking analysis pipeline.
-
-    Reads docking results from ``screening/results/``, computes scores,
-    RMSD, enrichment (if ``virtual_screening``), and interaction stats.
-    Writes four CSV files to ``screening/analysis/``.
 
     Args:
         screening_dir: Root screening directory.

@@ -25,10 +25,7 @@ except ImportError:
 
 
 def repair_pqr_with_missing_ions(pdb_path: Path, pqr_path: Path) -> None:
-    """
-    Scans the original PDB for ions. If pdb2pqr dropped them, this function
-    appends them to the PQR file with standard PARSE parameters.
-    """
+    """Scans the original PDB for ions."""
     pdb_ions = []
     with pdb_path.open("r") as f:
         for line in f:
@@ -280,19 +277,12 @@ def run_cavfind(pdb_path: Path, name: str) -> List[np.ndarray]:
 def plip_interactions(pdb_path: Path, ligand_name: str) -> List[str]:
     """Analyses protein–ligand interactions with PLIP.
 
-    Collects interactions from **all** binding sites whose residue name
-    matches *ligand_name* (handles structures with multiple copies of the
-    same ligand in different chains / symmetry mates).
-
     Args:
         pdb_path: Path to a PDB structure file.
         ligand_name: Residue name of the ligand to analyse (case-insensitive).
 
     Returns:
-        List of interaction strings formatted as
-        ``"RESNAME_RESNUM|InteractionType"``.  Returns ``["no_ligand_found"]``
-        when no matching interactions are detected and ``["analysis_error"]``
-        on PLIP failure.
+        List of interaction strings formatted as ``"RESNAME_RESNUM|InteractionType"``.
     """
     interactions: List[str] = []
 

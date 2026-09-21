@@ -229,7 +229,7 @@ def local_command(jobs_csv, workers: int) -> str:
 
 def slurm_array_script(jobs_csv, slurm_cfg, offset: int, n_tasks: int, log_dir,
                        chunk: Optional[int] = None, environment: Sequence[str] = ()) -> str:
-    """sbatch array script: each task runs one job through `qpocket screen run-task`.
+    """Sbatch array script: each task runs one job through `qpocket screen run-task`.
 
     Args:
         jobs_csv: docking_jobs.csv path.

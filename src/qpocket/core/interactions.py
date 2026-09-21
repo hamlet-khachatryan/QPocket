@@ -1,33 +1,32 @@
-"""Testing whether two pocket clusters engage different residues.
+"""Testing whether two pocket clusters engage different residues."""
 
-A cluster comparison invites an eyeball judgement — the bars look different, so
-the clusters must be different. They frequently are not: with eight structures on
-one side and five on the other, a residue contacted by six and two looks decisive
-and is not.
-
-Three questions are worth separating, and this module answers each with its own
-test:
-
-*Which residues differ?*
-    :func:`residue_enrichment` puts each residue in a 2x2 table of engaged versus
-    not, against cluster A versus B, and runs a two-sided Fisher exact test.
-    Fisher rather than chi-square because the counts are small by construction.
-
-*Does a shared residue differ in kind?*
-    :func:`interaction_type_shift` catches the residue both clusters touch but in
-    different ways — an H-bond donor in one, a hydrophobic contact in the other.
-    Presence/absence is blind to this, which is why both tests exist.
-
-*Are the repertoires disjoint?*
-    :func:`exclusivity` is the direct answer to "mutually exclusive": the Jaccard
-    overlap of the residue sets the two clusters engage. Near zero means disjoint.
-
-Every p-value is corrected across residues with Benjamini-Hochberg, and anything
-resting on too few structures is returned with ``underpowered`` set rather than a
-q-value near one — those two look identical on a plot and mean opposite things.
-
-Only numpy, scipy and pandas are used; files are read by :mod:`qpocket.io.hdf5`.
-"""
+# A cluster comparison invites an eyeball judgement — the bars look different, so
+# the clusters must be different. They frequently are not: with eight structures on
+# one side and five on the other, a residue contacted by six and two looks decisive
+# and is not.
+#
+# Three questions are worth separating, and this module answers each with its own
+# test:
+#
+# *Which residues differ?*
+#     :func:`residue_enrichment` puts each residue in a 2x2 table of engaged versus
+#     not, against cluster A versus B, and runs a two-sided Fisher exact test.
+#     Fisher rather than chi-square because the counts are small by construction.
+#
+# *Does a shared residue differ in kind?*
+#     :func:`interaction_type_shift` catches the residue both clusters touch but in
+#     different ways — an H-bond donor in one, a hydrophobic contact in the other.
+#     Presence/absence is blind to this, which is why both tests exist.
+#
+# *Are the repertoires disjoint?*
+#     :func:`exclusivity` is the direct answer to "mutually exclusive": the Jaccard
+#     overlap of the residue sets the two clusters engage. Near zero means disjoint.
+#
+# Every p-value is corrected across residues with Benjamini-Hochberg, and anything
+# resting on too few structures is returned with ``underpowered`` set rather than a
+# q-value near one — those two look identical on a plot and mean opposite things.
+#
+# Only numpy, scipy and pandas are used; files are read by :mod:`qpocket.io.hdf5`.
 
 from __future__ import annotations
 
@@ -58,10 +57,8 @@ class Profile(NamedTuple):
         presence: Boolean ``(n_structures, n_residues)`` engagement matrix.
         structures: PDB IDs, in row order.
         residues: Residue keys (``RESNAME_RESNUM_CHAIN``), in column order.
-        type_counts: ``(n_structures, n_residues, n_types)`` interaction counts,
-            or ``None`` for a potential-interaction file, which records no types.
-        types: Interaction type names in the last axis' order, empty when
-            ``type_counts`` is ``None``.
+        type_counts: ``(n_structures, n_residues, n_types)`` interaction counts, or ``None`` for a potential-interaction file, which records no types.
+        types: Interaction type names in the last axis' order, empty when ``type_counts`` is ``None``.
     """
 
     presence: np.ndarray
@@ -80,7 +77,7 @@ class ResidueTest(NamedTuple):
         n_b: Structures in cluster B engaging it.
         freq_a: Fraction of cluster A engaging it, in ``[0, 1]``.
         freq_b: Fraction of cluster B engaging it.
-        difference: ``freq_a - freq_b``. Positive favours A.
+        difference: ``freq_a - freq_b``.
         odds_ratio: Fisher odds ratio, ``inf`` when B never engages it.
         p_value: Two-sided Fisher exact p-value.
         q_value: Benjamini-Hochberg adjusted p-value across all residues tested.
@@ -113,8 +110,7 @@ class TypeShiftTest(NamedTuple):
         p_value: Chi-square p-value, ``nan`` when the test could not run.
         q_value: Benjamini-Hochberg adjusted p-value across residues tested.
         significant: ``q_value <= alpha`` and not underpowered.
-        underpowered: Too few structures, fewer than two types, or an expected
-            cell count below :data:`MIN_EXPECTED`.
+        underpowered: Too few structures, fewer than two types, or an expected cell count below :data:`MIN_EXPECTED`.
     """
 
     residue: str
@@ -132,9 +128,7 @@ class Exclusivity(NamedTuple):
     """How far two clusters' engaged-residue sets overlap.
 
     Attributes:
-        jaccard: ``|A and B| / |A or B|``. ``0.0`` means mutually exclusive,
-            ``1.0`` means identical. ``nan`` when neither cluster engages
-            anything.
+        jaccard: ``|A and B| / |A or B|``.
         shared: Residues engaged by both.
         a_only: Residues engaged only by cluster A.
         b_only: Residues engaged only by cluster B.
@@ -154,9 +148,6 @@ class Exclusivity(NamedTuple):
 
 def profile(entries: Dict[str, List[str]]) -> Profile:
     """Engagement matrix from decoded interaction entries.
-
-    Observed entries are ``RESIDUE|InteractionType``; potential entries are a
-    bare ``RESIDUE``. Both mean: this structure engages this residue.
 
     Args:
         entries: Structure ID to entries, in the row order wanted.
@@ -236,9 +227,6 @@ def residue_enrichment(
 ) -> List[ResidueTest]:
     """Which residues two clusters engage at different rates.
 
-    Residues engaged by neither cluster are dropped before correction — carrying
-    them would inflate the number of tests and weaken every real finding.
-
     Args:
         profile: An engagement profile from :func:`build_profile`.
         members_a: PDB IDs in cluster A.
@@ -246,8 +234,7 @@ def residue_enrichment(
         alpha: FDR threshold applied to the q-values.
 
     Returns:
-        One result per tested residue, most significant first, ties broken by
-        the larger absolute frequency difference.
+        One result per tested residue, most significant first, ties broken by the larger absolute frequency difference.
     """
     rows_a, rows_b = _split_rows(profile, members_a, members_b)
     n_a, n_b = len(rows_a), len(rows_b)
@@ -299,20 +286,14 @@ def interaction_type_shift(
 ) -> List[TypeShiftTest]:
     """Which residues change interaction type between two clusters.
 
-    Only residues engaged by both clusters are tested: a residue one cluster never
-    touches is a presence difference, which :func:`residue_enrichment` already
-    reports, and testing it here would double-count it.
-
     Args:
-        profile: A profile carrying ``type_counts`` — that is, one built from an
-            observed-interaction file.
+        profile: A profile carrying ``type_counts`` — that is, one built from an observed-interaction file.
         members_a: PDB IDs in cluster A.
         members_b: PDB IDs in cluster B.
         alpha: FDR threshold applied to the q-values.
 
     Returns:
-        One result per tested residue, most significant first. Empty when the
-        profile records no interaction types.
+        One result per tested residue, most significant first.
     """
     if profile.type_counts is None:
         return []
@@ -411,8 +392,7 @@ def exclusivity(
         profile: An engagement profile.
         members_a: PDB IDs in cluster A.
         members_b: PDB IDs in cluster B.
-        engaged_frac: Fraction of a cluster that must show a residue for it to
-            count as engaged by that cluster.
+        engaged_frac: Fraction of a cluster that must show a residue for it to count as engaged by that cluster.
 
     Returns:
         The overlap, with the residues on each side named.

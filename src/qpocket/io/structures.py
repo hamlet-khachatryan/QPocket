@@ -12,10 +12,7 @@ from qpocket.core.structure import AtomKey, atom_key as _key, conect_lines as _c
 
 
 def load(path: Path) -> Structure:
-    """Read a PDB or mmCIF file, keeping only its first model.
-
-    PyMOL aligned and saved state 1 only; later NMR models were never used.
-    """
+    """Read a PDB or mmCIF file, keeping only its first model."""
     path = Path(path)
     parser = MMCIFParser(QUIET=True) if path.suffix.lower() == ".cif" else PDBParser(QUIET=True)
     structure = parser.get_structure(path.stem, str(path))
@@ -25,12 +22,7 @@ def load(path: Path) -> Structure:
 
 
 def read_links(path: Path) -> Set[Tuple[AtomKey, AtomKey]]:
-    """Covalent links annotated in a structure file.
-
-    mmCIF: ``_struct_conn`` rows of type ``covale`` or ``disulf``. PDB: ``LINK``
-    records, plus any ``CONECT`` pair joining two different residues (which is
-    how a file this module wrote carries its links forward to the next stage).
-    """
+    """Covalent links annotated in a structure file."""
     path = Path(path)
     links: Set[Tuple[AtomKey, AtomKey]] = set()
 
