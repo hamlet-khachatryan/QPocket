@@ -1,9 +1,12 @@
+"""Network access: RCSB search and downloads, UniProt accessions and sequences."""
 import os
-import requests
 from typing import List, Optional
-from io import StringIO
-from Bio import SeqIO
-from eliot import start_action, log_message
+
+import requests
+from eliot import log_message, start_action
+
+from qpocket.constants import FASTA_UNIPROT_TEMPLATE
+from qpocket.core.sequence import chain_sequence_from_fasta, rcsb_search_query
 
 RCSB_SEARCH_URL = "https://search.rcsb.org/rcsbsearch/v2/query"
 RCSB_FASTA_URL = "https://www.rcsb.org/fasta/entry/"
@@ -70,24 +73,11 @@ def fetch_structure_ids(
 
     with start_action(action_type="fetch_structures", ref=full_ref):
         fasta_url = f"{RCSB_FASTA_URL}{ref_pdb_id}"
-        ref_sequence = None
 
         try:
             r = requests.get(fasta_url, timeout=30)
             r.raise_for_status()
-
-            for record in SeqIO.parse(StringIO(r.text), "fasta"):
-                # Header format: >5R7Y_1|Chain A|...
-                parts = record.description.split('|')
-                if len(parts) >= 2:
-                    if ref_pdb_id.upper() in parts[0].upper():
-                        # Clean "Chain A" or "Chains A, B"
-                        chains_clean = parts[1].replace("Chains", "").replace("Chain", "").strip()
-                        valid_chains = [c.strip() for c in chains_clean.split(',')]
-
-                        if ref_chain_id in valid_chains:
-                            ref_sequence = str(record.seq)
-                            break
+            ref_sequence = chain_sequence_from_fasta(r.text, ref_pdb_id, ref_chain_id)
 
             if not ref_sequence:
                 log_message(message_type="error", msg=f"Sequence not found for {full_ref}")
@@ -97,81 +87,16 @@ def fetch_structure_ids(
             log_message(message_type="error", msg=f"FASTA fetch failed: {e}")
             return []
 
-        query_nodes = [
-            {
-                "type": "terminal",
-                "service": "sequence",
-                "parameters": {
-                    "evalue_cutoff": 0.1,
-                    "identity_cutoff": sequence_identity,
-                    "target": "pdb_protein_sequence",
-                    "value": ref_sequence
-                }
-            }
-        ]
-
-        if resolution_limit:
-            query_nodes.append({
-                "type": "terminal",
-                "service": "text",
-                "parameters": {
-                    "attribute": "rcsb_entry_info.resolution_combined",
-                    "operator": "less_or_equal",
-                    "value": resolution_limit
-                }
-            })
-
-        if min_length is not None:
-            query_nodes.append({
-                "type": "terminal",
-                "service": "text",
-                "parameters": {
-                    "attribute": "entity_poly.rcsb_sample_sequence_length",
-                    "operator": "greater_or_equal",
-                    "value": min_length
-                }
-            })
-
-        if max_length is not None:
-            query_nodes.append({
-                "type": "terminal",
-                "service": "text",
-                "parameters": {
-                    "attribute": "entity_poly.rcsb_sample_sequence_length",
-                    "operator": "less_or_equal",
-                    "value": max_length
-                }
-            })
-
-        if experimental_method:
-            query_nodes.append({
-                "type": "terminal",
-                "service": "text",
-                "parameters": {
-                    "attribute": "exptl.method",
-                    "operator": "exact_match",
-                    "value": experimental_method.upper()
-                }
-            })
-
-        if enforce_same_uniprot:
-            uid = get_uniprot_accession(ref_pdb_id, ref_chain_id)
-            if uid:
-                query_nodes.append({
-                    "type": "terminal",
-                    "service": "text",
-                    "parameters": {
-                        "attribute": "rcsb_polymer_entity_container_identifiers.reference_sequence_identifiers.database_accession",
-                        "operator": "exact_match",
-                        "value": uid
-                    }
-                })
-
-        query = {
-            "query": {"type": "group", "logical_operator": "and", "nodes": query_nodes},
-            "return_type": "entry",
-            "request_options": {"return_all_hits": True}
-        }
+        uid = get_uniprot_accession(ref_pdb_id, ref_chain_id) if enforce_same_uniprot else None
+        query = rcsb_search_query(
+            ref_sequence,
+            sequence_identity=sequence_identity,
+            resolution_limit=resolution_limit,
+            min_length=min_length,
+            max_length=max_length,
+            experimental_method=experimental_method,
+            uniprot_id=uid,
+        )
 
         try:
             resp = requests.post(RCSB_SEARCH_URL, json=query, timeout=30)
@@ -203,3 +128,29 @@ def download_structures(pdb_ids: List[str], download_dir: str):
                     log_message(message_type="download_fail", pdb_id=pdb_id, status=r.status_code)
             except Exception as e:
                 log_message(message_type="download_error", pdb_id=pdb_id, error=str(e))
+
+
+def fetch_uniprot_sequence(uniprot_id: str) -> Optional[str]:
+    """Canonical sequence of a UniProt accession.
+
+    Args:
+        uniprot_id: UniProt accession (e.g. ``"P0DTC2"``).
+
+    Returns:
+        Single-letter sequence, or None on failure.
+    """
+    url = FASTA_UNIPROT_TEMPLATE.format(uniprot_id)
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        lines = resp.text.splitlines()
+        if len(lines) > 1:
+            return "".join(lines[1:])
+    except Exception as e:
+        log_message(
+            message_type="error",
+            stage="fetch_uniprot_sequence",
+            uniprot_id=uniprot_id,
+            error=str(e),
+        )
+    return None

@@ -3,12 +3,11 @@ from __future__ import annotations
 import warnings
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import h5py
 import numpy as np
 import pandas as pd
-from Bio import Align
 from Bio.PDB import PDBParser
 from Bio.PDB.PDBExceptions import PDBConstructionWarning
 from biopandas.pdb import PandasPdb
@@ -55,151 +54,6 @@ def setup_directory_hierarchy(
         path.mkdir(parents=True, exist_ok=True)
 
     return dirs
-
-
-def calculate_sequence_identity(seq1: str, seq2: str) -> float:
-    """Calculates the sequence identity between two sequences via global alignment.
-
-    Uses ``Bio.Align.PairwiseAligner`` with global mode and unit match scores
-    to count identical positions, then divides by the alignment length.
-
-    Args:
-        seq1: First amino-acid sequence (single-letter).
-        seq2: Second amino-acid sequence (single-letter).
-
-    Returns:
-        Percentage identity in ``[0.0, 100.0]``.
-    """
-    if not seq1 or not seq2:
-        return 0.0
-
-    aligner = Align.PairwiseAligner()
-    aligner.mode = "global"
-    aligner.match_score = 1
-    aligner.mismatch_score = 0
-    aligner.open_gap_score = 0
-    aligner.extend_gap_score = 0
-
-    try:
-        best = next(iter(aligner.align(seq1, seq2)))
-    except StopIteration:
-        return 0.0
-
-    # With zero mismatch/gap scores, best.score equals the number of identical positions.
-    n_matches = int(best.score)
-    # Global alignment length equals the longer sequence (no gap penalty → no insertions).
-    alignment_length = max(len(seq1), len(seq2))
-
-    if alignment_length == 0:
-        return 0.0
-    return (n_matches / alignment_length) * 100.0
-
-
-def find_auxiliary_chain(
-    chain_sequences: Dict[str, str],
-    chain_ca_centroids: Dict[str, np.ndarray],
-    ref_aux_seq: str,
-    ref_aux_centroid: np.ndarray,
-    primary_chain: str,
-    min_identity: float = 0.70,
-    max_centroid_deviation: float = 15.0,
-) -> Optional[str]:
-    """Identifies the auxiliary chain in a target structure that matches a reference chain.
-
-    Uses a two-stage strategy that handles both heterodimers and homodimers:
-
-    1. **Sequence filter** — retains candidate chains with sequence identity
-       ≥ *min_identity* against the reference auxiliary sequence (the primary
-       chain is excluded from consideration).
-    2. **Spatial disambiguation** — when multiple candidates survive (homodimer /
-       homomultimer), selects the chain whose Cα centroid is closest to the
-       reference auxiliary centroid.  Both centroids must already be in the
-       same coordinate frame (i.e. the target has been aligned to the reference).
-
-    Args:
-        chain_sequences: Mapping of ``{chain_id: single_letter_sequence}`` for
-            all chains in the aligned target structure.
-        chain_ca_centroids: Mapping of ``{chain_id: centroid_xyz}`` — Cα mean
-            coordinate for each chain (shape ``(3,)`` numpy arrays).  Must be
-            in the reference coordinate frame.
-        ref_aux_seq: Single-letter sequence of the reference auxiliary chain.
-        ref_aux_centroid: Cα centroid of the reference auxiliary chain in the
-            reference coordinate frame (shape ``(3,)``).
-        primary_chain: Chain ID of the already-matched primary chain; excluded
-            from auxiliary candidate selection.
-        min_identity: Minimum sequence identity fraction ``(0, 1]`` required for
-            a candidate to qualify.
-        max_centroid_deviation: If the best spatial match deviates more than this
-            distance (Å) from *ref_aux_centroid*, a warning is emitted (the match
-            is still returned — callers can decide to reject it).
-
-    Returns:
-        Chain ID of the best matching auxiliary chain, or ``None`` if no
-        candidate meets the sequence identity threshold.
-    """
-    # --- Stage 1: sequence filter -----------------------------------------------
-    candidates: List[Tuple[str, float]] = []
-    for chain_id, seq in chain_sequences.items():
-        if chain_id == primary_chain:
-            continue
-        if not seq:
-            continue
-        # calculate_sequence_identity returns a percentage [0, 100]
-        identity_frac = calculate_sequence_identity(ref_aux_seq, seq) / 100.0
-        if identity_frac >= min_identity:
-            candidates.append((chain_id, identity_frac))
-
-    if not candidates:
-        return None
-
-    if len(candidates) == 1:
-        return candidates[0][0]
-
-    # --- Stage 2: spatial disambiguation (homodimer / homomultimer) --------------
-    best_chain: Optional[str] = None
-    best_dist = float("inf")
-
-    for chain_id, _ in candidates:
-        centroid = chain_ca_centroids.get(chain_id)
-        if centroid is None or len(centroid) != 3:
-            continue
-        dist = float(np.linalg.norm(centroid - ref_aux_centroid))
-        if dist < best_dist:
-            best_dist = dist
-            best_chain = chain_id
-
-    if best_chain is None:
-        # Centroids not available — fall back to highest sequence identity
-        best_chain = max(candidates, key=lambda x: x[1])[0]
-        log_message(
-            message_type="warning",
-            stage="find_auxiliary_chain",
-            warning="Cα centroids unavailable for spatial disambiguation; "
-                    "falling back to highest sequence identity",
-            chosen_chain=best_chain,
-        )
-        return best_chain
-
-    if best_dist > max_centroid_deviation:
-        log_message(
-            message_type="warning",
-            stage="find_auxiliary_chain",
-            warning=(
-                f"best auxiliary chain {best_chain!r} centroid is {best_dist:.1f} Å "
-                f"from reference auxiliary (threshold {max_centroid_deviation:.1f} Å); "
-                "possible crystal contact — verify manually"
-            ),
-            chosen_chain=best_chain,
-            centroid_distance=best_dist,
-        )
-
-    log_message(
-        message_type="auxiliary_chain_resolved",
-        chosen_chain=best_chain,
-        n_candidates=len(candidates),
-        centroid_distance=best_dist,
-    )
-    return best_chain
 
 
 def get_ref_ligand_centroid(

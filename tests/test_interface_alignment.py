@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qpocket.utils import find_auxiliary_chain
+from qpocket.core.sequence import find_auxiliary_chain
 from qpocket.config import (
     AlignParams,
     ReferenceParams,

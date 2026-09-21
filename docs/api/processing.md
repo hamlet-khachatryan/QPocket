@@ -16,8 +16,19 @@
     options:
       members:
         - process_structure
-        - fetch_uniprot_sequence
-        - generate_renumbering_map
+        - process_structure_interface
+
+## Structures and sequences (pure)
+
+::: qpocket.core.structure
+
+::: qpocket.core.sequence
+
+## Structure files and network
+
+::: qpocket.io.structures
+
+::: qpocket.io.rcsb
 
 ## Cleaning
 

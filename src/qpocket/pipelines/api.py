@@ -24,7 +24,8 @@ from qpocket.config import (
 )
 from qpocket import utils
 from qpocket.core.spectral_distance import compute_spectral_distance_matrix
-from qpocket import pdb_query
+from qpocket.io import rcsb as pdb_query
+from qpocket.io import structures as sio
 from qpocket.core import alignment
 from qpocket.core import cleaning
 from qpocket.core import extraction
@@ -482,8 +483,7 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
             )
 
         # ── Load reference; extract primary chain sequence ────────────────────
-        ref_structure = st.load(reference_path)
-        st.remove_water(ref_structure)
+        ref_structure, _ = st.without_water(sio.load(reference_path))
         ref_model = ref_structure[0]
         if cfg.reference.chain_id not in ref_model:
             raise ValueError(
@@ -522,8 +522,8 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
             keep += list(cfg.reference.auxiliary_chain_ids)
 
         aligned_reference_path = dirs["aligned"] / f"{ref_id}_aligned.pdb"
-        st.save(st.keep_chains(ref_structure, keep), aligned_reference_path,
-                st.read_links(reference_path))
+        sio.save(st.keep_chains(ref_structure, keep), aligned_reference_path,
+                 sio.read_links(reference_path))
 
         log_message(
             message_type="reference_processed",
@@ -564,7 +564,7 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
         # exactly the coordinates on disk.
         reference_residues = st.polymer_residues(
             st.keep_chains(
-                st.load(aligned_reference_path), [cfg.reference.chain_id], protein_only=True
+                sio.load(aligned_reference_path), [cfg.reference.chain_id], protein_only=True
             )[0][cfg.reference.chain_id]
         )
 

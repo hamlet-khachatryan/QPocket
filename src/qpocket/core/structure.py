@@ -24,14 +24,11 @@ annotated in the input (``_struct_conn`` in mmCIF, ``LINK`` or inter-residue
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, NamedTuple, Sequence, Set, Tuple
 
 import numpy as np
 from Bio.Align import PairwiseAligner, substitution_matrices
-from Bio.PDB import MMCIFParser, PDBIO, PDBParser, Select
 from Bio.PDB.Chain import Chain
-from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 from Bio.PDB.Model import Model
 from Bio.PDB.Residue import Residue
 from Bio.PDB.Structure import Structure
@@ -93,110 +90,29 @@ class Fit(NamedTuple):
 # --------------------------------------------------------------------------
 
 
-def load(path: Path) -> Structure:
-    """Read a PDB or mmCIF file, keeping only its first model.
 
-    PyMOL aligned and saved state 1 only; later NMR models were never used.
+
+def without_water(structure: Structure) -> Tuple[Structure, int]:
+    """Copy of a structure with solvent residues removed.
+
+    Args:
+        structure: Input structure (not modified).
+
+    Returns:
+        (new structure, residues removed).
     """
-    path = Path(path)
-    parser = MMCIFParser(QUIET=True) if path.suffix.lower() == ".cif" else PDBParser(QUIET=True)
-    structure = parser.get_structure(path.stem, str(path))
-    for model in list(structure)[1:]:
-        structure.detach_child(model.id)
-    return structure
-
-
-def remove_water(structure: Structure) -> int:
-    """Delete solvent residues in place. Returns how many were removed."""
+    out = structure.copy()
     removed = 0
-    for chain in structure[0]:
+    for chain in out[0]:
         for residue in [r for r in chain if r.get_resname().strip() in WATER]:
             chain.detach_child(residue.id)
             removed += 1
-    return removed
+    return out, removed
 
 
-def read_links(path: Path) -> Set[Tuple[AtomKey, AtomKey]]:
-    """Covalent links annotated in a structure file.
-
-    mmCIF: ``_struct_conn`` rows of type ``covale`` or ``disulf``. PDB: ``LINK``
-    records, plus any ``CONECT`` pair joining two different residues (which is
-    how a file this module wrote carries its links forward to the next stage).
-    """
-    path = Path(path)
-    links: Set[Tuple[AtomKey, AtomKey]] = set()
-
-    if path.suffix.lower() == ".cif":
-        try:
-            data = MMCIF2Dict(str(path))
-        except Exception:
-            return links
-        types = data.get("_struct_conn.conn_type_id")
-        if not types:
-            return links
-        if isinstance(types, str):
-            types = [types]
-
-        def column(name: str) -> List[str]:
-            value = data.get(f"_struct_conn.{name}", ["?"] * len(types))
-            return [value] if isinstance(value, str) else value
-
-        cols = {k: column(k) for k in (
-            "ptnr1_auth_asym_id", "ptnr1_auth_seq_id", "pdbx_ptnr1_PDB_ins_code",
-            "ptnr1_label_comp_id", "ptnr1_label_atom_id",
-            "ptnr2_auth_asym_id", "ptnr2_auth_seq_id", "pdbx_ptnr2_PDB_ins_code",
-            "ptnr2_label_comp_id", "ptnr2_label_atom_id",
-        )}
-        for i, kind in enumerate(types):
-            if kind not in ("covale", "disulf"):
-                continue
-            try:
-                a = _key(cols["ptnr1_auth_asym_id"][i], cols["ptnr1_auth_seq_id"][i],
-                         cols["pdbx_ptnr1_PDB_ins_code"][i], cols["ptnr1_label_comp_id"][i],
-                         cols["ptnr1_label_atom_id"][i])
-                b = _key(cols["ptnr2_auth_asym_id"][i], cols["ptnr2_auth_seq_id"][i],
-                         cols["pdbx_ptnr2_PDB_ins_code"][i], cols["ptnr2_label_comp_id"][i],
-                         cols["ptnr2_label_atom_id"][i])
-            except (ValueError, IndexError):
-                continue
-            links.add(tuple(sorted((a, b))))
-        return links
-
-    serial_to_key: Dict[int, AtomKey] = {}
-    conect: List[Tuple[int, int]] = []
-    for line in path.read_text().splitlines():
-        record = line[:6]
-        if record == "LINK  ":
-            try:
-                a = _key(line[21], line[22:26], line[26], line[17:20], line[12:16])
-                b = _key(line[51], line[52:56], line[56], line[47:50], line[42:46])
-            except ValueError:
-                continue
-            links.add(tuple(sorted((a, b))))
-        elif record in ("ATOM  ", "HETATM"):
-            try:
-                serial_to_key[int(line[6:11])] = _key(
-                    line[21], line[22:26], line[26], line[17:20], line[12:16])
-            except ValueError:
-                continue
-        elif record == "CONECT":
-            try:
-                a = int(line[6:11])
-            except ValueError:
-                continue
-            for start in range(11, 31, 5):
-                token = line[start:start + 5].strip()
-                if token.isdigit():
-                    conect.append((a, int(token)))
-
-    for a, b in conect:
-        ka, kb = serial_to_key.get(a), serial_to_key.get(b)
-        if ka and kb and ka[:4] != kb[:4]:  # different residues
-            links.add(tuple(sorted((ka, kb))))
-    return links
 
 
-def _key(chain: str, resseq, icode: str, resname: str, atom: str) -> AtomKey:
+def atom_key(chain: str, resseq, icode: str, resname: str, atom: str) -> AtomKey:
     icode = "" if icode in (None, "?", ".", " ") else str(icode).strip()
     return (str(chain).strip(), int(str(resseq).strip()), icode,
             str(resname).strip(), str(atom).strip())
@@ -337,9 +253,19 @@ def superpose(mobile: Sequence[Residue], reference: Sequence[Residue],
                rotation=rotation, translation=translation)
 
 
-def apply(entity, fit: Fit) -> None:
-    """Move every atom of ``entity`` by a fit, in place."""
-    entity.transform(fit.rotation, fit.translation)
+def moved(entity, fit: Fit):
+    """Copy of an entity with every atom moved by a fit.
+
+    Args:
+        entity: Structure, model or chain (not modified).
+        fit: Superposition from superpose.
+
+    Returns:
+        The moved copy.
+    """
+    out = entity.copy()
+    out.transform(fit.rotation, fit.translation)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -369,39 +295,84 @@ def keep_chains(structure: Structure, chain_ids: Iterable[str],
     return out_structure
 
 
-def remove_residues(structure: Structure, keep_names: Iterable[str]) -> int:
-    """Delete every residue whose name is not in ``keep_names``. Returns the count."""
+def without_residues(structure: Structure, keep_names: Iterable[str]) -> Tuple[Structure, int]:
+    """Copy of a structure keeping only residues named in keep_names.
+
+    Args:
+        structure: Input structure (not modified).
+        keep_names: Residue names to keep.
+
+    Returns:
+        (new structure, residues removed).
+    """
     keep = {n.strip().upper() for n in keep_names}
+    out = structure.copy()
     removed = 0
-    for chain in structure[0]:
+    for chain in out[0]:
         for residue in [r for r in chain if r.get_resname().strip().upper() not in keep]:
             chain.detach_child(residue.id)
             removed += 1
-    return removed
+    return out, removed
 
 
-def clean(structure: Structure, allowed_cofactors: Iterable[str] = ()) -> int:
-    """Keep standard amino acids and allowed cofactors; returns residues removed."""
-    return remove_residues(structure, set(STANDARD_AA) | set(allowed_cofactors))
+def cleaned(structure: Structure, allowed_cofactors: Iterable[str] = ()) -> Tuple[Structure, int]:
+    """Copy keeping standard amino acids and allowed cofactors.
+
+    Args:
+        structure: Input structure (not modified).
+        allowed_cofactors: Extra residue names to keep.
+
+    Returns:
+        (new structure, residues removed).
+    """
+    return without_residues(structure, set(STANDARD_AA) | set(allowed_cofactors))
+
+
+def with_chain(structure: Structure, chain: Chain) -> Structure:
+    """Copy of a structure with one chain replaced, keeping chain order.
+
+    Args:
+        structure: Input structure (not modified).
+        chain: Replacement; its id names the chain to replace.
+
+    Returns:
+        The new structure.
+    """
+    out = structure.copy()
+    model = out[0]
+    position = [c.id for c in model].index(chain.id)
+    model.detach_child(chain.id)
+    model.insert(position, chain.copy())
+    return out
 
 
 def count_atoms(structure: Structure) -> int:
+    """Number of atoms in a structure.
+
+    Args:
+        structure: Any structure.
+
+    Returns:
+        Atom count.
+    """
     return sum(1 for _ in structure.get_atoms())
 
 
-def renumber(chain: Chain, old_to_new: Dict[int, int]) -> int:
-    """Renumber residues of a chain in place, as ``cmd.alter`` + ``cmd.sort``.
+def renumbered(chain: Chain, old_to_new: Dict[int, int]) -> Tuple[Chain, int]:
+    """Copy of a chain renumbered as ``cmd.alter`` + ``cmd.sort`` would.
 
-    Every residue whose number is a key -- whatever its insertion code or HETATM
-    flag, as PyMOL's ``resi`` selection matched -- takes the new number. Where two
-    residues would end up with the same identifier, which Biopython cannot hold,
-    the later one keeps its old number, or failing that its old number
-    with a free insertion code, and is counted in the return value. No residue
-    is ever dropped.
+    Every residue whose number is a key takes the new number. On a clash the
+    later residue keeps its old number, or that number with a free insertion
+    code; no residue is dropped.
+
+    Args:
+        chain: Input chain (not modified).
+        old_to_new: Old residue number to new.
 
     Returns:
-        Residues that could not be renumbered because of a clash.
+        (new chain, residues left unrenumbered because of a clash).
     """
+    chain = chain.copy()
     residues = list(chain)
     for residue in residues:
         chain.detach_child(residue.id)
@@ -429,7 +400,7 @@ def renumber(chain: Chain, old_to_new: Dict[int, int]) -> int:
     renumbered.sort(key=lambda r: (r.id[1], r.id[2], r.id[0]))
     for residue in renumbered:
         chain.add(residue)
-    return clashes
+    return chain, clashes
 
 
 # --------------------------------------------------------------------------
@@ -437,7 +408,7 @@ def renumber(chain: Chain, old_to_new: Dict[int, int]) -> int:
 # --------------------------------------------------------------------------
 
 
-def _conect_lines(pdb_lines: Sequence[str], links: Set[Tuple[AtomKey, AtomKey]]) -> List[str]:
+def conect_lines(pdb_lines: Sequence[str], links: Set[Tuple[AtomKey, AtomKey]]) -> List[str]:
     """CONECT records for the atoms in ``pdb_lines``, following PyMOL's rule."""
     rows = []
     for line in pdb_lines:
@@ -447,7 +418,7 @@ def _conect_lines(pdb_lines: Sequence[str], links: Set[Tuple[AtomKey, AtomKey]])
             serial=int(line[6:11]), het=line[:6] == "HETATM", alt=line[16],
             name=line[12:16].strip(), residue=(line[21], line[22:27]),
             element=(line[76:78].strip() or line[12:14].strip()).upper(),
-            key=_key(line[21], line[22:26], line[26], line[17:20], line[12:16]),
+            key=atom_key(line[21], line[22:26], line[26], line[17:20], line[12:16]),
             xyz=(float(line[30:38]), float(line[38:46]), float(line[46:54])),
         ))
     if not rows:
@@ -494,22 +465,3 @@ def _conect_lines(pdb_lines: Sequence[str], links: Set[Tuple[AtomKey, AtomKey]])
     return out
 
 
-def save(structure: Structure, path: Path,
-         links: Optional[Set[Tuple[AtomKey, AtomKey]]] = None) -> None:
-    """Write a PDB file with PyMOL-equivalent CONECT records.
-
-    Raises:
-        ValueError: If a chain identifier is longer than PDB format allows.
-    """
-    for chain in structure[0]:
-        if len(chain.id) > 1:
-            raise ValueError(
-                f"chain {chain.id!r} does not fit the one-character PDB chain column"
-            )
-    path = Path(path)
-    io = PDBIO()
-    io.set_structure(structure)
-    io.save(str(path), write_end=False)
-    lines = path.read_text().splitlines(keepends=True)
-    lines = [l for l in lines if not l.startswith("END")]
-    path.write_text("".join(lines + _conect_lines(lines, links or set()) + ["END\n"]))

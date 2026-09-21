@@ -10,6 +10,7 @@ from typing import Optional
 from eliot import log_message, start_action
 
 from qpocket.core import structure as st
+from qpocket.io import structures as sio
 
 
 def clean_structure(
@@ -57,8 +58,7 @@ def clean_structure(
             return True
 
         try:
-            structure = st.load(Path(input_pdb_path))
-            n_dropped = st.clean(structure, allowed_set)
+            structure, n_dropped = st.cleaned(sio.load(Path(input_pdb_path)), allowed_set)
 
             log_message(
                 message_type="cleaning_stats",
@@ -78,7 +78,7 @@ def clean_structure(
 
             # Links come from the aligned file's CONECT records, so a kept
             # covalent cofactor stays bonded to the protein.
-            st.save(structure, Path(output_pdb_path), st.read_links(Path(input_pdb_path)))
+            sio.save(structure, Path(output_pdb_path), sio.read_links(Path(input_pdb_path)))
             return True
 
         except Exception as e:

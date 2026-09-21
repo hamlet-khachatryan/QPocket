@@ -8,98 +8,20 @@ reproduces ``cmd.align``; on the 20 PARG structures every atom lands within
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
-import requests
-from Bio import Align
 from Bio.PDB.Residue import Residue
 from eliot import log_message, start_action
 
 from qpocket.core import structure as st
-from qpocket.utils import calculate_sequence_identity, find_auxiliary_chain
-from qpocket.constants import FASTA_UNIPROT_TEMPLATE
-
-def fetch_uniprot_sequence(uniprot_id: str) -> Optional[str]:
-    """Fetches the canonical amino acid sequence for a UniProt accession.
-
-    Args:
-        uniprot_id: UniProt accession (e.g. ``"P0DTC2"``).
-
-    Returns:
-        Single-letter amino acid sequence string, or ``None`` on failure.
-    """
-    url = FASTA_UNIPROT_TEMPLATE.format(uniprot_id)
-    try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        lines = resp.text.splitlines()
-        if len(lines) > 1:
-            return "".join(lines[1:])
-    except Exception as e:
-        log_message(
-            message_type="error",
-            stage="fetch_uniprot_sequence",
-            uniprot_id=uniprot_id,
-            error=str(e),
-        )
-    return None
-
-
-def generate_renumbering_map(
-    pdb_seq: str,
-    uniprot_seq: str,
-    pdb_start_resi: int = 0,
-) -> Dict[int, int]:
-    """Builds a sequential-index → UniProt residue number mapping.
-
-    Performs a local pairwise alignment of *pdb_seq* against *uniprot_seq*
-    and maps each aligned position.
-
-    Args:
-        pdb_seq: Single-letter sequence extracted from the PDB structure.
-        uniprot_seq: Canonical UniProt single-letter sequence.
-        pdb_start_resi: 0-based offset added to alignment position indices
-            when constructing the output keys.  Callers typically pass 0 so
-            that keys are simple list indices into the ``pdb_resis`` array.
-
-    Returns:
-        ``{list_index: uniprot_residue_number_1based}`` dictionary where
-        *list_index* is an index into the ordered list of CA residue numbers
-        extracted from the structure.  Empty if no alignment was produced.
-    """
-    aligner = Align.PairwiseAligner()
-    aligner.mode = "local"
-    aligner.match_score = 2
-    aligner.mismatch_score = -1
-    aligner.open_gap_score = -10
-    aligner.extend_gap_score = -0.5
-
-    alignments = aligner.align(uniprot_seq, pdb_seq)
-    try:
-        alignment = next(alignments)
-    except StopIteration:
-        log_message(
-            message_type="warning",
-            stage="generate_renumbering_map",
-            warning="no alignment produced",
-        )
-        return {}
-
-    mapping: Dict[int, int] = {}
-    uni_segments, pdb_segments = alignment.aligned
-
-    for (u_start, u_end), (p_start, p_end) in zip(uni_segments, pdb_segments):
-        length = u_end - u_start
-        if (p_end - p_start) != length:
-            continue
-        for i in range(length):
-            u_idx = u_start + i
-            p_idx = p_start + i
-            mapping[pdb_start_resi + p_idx] = u_idx + 1  # 1-based UniProt
-
-    return mapping
-
+from qpocket.core.sequence import (
+    calculate_sequence_identity,
+    generate_renumbering_map,
+    match_auxiliary_chain,
+)
+from qpocket.io import rcsb
+from qpocket.io import structures as sio
 
 def process_structure(
     target_path: str | Path,
@@ -141,8 +63,7 @@ def process_structure(
 
     with start_action(action_type="process_structure", pdb_id=name):
         try:
-            full = st.load(target_path)
-            st.remove_water(full)
+            full, _ = st.without_water(sio.load(target_path))
 
             best_chain: Optional[str] = None
             best_identity = 0.0
@@ -163,7 +84,7 @@ def process_structure(
 
             mobile = st.keep_chains(full, [best_chain])
             fit = st.superpose(st.polymer_residues(mobile[0][best_chain]), reference)
-            st.apply(mobile, fit)
+            mobile = st.moved(mobile, fit)
 
             log_message(
                 message_type="alignment_stats",
@@ -175,11 +96,9 @@ def process_structure(
             )
 
             if renumber and uniprot_id:
-                _apply_uniprot_renumbering(
-                    chain=mobile[0][best_chain], uniprot_id=uniprot_id, pdb_id=name,
-                )
+                mobile = _apply_uniprot_renumbering(mobile, best_chain, uniprot_id, name)
 
-            st.save(mobile, output_path, st.read_links(target_path))
+            sio.save(mobile, output_path, sio.read_links(target_path))
             return True, fit.rmsd, str(output_path)
 
         except Exception as e:
@@ -216,7 +135,7 @@ def process_structure_interface(
     3. Fit on the primary chain and move the **whole structure**, so every
        auxiliary chain arrives in the reference frame.
     4. For each reference auxiliary chain, find the matching target chain via
-       :func:`~qpocket.utils.find_auxiliary_chain` (sequence filter,
+       :func:`~qpocket.core.sequence.match_auxiliary_chain` (sequence filter,
        then C-alpha centroid proximity to separate homodimer copies).
     5. Skip the structure if *require_all_chains* and any auxiliary chain is
        unmatched.
@@ -252,8 +171,7 @@ def process_structure_interface(
 
     with start_action(action_type="process_structure_interface", pdb_id=name):
         try:
-            full = st.load(target_path)
-            st.remove_water(full)
+            full, _ = st.without_water(sio.load(target_path))
             chains = [c.id for c in full[0]]
 
             # -- Step 1: identify primary chain --------------------------------
@@ -278,7 +196,7 @@ def process_structure_interface(
 
             # -- Step 2: fit on the primary chain, move everything --------------
             fit = st.superpose(st.polymer_residues(full[0][best_chain]), reference)
-            st.apply(full, fit)
+            full = st.moved(full, fit)
             rmsd = fit.rmsd
 
             # -- Step 3: per-chain sequences and C-alpha centroids --------------
@@ -306,15 +224,16 @@ def process_structure_interface(
                     )
                     ref_aux_centroid = np.zeros(3)
 
-                matched = find_auxiliary_chain(
+                match = match_auxiliary_chain(
                     chain_sequences=chain_sequences,
                     chain_ca_centroids=chain_ca_centroids,
                     ref_aux_seq=ref_aux_seq,
                     ref_aux_centroid=ref_aux_centroid,
                     primary_chain=best_chain,
                     min_identity=min_auxiliary_identity,
-                    max_centroid_deviation=max_auxiliary_centroid_deviation,
                 )
+                _log_aux_match(match, max_auxiliary_centroid_deviation)
+                matched = match.chain
 
                 if matched is None:
                     log_message(
@@ -341,18 +260,15 @@ def process_structure_interface(
             # -- Step 6: renumber to UniProt positions ------------------------
             if renumber:
                 if uniprot_id:
-                    _apply_uniprot_renumbering(
-                        chain=output[0][best_chain], uniprot_id=uniprot_id, pdb_id=name,
-                    )
+                    output = _apply_uniprot_renumbering(output, best_chain, uniprot_id, name)
                 for ref_chain_id, target_chain_id in aux_mapping.items():
                     aux_uniprot = (auxiliary_uniprot_ids or {}).get(ref_chain_id)
                     if aux_uniprot:
-                        _apply_uniprot_renumbering(
-                            chain=output[0][target_chain_id], uniprot_id=aux_uniprot,
-                            pdb_id=name,
+                        output = _apply_uniprot_renumbering(
+                            output, target_chain_id, aux_uniprot, name
                         )
 
-            st.save(output, output_path, st.read_links(target_path))
+            sio.save(output, output_path, sio.read_links(target_path))
 
             log_message(
                 message_type="alignment_stats",
@@ -378,39 +294,41 @@ def process_structure_interface(
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _apply_uniprot_renumbering(chain, uniprot_id: str, pdb_id: str) -> None:
-    """Renumbers a chain's residues, in place, to UniProt positions.
-
-    Fetches the canonical sequence for *uniprot_id*, aligns the chain's sequence
-    against it, and moves every residue carrying a mapped number to its UniProt
-    position.
-
-    The chain sequence has one letter per amino acid. PyMOL built it from
-    "every atom named CA", which also caught calcium ions and counted a residue
-    twice when it had alternate locations -- both of which shift the sequence
-    being aligned.
+def _apply_uniprot_renumbering(structure, chain_id: str, uniprot_id: str, pdb_id: str):
+    """Copy of a structure with one chain renumbered to UniProt positions.
 
     Args:
-        chain: Biopython chain to renumber.
-        uniprot_id: UniProt accession supplying the canonical numbering.
+        structure: Structure holding the chain (not modified).
+        chain_id: Chain to renumber.
+        uniprot_id: UniProt accession supplying the numbering.
         pdb_id: Used for logging only.
+
+    Returns:
+        The renumbered structure, or the input when nothing could be mapped.
     """
+    chain = structure[0][chain_id]
     residues = st.polymer_residues(chain)
     if not residues:
-        return
+        return structure
 
     pdb_seq = "".join(st.one_letter(r) for r in residues)
     pdb_resis = [r.id[1] for r in residues]
 
-    uni_seq = fetch_uniprot_sequence(uniprot_id)
+    uni_seq = rcsb.fetch_uniprot_sequence(uniprot_id)
     if not uni_seq:
-        return
+        return structure
 
     relative_map = generate_renumbering_map(pdb_seq, uni_seq, pdb_start_resi=0)
+    if not relative_map:
+        log_message(
+            message_type="warning",
+            stage="generate_renumbering_map",
+            warning="no alignment produced",
+        )
     old_to_new = {
         pdb_resis[idx]: new for idx, new in relative_map.items() if idx < len(pdb_resis)
     }
-    clashes = st.renumber(chain, old_to_new)
+    new_chain, clashes = st.renumbered(chain, old_to_new)
 
     log_message(
         message_type="renumbering_applied",
@@ -418,4 +336,38 @@ def _apply_uniprot_renumbering(chain, uniprot_id: str, pdb_id: str) -> None:
         chain=chain.id,
         n_mapped=len(relative_map),
         n_clashes=clashes,
+    )
+    return st.with_chain(structure, new_chain)
+
+
+def _log_aux_match(match, max_centroid_deviation: float) -> None:
+    """Emit the auxiliary-chain warnings find_auxiliary_chain used to log."""
+    if match.chain is None or match.n_candidates < 2:
+        return
+    if match.fallback:
+        log_message(
+            message_type="warning",
+            stage="find_auxiliary_chain",
+            warning="Cα centroids unavailable for spatial disambiguation; "
+                    "falling back to highest sequence identity",
+            chosen_chain=match.chain,
+        )
+        return
+    if match.distance > max_centroid_deviation:
+        log_message(
+            message_type="warning",
+            stage="find_auxiliary_chain",
+            warning=(
+                f"best auxiliary chain {match.chain!r} centroid is {match.distance:.1f} Å "
+                f"from reference auxiliary (threshold {max_centroid_deviation:.1f} Å); "
+                "possible crystal contact — verify manually"
+            ),
+            chosen_chain=match.chain,
+            centroid_distance=match.distance,
+        )
+    log_message(
+        message_type="auxiliary_chain_resolved",
+        chosen_chain=match.chain,
+        n_candidates=match.n_candidates,
+        centroid_distance=match.distance,
     )

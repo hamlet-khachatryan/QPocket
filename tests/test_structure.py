@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from qpocket.core import structure as st
+from qpocket.io import structures as sio
 from qpocket.core.alignment import process_structure
 
 SEQ = "ACDEFGHIKLMNPQRSTVWY"
@@ -64,7 +65,7 @@ def write(path, lines):
 
 
 def residues_of(path, chain="A"):
-    return st.polymer_residues(st.load(path)[0][chain])
+    return st.polymer_residues(sio.load(path)[0][chain])
 
 
 def ca_array(residues):
@@ -77,10 +78,11 @@ def ca_array(residues):
 def test_a_rigidly_moved_copy_is_put_back_exactly(tmp_path):
     ref = residues_of(write(tmp_path / "ref.pdb", helix()))
     mob_path = write(tmp_path / "mob.pdb", helix(rotation=rotation_matrix(), shift=(30, -12, 7)))
-    s = st.load(mob_path)
+    s = sio.load(mob_path)
     fit = st.superpose(st.polymer_residues(s[0]["A"]), ref)
-    st.apply(s, fit)
-    assert np.allclose(ca_array(st.polymer_residues(s[0]["A"])), ca_array(ref), atol=1e-3)
+    moved = st.moved(s, fit)
+    assert np.allclose(ca_array(st.polymer_residues(moved[0]["A"])), ca_array(ref), atol=1e-3)
+    assert not np.allclose(ca_array(st.polymer_residues(s[0]["A"])), ca_array(ref), atol=1e-3)
 
 
 def test_a_perfect_fit_reports_zero_rmsd(tmp_path):
@@ -135,20 +137,22 @@ def test_a_modified_residue_with_a_backbone_counts_as_polymer(tmp_path):
     lines[5] = lines[5].replace("ALA", "MSE").replace("ATOM  ", "HETATM")
     lines = [l.replace(" ALA A   2", " MSE A   2").replace("ATOM  ", "HETATM") if " A   2 " in l else l
              for l in lines]
-    chain = st.load(write(tmp_path / "m.pdb", lines))[0]["A"]
+    chain = sio.load(write(tmp_path / "m.pdb", lines))[0]["A"]
     assert [r.get_resname() for r in st.polymer_residues(chain)] == ["ALA", "MSE", "ALA"]
 
 
 def test_a_ligand_is_not_polymer(tmp_path):
     lines = helix("AA") + [line(99, "C1", "LIG", "A", 900, (1, 1, 1), "C", het=True)]
-    chain = st.load(write(tmp_path / "l.pdb", lines))[0]["A"]
+    chain = sio.load(write(tmp_path / "l.pdb", lines))[0]["A"]
     assert len(st.polymer_residues(chain)) == 2
 
 
 def test_water_is_removed(tmp_path):
     lines = helix("AA") + [line(99, "O", "HOH", "A", 500, (9, 9, 9), "O", het=True)]
-    s = st.load(write(tmp_path / "w.pdb", lines))
-    assert st.remove_water(s) == 1 and "HOH" not in {r.get_resname() for r in s.get_residues()}
+    s = sio.load(write(tmp_path / "w.pdb", lines))
+    dry, removed = st.without_water(s)
+    assert removed == 1 and "HOH" not in {r.get_resname() for r in dry.get_residues()}
+    assert "HOH" in {r.get_resname() for r in s.get_residues()}  # input untouched
 
 
 # --- editing --------------------------------------------------------------
@@ -159,33 +163,35 @@ def test_cleaning_keeps_protein_and_allowed_cofactors(tmp_path):
         line(90, "FE", "HEM", "A", 800, (5, 5, 5), "FE", het=True),
         line(91, "C1", "LIG", "A", 801, (6, 6, 6), "C", het=True),
     ]
-    s = st.load(write(tmp_path / "c.pdb", lines))
-    st.clean(s, ["HEM"])
-    assert {r.get_resname() for r in s.get_residues()} == {"ALA", "HEM"}
+    s = sio.load(write(tmp_path / "c.pdb", lines))
+    clean, removed = st.cleaned(s, ["HEM"])
+    assert {r.get_resname() for r in clean.get_residues()} == {"ALA", "HEM"} and removed == 1
+    assert "LIG" in {r.get_resname() for r in s.get_residues()}  # input untouched
 
 
 def test_keep_chains_drops_other_chains(tmp_path):
-    s = st.load(write(tmp_path / "two.pdb", helix("AAA", chain="A") + helix("GGG", chain="B")))
+    s = sio.load(write(tmp_path / "two.pdb", helix("AAA", chain="A") + helix("GGG", chain="B")))
     assert [c.id for c in st.keep_chains(s, ["B"])[0]] == ["B"]
 
 
 def test_protein_only_drops_ligands(tmp_path):
     lines = helix("AA") + [line(99, "C1", "LIG", "A", 900, (1, 1, 1), "C", het=True)]
-    s = st.keep_chains(st.load(write(tmp_path / "p.pdb", lines)), ["A"], protein_only=True)
+    s = st.keep_chains(sio.load(write(tmp_path / "p.pdb", lines)), ["A"], protein_only=True)
     assert {r.get_resname() for r in s.get_residues()} == {"ALA"}
 
 
 def test_renumbering_moves_and_sorts_residues(tmp_path):
-    chain = st.load(write(tmp_path / "r.pdb", helix("ACD")))[0]["A"]
-    st.renumber(chain, {1: 101, 2: 102, 3: 103})
-    assert [r.id[1] for r in chain] == [101, 102, 103]
+    chain = sio.load(write(tmp_path / "r.pdb", helix("ACD")))[0]["A"]
+    new, _ = st.renumbered(chain, {1: 101, 2: 102, 3: 103})
+    assert [r.id[1] for r in new] == [101, 102, 103]
+    assert [r.id[1] for r in chain] == [1, 2, 3]  # input untouched
 
 
 def test_a_renumbering_clash_keeps_both_residues(tmp_path):
     """Two residues landing on one number cannot both be held; neither is lost."""
-    chain = st.load(write(tmp_path / "r.pdb", helix("ACD")))[0]["A"]
-    clashes = st.renumber(chain, {1: 3})
-    assert clashes == 1 and len(list(chain)) == 3
+    chain = sio.load(write(tmp_path / "r.pdb", helix("ACD")))[0]["A"]
+    new, clashes = st.renumbered(chain, {1: 3})
+    assert clashes == 1 and len(list(new)) == 3
 
 
 # --- saving and CONECT ----------------------------------------------------
@@ -224,7 +230,7 @@ def ligand(resseq=900, chain="A", start=90):
 
 def test_ligand_bonds_are_written_as_conect(tmp_path):
     out = tmp_path / "out.pdb"
-    st.save(st.load(write(tmp_path / "in.pdb", helix("AA") + ligand())), out)
+    sio.save(sio.load(write(tmp_path / "in.pdb", helix("AA") + ligand())), out)
     assert named_bonds(out) == {
         (("LIG", "C1", " "), ("LIG", "C2", " ")), (("LIG", "C2", " "), ("LIG", "O3", " "))}
 
@@ -232,7 +238,7 @@ def test_ligand_bonds_are_written_as_conect(tmp_path):
 def test_protein_alone_gets_no_conect(tmp_path):
     """PyMOL wrote CONECT only for bonds touching a HETATM."""
     out = tmp_path / "out.pdb"
-    st.save(st.load(write(tmp_path / "in.pdb", helix())), out)
+    sio.save(sio.load(write(tmp_path / "in.pdb", helix())), out)
     assert conect_pairs(out) == set()
 
 
@@ -242,7 +248,7 @@ def test_alternate_locations_are_never_bonded(tmp_path):
         line(2, "C1", "LIG", "A", 900, (0.2, 0.0, 0.0), "C", het=True, alt="B"),
     ]
     out = tmp_path / "out.pdb"
-    st.save(st.load(write(tmp_path / "in.pdb", lines)), out)
+    sio.save(sio.load(write(tmp_path / "in.pdb", lines)), out)
     assert conect_pairs(out) == set()
 
 
@@ -251,7 +257,7 @@ def test_a_close_but_unannotated_contact_is_not_bonded(tmp_path):
     lines = [line(1, "SG", "CYS", "A", 10, (0, 0, 0), "S"),
              line(2, "S4", "DTV", "A", 900, (2.04, 0, 0), "S", het=True)]
     out = tmp_path / "out.pdb"
-    st.save(st.load(write(tmp_path / "in.pdb", lines)), out)
+    sio.save(sio.load(write(tmp_path / "in.pdb", lines)), out)
     assert conect_pairs(out) == set()
 
 
@@ -263,7 +269,7 @@ def test_an_annotated_link_is_bonded(tmp_path):
     link = ("LINK         SG  CYS A  10                 S1  DTV A 900     1555   1555  2.04  \n")
     src.write_text(link + src.read_text())
     out = tmp_path / "out.pdb"
-    st.save(st.load(src), out, st.read_links(src))
+    sio.save(sio.load(src), out, sio.read_links(src))
     assert named_bonds(out) == {(("CYS", "SG", " "), ("DTV", "S1", " "))}
 
 
@@ -275,9 +281,9 @@ def test_links_survive_a_save_and_reload(tmp_path):
     src.write_text("LINK         SG  CYS A  10                 S1  DTV A 900     1555   1555  2.04  \n"
                    + src.read_text())
     first = tmp_path / "first.pdb"
-    st.save(st.load(src), first, st.read_links(src))
+    sio.save(sio.load(src), first, sio.read_links(src))
     second = tmp_path / "second.pdb"
-    st.save(st.load(first), second, st.read_links(first))
+    sio.save(sio.load(first), second, sio.read_links(first))
     assert named_bonds(second) == named_bonds(first)
 
 
@@ -293,30 +299,30 @@ def test_mmcif_struct_conn_links_are_read(tmp_path):
         "covale A 603 ? CYS SG A 1603 ? BME S2\n"
         "hydrog A 1 ? ALA N A 2 ? ALA O\n"
     )
-    assert st.read_links(cif) == {(("A", 603, "", "CYS", "SG"), ("A", 1603, "", "BME", "S2"))}
+    assert sio.read_links(cif) == {(("A", 603, "", "CYS", "SG"), ("A", 1603, "", "BME", "S2"))}
 
 
 def test_a_peptide_link_into_a_modified_residue_is_bonded(tmp_path):
     lines = [line(1, "C", "ALA", "A", 1, (0, 0, 0), "C"),
              line(2, "N", "MSE", "A", 2, (1.33, 0, 0), "N", het=True)]
     out = tmp_path / "out.pdb"
-    st.save(st.load(write(tmp_path / "in.pdb", lines)), out)
+    sio.save(sio.load(write(tmp_path / "in.pdb", lines)), out)
     assert named_bonds(out) == {(("ALA", "C", " "), ("MSE", "N", " "))}
 
 
 def test_a_long_chain_id_is_refused_rather_than_written_wrongly(tmp_path):
-    s = st.load(write(tmp_path / "in.pdb", helix("AA")))
+    s = sio.load(write(tmp_path / "in.pdb", helix("AA")))
     s[0]["A"].id = "AB"
     with pytest.raises(ValueError, match="chain"):
-        st.save(s, tmp_path / "out.pdb")
+        sio.save(s, tmp_path / "out.pdb")
 
 
 def test_saved_files_load_back_unchanged(tmp_path):
     src = write(tmp_path / "in.pdb", helix() + ligand())
     out = tmp_path / "out.pdb"
-    st.save(st.load(src), out)
-    a = np.array([x.coord for x in st.load(src).get_atoms()])
-    b = np.array([x.coord for x in st.load(out).get_atoms()])
+    sio.save(sio.load(src), out)
+    a = np.array([x.coord for x in sio.load(src).get_atoms()])
+    b = np.array([x.coord for x in sio.load(out).get_atoms()])
     assert np.allclose(a, b, atol=1e-3)
 
 
@@ -353,12 +359,12 @@ def test_process_structure_puts_the_chain_in_the_reference_frame(aligned_target)
 
 def test_process_structure_keeps_only_the_matching_chain(aligned_target):
     _, _, out, _ = aligned_target
-    assert [c.id for c in st.load(Path(out))[0]] == ["A"]
+    assert [c.id for c in sio.load(Path(out))[0]] == ["A"]
 
 
 def test_process_structure_keeps_the_ligand_and_drops_water(aligned_target):
     _, _, out, _ = aligned_target
-    names = {r.get_resname() for r in st.load(Path(out)).get_residues()}
+    names = {r.get_resname() for r in sio.load(Path(out)).get_residues()}
     assert "LIG" in names and "HOH" not in names
 
 
@@ -417,3 +423,11 @@ def test_no_module_imports_pymol():
     done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                           env={**__import__("os").environ, "PYTHONPATH": src})
     assert done.returncode == 0, done.stderr[-800:]
+
+
+def test_with_chain_replaces_in_place_of_order(tmp_path):
+    s = sio.load(write(tmp_path / "two.pdb", helix("AAA", chain="A") + helix("GGG", chain="B")))
+    new_a, _ = st.renumbered(s[0]["A"], {1: 50})
+    out = st.with_chain(s, new_a)
+    assert [c.id for c in out[0]] == ["A", "B"] and out[0]["A"].child_list[0].id[1] == 2
+    assert s[0]["A"].child_list[0].id[1] == 1  # input untouched

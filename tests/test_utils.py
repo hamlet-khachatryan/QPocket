@@ -11,8 +11,8 @@ import h5py
 import numpy as np
 import pytest
 
+from qpocket.core.sequence import calculate_sequence_identity
 from qpocket.utils import (
-    calculate_sequence_identity,
     check_overlap,
     create_bounding_box_pocket,
     crop_pocket_by_interactions,

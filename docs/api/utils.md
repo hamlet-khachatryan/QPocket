@@ -4,7 +4,6 @@
     options:
       members:
         - setup_directory_hierarchy
-        - calculate_sequence_identity
         - get_ref_ligand_centroid
         - compute_pocket_bounding_box
         - compute_volumetric_overlap
