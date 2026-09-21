@@ -6,3 +6,5 @@ io.mc
 *.egg-info/
 tests/golden/expected/
 build/
+__pycache__/
+*.py[cod]
