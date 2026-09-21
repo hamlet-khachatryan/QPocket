@@ -1,184 +1,142 @@
+"""Pocket featurisation: potentials and pharmacophore fields on point clouds (pure)."""
 from __future__ import annotations
 
 import math
-import tempfile
 from pathlib import Path
-from subprocess import PIPE, Popen
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
-import pandas as pd
+from Bio.PDB import is_aa
 from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 
-from eliot import log_message, start_action
-
-from qpocket.core.distance_utils import (
-    get_structure_data,
-    repair_pqr_with_missing_ions,
+from qpocket.constants import (
+    ACCEPTOR_RESIDUES,
+    AROMATIC_RESIDUES,
+    DONOR_RESIDUES,
+    FP_DTYPE,
+    SIGMA_AROM,
+    SIGMA_HBOND,
+    SIGMA_HYDRO,
 )
-from qpocket.constants import FP_DTYPE, SIGMA_AROM, SIGMA_HBOND, SIGMA_HYDRO
-
-try:
-    from apbs_binary import popen_apbs
-except ImportError:
-    raise ImportError("pip install apbs-binary")
+from qpocket.types import StructureData
 
 # Maximum distance (Å) beyond which atom contributions to CP/LP are negligible.
 _CP_LP_CUTOFF = 12.0
 
+#: Column order of featurized.csv after x, y, z.
+FEATURE_COLUMNS = ("apbs", "cp", "lp", "h_donor", "h_acceptor", "aromatic")
 
-def read_dx_grid(
-    dx_path: Path,
-) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """Parses an APBS OpenDX (.dx) file into a numpy grid and coordinate axes.
+
+def parse_dx(text: str) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Parse OpenDX text into a grid and its axes.
 
     Args:
-        dx_path: Path to the ``.dx`` output file from APBS.
+        text: Contents of an APBS .dx file.
 
     Returns:
-        Tuple of ``(grid, (x_axis, y_axis, z_axis))`` where *grid* has shape
-        ``(nx, ny, nz)`` and each axis array is 1-D.
+        (grid of shape (nx, ny, nz), (x_axis, y_axis, z_axis)).
 
     Raises:
-        RuntimeError: On malformed header or data section.
+        RuntimeError: On a malformed header or data section.
     """
-    with dx_path.open("r") as f:
-        counts = None
-        origin = None
-        deltas = []
-        data_start_line = 0
-        lines = f.readlines()
+    counts = None
+    origin = None
+    deltas = []
+    data_start_line = 0
+    lines = text.splitlines(keepends=True)
 
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if line.startswith("object 1 class gridpositions counts"):
-                parts = line.split()
-                counts = (int(parts[-3]), int(parts[-2]), int(parts[-1]))
-            elif line.startswith("origin"):
-                parts = line.split()
-                origin = np.array([float(parts[-3]), float(parts[-2]), float(parts[-1])])
-            elif line.startswith("delta"):
-                parts = line.split()
-                vals = [float(x) for x in parts[1:]]
-                deltas.append(max(vals))
-            elif line.startswith("object 3 class array type double"):
-                data_start_line = i + 1
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if line.startswith("object 1 class gridpositions counts"):
+            parts = line.split()
+            counts = (int(parts[-3]), int(parts[-2]), int(parts[-1]))
+        elif line.startswith("origin"):
+            parts = line.split()
+            origin = np.array([float(parts[-3]), float(parts[-2]), float(parts[-1])])
+        elif line.startswith("delta"):
+            parts = line.split()
+            vals = [float(x) for x in parts[1:]]
+            deltas.append(max(vals))
+        elif line.startswith("object 3 class array type double"):
+            data_start_line = i + 1
+            break
+
+    if counts is None or origin is None or len(deltas) != 3:
+        raise RuntimeError("Malformed DX Header")
+
+    try:
+        floats = []
+        for token in " ".join(lines[data_start_line:]).split():
+            try:
+                floats.append(float(token))
+            except ValueError:
                 break
+        data_values = np.array(floats, dtype=float)
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse DX data: {e}") from e
 
-        if counts is None or origin is None or len(deltas) != 3:
-            raise RuntimeError("Malformed DX Header")
+    nx, ny, nz = counts
+    grid = data_values.reshape((nx, ny, nz))
 
-        try:
-            floats = []
-            for token in " ".join(lines[data_start_line:]).split():
-                try:
-                    floats.append(float(token))
-                except ValueError:
-                    break
-            data_values = np.array(floats, dtype=float)
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse DX data: {e}") from e
+    x_axis = np.linspace(origin[0], origin[0] + (nx - 1) * deltas[0], nx)
+    y_axis = np.linspace(origin[1], origin[1] + (ny - 1) * deltas[1], ny)
+    z_axis = np.linspace(origin[2], origin[2] + (nz - 1) * deltas[2], nz)
 
-        nx, ny, nz = counts
-        grid = data_values.reshape((nx, ny, nz))
-
-        x_axis = np.linspace(origin[0], origin[0] + (nx - 1) * deltas[0], nx)
-        y_axis = np.linspace(origin[1], origin[1] + (ny - 1) * deltas[1], ny)
-        z_axis = np.linspace(origin[2], origin[2] + (nz - 1) * deltas[2], nz)
-
-        return grid, (x_axis, y_axis, z_axis)
+    return grid, (x_axis, y_axis, z_axis)
 
 
-def calculate_apbs_potential(pdb_path: Path, point_cloud: np.ndarray) -> np.ndarray:
-    """Runs APBS to compute the electrostatic potential at each pocket point.
-
-    Constructs an APBS input file with a union bounding box covering both the
-    protein and the pocket point cloud, runs pdb2pqr for charge assignment,
-    then interpolates the resulting DX grid onto *point_cloud*.
+def apbs_grid_box(
+    protein_xyz: np.ndarray, points: np.ndarray
+) -> Optional[Tuple[np.ndarray, np.ndarray, int]]:
+    """APBS grid covering the protein and the pocket with 15 A margins.
 
     Args:
-        pdb_path: Path to the cleaned protein PDB file.
-        point_cloud: ``(N, 3)`` array of pocket grid points.
+        protein_xyz: (M, 3) protein atom coordinates.
+        points: (N, 3) pocket points.
 
     Returns:
-        ``(N,)`` array of electrostatic potential values (kT/e units from APBS).
-        Returns an array of zeros if APBS or pdb2pqr fails.
+        (centre, lengths, points per axis), or None if the box is NaN.
     """
-    with start_action(action_type="calculate_apbs_potential"):
-        with tempfile.TemporaryDirectory() as temp_dir_str:
-            temp_dir = Path(temp_dir_str)
-            base = temp_dir / "mol"
-            pqr = base.with_suffix(".pqr")
+    cloud_min = np.min(points, axis=0)
+    cloud_max = np.max(points, axis=0)
+    prot_min = np.min(protein_xyz, axis=0)
+    prot_max = np.max(protein_xyz, axis=0)
 
-            cmd = [
-                "pdb2pqr",
-                "--ff=PARSE",
-                "--whitespace",
-                "--noopt",
-                str(pdb_path),
-                str(pqr),
-            ]
-            # cwd=temp_dir: both pdb2pqr and APBS drop working files beside the
-            # process, not beside their output. APBS in particular always writes
-            # an io.mc, which several concurrent workers would otherwise append
-            # to in whatever directory the job was launched from.
-            p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=str(temp_dir))
-            out, err = p.communicate()
+    union_min = np.minimum(prot_min, cloud_min)
+    union_max = np.maximum(prot_max, cloud_max)
+    grid_center = (union_min + union_max) / 2.0
+    grid_dims = (union_max - union_min) + 30.0
 
-            repair_pqr_with_missing_ions(pdb_path, pqr)
+    if np.any(np.isnan(grid_center)) or np.any(np.isnan(grid_dims)):
+        return None
+    pts = 129 if max(grid_dims[0], grid_dims[1], grid_dims[2]) > 80 else 97
+    return grid_center, grid_dims, pts
 
-            if not pqr.exists() or pqr.stat().st_size == 0:
-                log_message(message_type="pdb2pqr_fail", error=err.decode())
-                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
 
-            prot_coords = []
-            with pqr.open() as f:
-                for line in f:
-                    if line.startswith("ATOM"):
-                        try:
-                            parts = line.split()
-                            prot_coords.append(
-                                [float(parts[-5]), float(parts[-4]), float(parts[-3])]
-                            )
-                        except (ValueError, IndexError):
-                            pass
+def apbs_input(pqr: Path, out_base: Path, center: np.ndarray, dims: np.ndarray, pts: int) -> str:
+    """Text of the APBS input file.
 
-            if not prot_coords:
-                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
-            prot_coords_arr = np.array(prot_coords)
+    Args:
+        pqr: PQR file APBS reads.
+        out_base: Output path stem for the potential .dx.
+        center: Grid centre.
+        dims: Grid lengths.
+        pts: Grid points per axis.
 
-            cloud_min = np.min(point_cloud, axis=0)
-            cloud_max = np.max(point_cloud, axis=0)
-            prot_min = np.min(prot_coords_arr, axis=0)
-            prot_max = np.max(prot_coords_arr, axis=0)
+    Returns:
+        APBS input text.
+    """
+    dim_x, dim_y, dim_z = dims[0], dims[1], dims[2]
+    cx, cy, cz = center[0], center[1], center[2]
 
-            union_min = np.minimum(prot_min, cloud_min)
-            union_max = np.maximum(prot_max, cloud_max)
-            grid_center = (union_min + union_max) / 2.0
-            grid_dims = (union_max - union_min) + 30.0
-            dim_x, dim_y, dim_z = grid_dims[0], grid_dims[1], grid_dims[2]
+    # Ion balancing: Na⁺ 0.150 M + Mg²⁺ 0.002 M → Cl⁻ 0.154 M
+    conc_na = 0.150
+    conc_mg = 0.002
+    conc_cl = conc_na + (2 * conc_mg)
 
-            if np.any(np.isnan(grid_center)) or np.any(np.isnan(grid_dims)):
-                log_message(
-                    message_type="error",
-                    stage="calculate_apbs_potential",
-                    error="NaN in grid center/dims",
-                )
-                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
-
-            apbs_in = base.with_suffix(".in")
-            cx, cy, cz = grid_center[0], grid_center[1], grid_center[2]
-            pts = 129 if max(dim_x, dim_y, dim_z) > 80 else 97
-
-            # Ion balancing: Na⁺ 0.150 M + Mg²⁺ 0.002 M → Cl⁻ 0.154 M
-            conc_na = 0.150
-            conc_mg = 0.002
-            conc_cl = conc_na + (2 * conc_mg)
-
-            with apbs_in.open("w") as f:
-                f.write(f"""read
+    return f"""read
     mol pqr "{pqr}"
 end
 elec
@@ -203,32 +161,27 @@ elec
     temp 298.15
     calcenergy total
     calcforce no
-    write pot dx "{base}"
+    write pot dx "{out_base}"
 end
 quit
-""")
+"""
 
-            p = popen_apbs([str(apbs_in)], stdout=PIPE, stderr=PIPE, cwd=str(temp_dir))
-            out, err = p.communicate()
 
-            dx_file = base.with_suffix(".dx")
-            if not dx_file.exists():
-                dx_file = base.with_suffix(".pot.dx")
+def interpolate_grid(
+    grid: np.ndarray, axes: Tuple[np.ndarray, np.ndarray, np.ndarray], points: np.ndarray
+) -> np.ndarray:
+    """Trilinear interpolation of a grid at points; zero outside it.
 
-            if not dx_file.exists():
-                log_message(message_type="apbs_binary_fail", stderr=err.decode())
-                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+    Args:
+        grid: (nx, ny, nz) values.
+        axes: Grid axes.
+        points: (N, 3) query points.
 
-            try:
-                grid, (ax_x, ax_y, ax_z) = read_dx_grid(dx_file)
-                interpolator = RegularGridInterpolator(
-                    (ax_x, ax_y, ax_z), grid, bounds_error=False, fill_value=0.0
-                )
-                values = interpolator(point_cloud)
-                return values.astype(FP_DTYPE)
-            except Exception as e:
-                log_message(message_type="interpolation_error", error=str(e))
-                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+    Returns:
+        (N,) values.
+    """
+    interpolator = RegularGridInterpolator(axes, grid, bounds_error=False, fill_value=0.0)
+    return interpolator(points).astype(FP_DTYPE)
 
 
 def calculate_cp_lp(
@@ -321,57 +274,74 @@ def calculate_geometric_potentials(
     return np.sum(np.exp(d_sq * factor), axis=1)
 
 
-def featurize(csv_path: Path, pdb_path: Path) -> None:
-    """Computes six pharmacophoric features for each point in a pocket CSV.
-
-    Features written to ``featurized.csv`` (same directory as *csv_path*):
-
-    * **apbs** — APBS electrostatic potential (kT/e).
-    * **cp** — charge potential (Coulomb-like, inverse-square distance sum).
-    * **lp** — lipophilic potential (Fermi-weighted hydrophobicity).
-    * **h_donor** — geometric H-bond donor potential.
-    * **h_acceptor** — geometric H-bond acceptor potential.
-    * **aromatic** — geometric aromatic potential.
+def structure_sites(structure) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """H-bond donor, acceptor and aromatic-ring positions of a protein.
 
     Args:
-        csv_path: Path to the ``binding_site.csv`` pocket point cloud
-            (columns: x, y, z).
-        pdb_path: Path to the cleaned protein PDB file used for featurisation.
+        structure: Parsed Biopython structure.
+
+    Returns:
+        (donors, acceptors, aromatic ring centres), each (K, 3).
     """
-    with start_action(action_type="process_point_cloud"):
-        if not csv_path.exists():
-            log_message(message_type="error", error="CSV missing", path=str(csv_path))
-            return
+    geo_donors, geo_acceptors, geo_arom = [], [], []
 
-        try:
-            df = pd.read_csv(csv_path)
-            points = df[["x", "y", "z"]].to_numpy(dtype=FP_DTYPE)
-            if points.ndim == 1:
-                points = points.reshape(-1, 3)
-        except Exception as e:
-            log_message(message_type="error", error=f"CSV read error: {e}")
-            return
+    for model in structure:
+        for chain in model:
+            for res in chain:
+                if not is_aa(res):
+                    continue
+                resname = res.get_resname()
 
-        try:
-            coords, chgs, hps, donors, acceptors, aromatics = get_structure_data(pdb_path)
-        except Exception as e:
-            log_message(message_type="fatal_error", error=str(e))
-            return
+                if resname in AROMATIC_RESIDUES:
+                    ring_atoms = []
+                    if resname in ["PHE", "TYR"]:
+                        ring_atoms = ["CG", "CD1", "CD2", "CE1", "CE2", "CZ"]
+                    elif resname == "TRP":
+                        ring_atoms = ["CG", "CD1", "CD2", "NE1", "CE2", "CE3"]
+                    elif resname in ["HIS", "HID", "HIE", "HIP"]:
+                        ring_atoms = ["CG", "ND1", "CD2", "CE1", "NE2"]
 
-        out_path = csv_path.with_name("featurized.csv")
+                    pts = [res[at].get_coord() for at in ring_atoms if at in res]
+                    if pts:
+                        geo_arom.append(np.mean(pts, axis=0))
 
-        log_message(message_type="status", msg="Running APBS")
-        df["apbs"] = calculate_apbs_potential(pdb_path, points)
+                for atom in res:
+                    elem = atom.element
+                    if resname in DONOR_RESIDUES and (
+                        elem == "N" or (elem == "O" and resname in ["SER", "THR"])
+                    ):
+                        geo_donors.append(atom.get_coord())
+                    if resname in ACCEPTOR_RESIDUES and (
+                        elem == "O"
+                        or (elem == "N" and resname in ["HIS", "HID", "HIE", "HIP"])
+                    ):
+                        geo_acceptors.append(atom.get_coord())
 
-        log_message(message_type="status", msg="Running CP/LP")
-        cp, lp = calculate_cp_lp(points, coords, chgs, hps)
-        df["cp"] = cp
-        df["lp"] = lp
+    def safe_arr(lst):
+        arr = np.array(lst, dtype=FP_DTYPE)
+        return arr.reshape(-1, 3) if arr.ndim == 1 else arr
 
-        log_message(message_type="status", msg="Running geometry")
-        df["h_donor"] = calculate_geometric_potentials(points, acceptors, sigma=SIGMA_HBOND)
-        df["h_acceptor"] = calculate_geometric_potentials(points, donors, sigma=SIGMA_HBOND)
-        df["aromatic"] = calculate_geometric_potentials(points, aromatics, sigma=SIGMA_AROM)
+    return safe_arr(geo_donors), safe_arr(geo_acceptors), safe_arr(geo_arom)
 
-        df.to_csv(out_path, index=False)
-        log_message(message_type="success", output=str(out_path))
+
+def pocket_features(points: np.ndarray, data: StructureData, apbs: np.ndarray) -> Dict[str, np.ndarray]:
+    """The six per-point features of a pocket.
+
+    Args:
+        points: (N, 3) pocket points.
+        data: Protein atoms, charges, hydrophobicity and pharmacophore sites.
+        apbs: (N,) electrostatic potential at the points.
+
+    Returns:
+        Columns apbs, cp, lp, h_donor, h_acceptor, aromatic, in that order.
+    """
+    cp, lp = calculate_cp_lp(points, data.coords, data.charges, data.hydrophobicity)
+    return {
+        "apbs": apbs,
+        "cp": cp,
+        "lp": lp,
+        # Deliberately crossed: a donor field is felt where protein acceptors are.
+        "h_donor": calculate_geometric_potentials(points, data.acceptors, sigma=SIGMA_HBOND),
+        "h_acceptor": calculate_geometric_potentials(points, data.donors, sigma=SIGMA_HBOND),
+        "aromatic": calculate_geometric_potentials(points, data.aromatics, sigma=SIGMA_AROM),
+    }

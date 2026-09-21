@@ -11,7 +11,7 @@ FORBIDDEN_CALLS = {"open"}
 FORBIDDEN_PARAMS = {"cfg", "dirs"}
 
 # Each Phase-B task appends the modules it has made pure.
-CORE_MODULES_DONE = ["clustering.py", "spectral.py"]
+CORE_MODULES_DONE = ["clustering.py", "spectral.py", "features.py"]
 
 
 def _tree(name):

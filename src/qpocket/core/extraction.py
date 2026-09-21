@@ -42,7 +42,7 @@ from qpocket.utils import (
     get_smiles_from_pdb_block,
     is_residue_ligand,
 )
-from qpocket.core.features import featurize
+from qpocket.pipelines.stages import featurize
 
 warnings.simplefilter("ignore", PDBConstructionWarning)
 

@@ -1,0 +1,256 @@
+"""External tools: pdb2pqr, APBS and the files they exchange."""
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+from subprocess import PIPE, Popen
+
+import numpy as np
+from Bio.PDB import PDBParser
+from eliot import log_message, start_action
+
+from qpocket.constants import FP_DTYPE, GET_ATOMIC_HYDROPHOBICITY, ION_PARAMS
+from qpocket.core import features as ft
+from qpocket.io.tables import parse_pqr_data
+from qpocket.types import StructureData
+
+try:
+    from apbs_binary import popen_apbs
+except ImportError:
+    raise ImportError("pip install apbs-binary")
+
+
+def repair_pqr_with_missing_ions(pdb_path: Path, pqr_path: Path) -> None:
+    """
+    Scans the original PDB for ions. If pdb2pqr dropped them, this function
+    appends them to the PQR file with standard PARSE parameters.
+    """
+    pdb_ions = []
+    with pdb_path.open("r") as f:
+        for line in f:
+            if line.startswith("HETATM"):
+                parts = line.split()
+
+                atom_name = parts[2]
+                res_name = parts[3]
+
+                clean_name = "".join([c for c in atom_name if c.isalpha()]).upper()
+
+                if clean_name in ION_PARAMS:
+                    # extract coordinates (PDB columns are fixed width, but split works for most clean PDBs)
+                    # standard PDB: X(30-38), Y(38-46), Z(46-54)
+                    try:
+                        x = float(line[30:38])
+                        y = float(line[38:46])
+                        z = float(line[46:54])
+                        pdb_ions.append(
+                            {
+                                "name": clean_name,
+                                "coords": (x, y, z),
+                                "line": line,
+                            }
+                        )
+                    except ValueError:
+                        continue
+
+    if not pdb_ions:
+        return
+
+    # read existing PQR to see what survived
+    existing_coords = []
+    pqr_lines = []
+    with pqr_path.open("r") as f:
+        for line in f:
+            pqr_lines.append(line)
+            if line.startswith(("ATOM", "HETATM")):
+                parts = line.split()
+                try:
+                    x, y, z = float(parts[-5]), float(parts[-4]), float(parts[-3])
+                    existing_coords.append((x, y, z))
+                except:
+                    pass
+
+    existing_coords = np.array(existing_coords)
+
+    # missing ions
+    injected_count = 0
+    with pqr_path.open("a") as f:
+        for ion in pdb_ions:
+            if len(existing_coords) > 0:
+                dists = np.linalg.norm(
+                    existing_coords - np.array(ion["coords"]), axis=1
+                )
+                if np.min(dists) < 0.1:
+                    continue
+
+            charge, radius = ION_PARAMS[ion["name"]]
+            x, y, z = ion["coords"]
+
+            # formatted PQR line (whitespace separated is fine for APBS)
+            # HETATM  1234  MG   MG     1      10.500  20.100  30.200  2.0000 1.4000
+            new_line = f"HETATM 9999 {ion['name']} ION     1    {x:8.3f} {y:8.3f} {z:8.3f} {charge:7.4f} {radius:7.4f}\n"
+            f.write(new_line)
+            injected_count += 1
+
+    if injected_count > 0:
+        log_message(
+            message_type="pqr_repair",
+            injected_ions=injected_count,
+        )
+
+
+def run_pdb2pqr(pdb_path: Path, output_pqr: Path) -> None:
+    """Runs PDB2PQR via command line."""
+    with start_action(action_type="run_pdb2pqr", pdb=str(pdb_path)):
+        cmd = [
+            "pdb2pqr",
+            "--ff=PARSE",
+            "--whitespace",
+            "--noopt",
+            str(pdb_path),
+            str(output_pqr),
+        ]
+
+        p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+        out, err = p.communicate()
+
+        if not output_pqr.exists() or output_pqr.stat().st_size == 0:
+            log_message(message_type="error", error=err.decode(), stdout=out.decode())
+            raise RuntimeError("PDB2PQR failed or produced empty file.")
+
+
+def read_dx_grid(dx_path: Path):
+    """Read an APBS OpenDX file.
+
+    Args:
+        dx_path: Path to the .dx file.
+
+    Returns:
+        (grid, (x_axis, y_axis, z_axis)).
+
+    Raises:
+        RuntimeError: On a malformed file.
+    """
+    with dx_path.open("r") as f:
+        return ft.parse_dx(f.read())
+
+
+def apbs_potential(pdb_path: Path, point_cloud: np.ndarray) -> np.ndarray:
+    """Electrostatic potential (kT/e) at pocket points, via pdb2pqr and APBS.
+
+    Args:
+        pdb_path: Cleaned protein PDB.
+        point_cloud: (N, 3) pocket points.
+
+    Returns:
+        (N,) potential; zeros if pdb2pqr or APBS fails.
+    """
+    with start_action(action_type="calculate_apbs_potential"):
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            base = temp_dir / "mol"
+            pqr = base.with_suffix(".pqr")
+
+            cmd = [
+                "pdb2pqr",
+                "--ff=PARSE",
+                "--whitespace",
+                "--noopt",
+                str(pdb_path),
+                str(pqr),
+            ]
+            # cwd=temp_dir: both pdb2pqr and APBS drop working files beside the
+            # process, not beside their output. APBS in particular always writes
+            # an io.mc, which several concurrent workers would otherwise append
+            # to in whatever directory the job was launched from.
+            p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=str(temp_dir))
+            out, err = p.communicate()
+
+            repair_pqr_with_missing_ions(pdb_path, pqr)
+
+            if not pqr.exists() or pqr.stat().st_size == 0:
+                log_message(message_type="pdb2pqr_fail", error=err.decode())
+                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+
+            prot_coords = []
+            with pqr.open() as f:
+                for line in f:
+                    if line.startswith("ATOM"):
+                        try:
+                            parts = line.split()
+                            prot_coords.append(
+                                [float(parts[-5]), float(parts[-4]), float(parts[-3])]
+                            )
+                        except (ValueError, IndexError):
+                            pass
+
+            if not prot_coords:
+                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+
+            box = ft.apbs_grid_box(np.array(prot_coords), point_cloud)
+            if box is None:
+                log_message(
+                    message_type="error",
+                    stage="calculate_apbs_potential",
+                    error="NaN in grid center/dims",
+                )
+                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+
+            apbs_in = base.with_suffix(".in")
+            with apbs_in.open("w") as f:
+                f.write(ft.apbs_input(pqr, base, *box))
+
+            p = popen_apbs([str(apbs_in)], stdout=PIPE, stderr=PIPE, cwd=str(temp_dir))
+            out, err = p.communicate()
+
+            dx_file = base.with_suffix(".dx")
+            if not dx_file.exists():
+                dx_file = base.with_suffix(".pot.dx")
+
+            if not dx_file.exists():
+                log_message(message_type="apbs_binary_fail", stderr=err.decode())
+                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+
+            try:
+                grid, axes = read_dx_grid(dx_file)
+                return ft.interpolate_grid(grid, axes, point_cloud)
+            except Exception as e:
+                log_message(message_type="interpolation_error", error=str(e))
+                return np.zeros(len(point_cloud), dtype=FP_DTYPE)
+
+
+def structure_data(pdb_path: Path) -> StructureData:
+    """Charges, hydrophobicity and pharmacophore sites of a protein.
+
+    Args:
+        pdb_path: Cleaned protein PDB.
+
+    Returns:
+        The protein's featurisation inputs.
+    """
+    with start_action(action_type="extract_structure_data", pdb=str(pdb_path)):
+        with tempfile.NamedTemporaryFile(suffix=".pqr", delete=False) as tmp:
+            pqr_path = Path(tmp.name)
+
+        try:
+            run_pdb2pqr(pdb_path, pqr_path)
+            all_coords, all_chg, atom_names, res_names = parse_pqr_data(pqr_path)
+
+            if len(all_coords) == 0:
+                log_message(
+                    message_type="warning", msg="PQR parsed 0 atoms! Check PDB format."
+                )
+
+            hp_list = [
+                GET_ATOMIC_HYDROPHOBICITY(an, rn)
+                for an, rn in zip(atom_names, res_names)
+            ]
+            all_hp = np.array(hp_list, dtype=FP_DTYPE)
+
+        finally:
+            if pqr_path.exists():
+                pqr_path.unlink()
+
+        structure = PDBParser(QUIET=True).get_structure("prot", str(pdb_path))
+        donors, acceptors, aromatics = ft.structure_sites(structure)
+        return StructureData(all_coords, all_chg, all_hp, donors, acceptors, aromatics)

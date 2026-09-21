@@ -23,7 +23,9 @@
 
 ## Distance utilities
 
-::: qpocket.core.distance_utils
+::: qpocket.io.tools
+
+::: qpocket.io.tables
     options:
       members:
         - get_structure_data

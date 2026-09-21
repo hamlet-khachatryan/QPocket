@@ -1,5 +1,5 @@
 """
-Tests for feature computation in distance_logic/features.py.
+Tests for feature computation in core/features.py and io/tools.py.
 apbs_binary and pdb2pqr subprocess calls are mocked.
 """
 from __future__ import annotations
@@ -14,8 +14,8 @@ import pytest
 from qpocket.core.features import (
     calculate_cp_lp,
     calculate_geometric_potentials,
-    read_dx_grid,
 )
+from qpocket.io.tools import read_dx_grid
 from qpocket.constants import FP_DTYPE, SIGMA_HYDRO
 
 
@@ -196,7 +196,7 @@ def test_calculate_geometric_potentials_multiple_targets():
 
 def test_calculate_apbs_potential_pdb2pqr_failure_returns_zeros(tmp_path):
     """When pdb2pqr fails (empty pqr), zeros are returned."""
-    from qpocket.core.features import calculate_apbs_potential
+    from qpocket.io.tools import apbs_potential as calculate_apbs_potential
 
     pdb = tmp_path / "mol.pdb"
     pdb.write_text("ATOM      1  CA  ALA A   1       0.000   0.000   0.000\n")
@@ -206,8 +206,8 @@ def test_calculate_apbs_potential_pdb2pqr_failure_returns_zeros(tmp_path):
     proc_mock = MagicMock()
     proc_mock.communicate.return_value = (b"", b"pdb2pqr failed")
 
-    with patch("qpocket.core.features.Popen", return_value=proc_mock):
-        with patch("qpocket.core.features.repair_pqr_with_missing_ions"):
+    with patch("qpocket.io.tools.Popen", return_value=proc_mock):
+        with patch("qpocket.io.tools.repair_pqr_with_missing_ions"):
             result = calculate_apbs_potential(pdb, points)
 
     assert result.shape == (3,)
@@ -216,7 +216,7 @@ def test_calculate_apbs_potential_pdb2pqr_failure_returns_zeros(tmp_path):
 
 def test_calculate_apbs_potential_missing_dx_returns_zeros(tmp_path):
     """If dx file is not produced by APBS, zeros are returned."""
-    from qpocket.core.features import calculate_apbs_potential
+    from qpocket.io.tools import apbs_potential as calculate_apbs_potential
 
     pdb = tmp_path / "mol.pdb"
     pdb.write_text("ATOM      1  CA  ALA A   1       0.000   0.000   0.000\n")
@@ -229,8 +229,8 @@ def test_calculate_apbs_potential_missing_dx_returns_zeros(tmp_path):
     proc_mock = MagicMock()
     proc_mock.communicate.return_value = (b"", b"")
 
-    with patch("qpocket.core.features.Popen", return_value=proc_mock):
-        with patch("qpocket.core.features.repair_pqr_with_missing_ions", side_effect=_fake_repair):
+    with patch("qpocket.io.tools.Popen", return_value=proc_mock):
+        with patch("qpocket.io.tools.repair_pqr_with_missing_ions", side_effect=_fake_repair):
             # apbs_binary.popen_apbs is already mocked in sys.modules
             result = calculate_apbs_potential(pdb, points)
 

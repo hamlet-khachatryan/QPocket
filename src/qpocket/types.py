@@ -26,3 +26,23 @@ class Fingerprint(NamedTuple):
 
     eigenvalues: np.ndarray
     spectrum: np.ndarray
+
+
+class StructureData(NamedTuple):
+    """Protein atoms and pharmacophore sites used to featurise a pocket.
+
+    Attributes:
+        coords: (M, 3) atom coordinates from the PQR.
+        charges: (M,) partial charges.
+        hydrophobicity: (M,) per-atom hydrophobicity.
+        donors: (K, 3) H-bond donor atoms.
+        acceptors: (K, 3) H-bond acceptor atoms.
+        aromatics: (K, 3) aromatic ring centres.
+    """
+
+    coords: np.ndarray
+    charges: np.ndarray
+    hydrophobicity: np.ndarray
+    donors: np.ndarray
+    acceptors: np.ndarray
+    aromatics: np.ndarray
