@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.10,<0.13"]
+build-backend = "uv_build"
 
 [project]
 name = "QPocket"
@@ -65,19 +65,9 @@ dependencies = [
 # Dependencies of the explorer notebook (experiments/visualize_qpocket.py). The
 # qpocket_pipeline.viz package itself needs nothing beyond numpy and scipy.
 viz = [
-  "marimo>=0.23",
+  "marimo>=0.23; python_version >= '3.10'",  # marimo dropped 3.9
   "plotly>=5.18",
   "umap-learn>=0.5",
-]
-dev = [
-  "pytest>=7.4",
-  "plotly>=5.18",
-  "pytest-mock>=3.12",
-  "ruff>=0.1",
-  "mkdocs>=1.5",
-  "mkdocs-material>=9.4",
-  "mkdocstrings-python>=0.24",
-  "mkdocs-autorefs>=0.5",
 ]
 
 [project.urls]
@@ -90,20 +80,28 @@ Repository = "https://github.com/hamlet-khachatryan/QPocket"
 qpocket = "qpocket_pipeline.cli:cli"
 qpocket-screen = "qpocket_screen.cli:screen_cli"
 
-[tool.setuptools.packages.find]
-# src/plip is the vendored PLIP *repository*; its package is src/plip/plip.
-# Searching src/plip as a second root makes `import plip` find that package.
-where = ["src", "src/plip"]
-include = ["qpocket_pipeline*", "cavitomix*", "qpocket_screen*", "plip*"]
-# Only directories with an __init__.py count. The pyproject default (true)
-# would also take the vendored repository folder src/plip as a package.
-namespaces = false
+[tool.uv.build-backend]
+module-root = "src"
+module-name = ["qpocket_pipeline", "qpocket_screen", "cavitomix", "plip"]
 
-[tool.setuptools.package-data]
-"*" = ["*.yaml", "*.yml", "*.txt", "*.md"]
-"qpocket_pipeline" = ["conf/*.yaml"]
-# Vendored 3Dmol.js, so the pocket viewer works without network access.
-"qpocket_pipeline.viz" = ["vendor/*.js"]
+[dependency-groups]
+dev = [
+  "pytest>=7.4",
+  "pytest-mock>=3.12",
+  "ruff>=0.1",
+  "plotly>=5.18",
+  "mkdocs>=1.5",
+  "mkdocs-material>=9.4",
+  "mkdocstrings-python>=0.24",
+  "mkdocs-autorefs>=0.5",
+]
+
+[tool.uv]
+# apbs-binary publishes wheels only for macOS and manylinux x86_64.
+environments = [
+  "sys_platform == 'darwin'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [tool.ruff]
 line-length = 88
@@ -144,3 +142,4 @@ docstring-code-line-length = "dynamic"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["golden: slow end-to-end identity check against tests/golden/expected"]
