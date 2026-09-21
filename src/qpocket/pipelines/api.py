@@ -29,6 +29,7 @@ from qpocket.io import structures as sio
 from qpocket.core import alignment
 from qpocket.core import cleaning
 from qpocket.core import extraction
+from qpocket.core import pocket
 from qpocket.core import structure as st
 
 def _find_conf_dir() -> Path:
@@ -951,30 +952,20 @@ def _extract_reference_ligand(
     try:
         parser = PDBParser(QUIET=True)
         structure = parser.get_structure(pdb_id, str(ref_aligned))
-        candidates = []
+        choice = None
         final_pocket_csv = ref_pocket_dir / "binding_site.csv"
         if final_pocket_csv.exists():
             final_pocket_coords = pd.read_csv(final_pocket_csv)[["x", "y", "z"]].to_numpy()
-            for model in structure:
-                for chain in model:
-                    for res in chain:
-                        if not utils.is_residue_ligand(
-                            res, (cfg.cleaning.allowed_cofactors or "").split("|")
-                        ):
-                            continue
-                        atoms = np.array([a.get_coord() for a in res])
-                        if len(atoms) == 0:
-                            continue
-                        if utils.check_overlap(atoms, final_pocket_coords, use_majority=True):
-                            candidates.append((res, chain.id, len(atoms)))
-        if candidates:
-            best_res, best_chain_id, _ = max(candidates, key=lambda x: x[2])
-            res_name = best_res.get_resname().strip()
-            block = utils.extract_pdb_block(best_res, best_chain_id)
+            choice = pocket.pick_ligand(
+                structure, final_pocket_coords, (cfg.cleaning.allowed_cofactors or "").split("|")
+            )
+        if choice is not None:
+            res_name = choice.residue.get_resname().strip()
+            block = pocket.extract_pdb_block(choice.residue, choice.chain_id)
             lig_out = dirs["extracted_ligands"] / f"{pdb_id}_{res_name}.pdb"
             with open(lig_out, "w") as f:
                 f.write(block)
-            smi = utils.get_smiles_from_pdb_block(block)
+            smi = pocket.get_smiles_from_pdb_block(block)
             return str(lig_out), "BOUND_STATE", ((smi, res_name) if smi else None)
     except Exception as e:
         log_message(

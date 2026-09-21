@@ -3,7 +3,7 @@
 3Dmol.js parses PDB by fixed columns, so every record it receives has to be
 column-correct. Nothing is passed through from disk: records are parsed and
 re-emitted, which also repairs ligand files written before the column bug in
-:func:`qpocket.utils.extract_pdb_block` was fixed.
+:func:`qpocket.core.pocket.extract_pdb_block` was fixed.
 """
 
 from __future__ import annotations

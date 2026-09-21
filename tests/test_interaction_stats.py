@@ -14,9 +14,9 @@ import h5py
 import numpy as np
 import pytest
 
-from qpocket.core.interaction_stats import (
+from qpocket.io.hdf5 import build_profile
+from qpocket.core.interactions import (
     MIN_TESTABLE,
-    build_profile,
     engaged_set,
     exclusivity,
     interaction_type_shift,

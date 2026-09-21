@@ -26,17 +26,17 @@ Every p-value is corrected across residues with Benjamini-Hochberg, and anything
 resting on too few structures is returned with ``underpowered`` set rather than a
 q-value near one — those two look identical on a plot and mean opposite things.
 
-Only numpy, scipy and h5py are used, so this imports anywhere the pipeline does.
+Only numpy, scipy and pandas are used; files are read by :mod:`qpocket.io.hdf5`.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from itertools import combinations
-from pathlib import Path
-from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
-import h5py
+import pandas as pd
+
 import numpy as np
 from scipy.stats import chi2_contingency, false_discovery_control, fisher_exact
 
@@ -152,54 +152,18 @@ class Exclusivity(NamedTuple):
     underpowered: bool
 
 
-def _read_entries(
-    h5_path: Path, pdb_ids: Optional[Iterable[str]] = None
-) -> Dict[str, List[str]]:
-    """Decode an interaction HDF5 into ``{pdb_id: [entry, ...]}``.
-
-    Args:
-        h5_path: Observed or potential interaction HDF5.
-        pdb_ids: Restrict to these structures. Unknown IDs are ignored, so a
-            cluster naming a structure that failed featurisation still works.
-
-    Returns:
-        One list of raw ASCII entries per structure, in sorted ID order.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-    """
-    path = Path(h5_path)
-    if not path.exists():
-        raise FileNotFoundError(f"interaction file not found: {path}")
-
-    wanted = None if pdb_ids is None else set(pdb_ids)
-    out: Dict[str, List[str]] = {}
-    with h5py.File(path, "r") as hf:
-        for pid in sorted(hf.keys()):
-            if wanted is not None and pid not in wanted:
-                continue
-            out[pid] = [r.decode("ascii") for r in hf[pid][:]]
-    return out
-
-
-def build_profile(
-    h5_path: Path, pdb_ids: Optional[Iterable[str]] = None
-) -> Profile:
-    """Read an interaction HDF5 into an engagement matrix.
+def profile(entries: Dict[str, List[str]]) -> Profile:
+    """Engagement matrix from decoded interaction entries.
 
     Observed entries are ``RESIDUE|InteractionType``; potential entries are a
-    bare ``RESIDUE``. Both are accepted, and the presence matrix means the same
-    thing either way — this structure engages this residue.
+    bare ``RESIDUE``. Both mean: this structure engages this residue.
 
     Args:
-        h5_path: Observed or potential interaction HDF5.
-        pdb_ids: Restrict to these structures.
+        entries: Structure ID to entries, in the row order wanted.
 
     Returns:
-        The profile. Residue and type axes are sorted, so two profiles built
-        from the same file always align.
+        The profile, with sorted residue and type axes.
     """
-    entries = _read_entries(h5_path, pdb_ids)
     structures = tuple(entries.keys())
 
     per_structure: Dict[str, Dict[str, Dict[str, int]]] = {}
@@ -489,3 +453,89 @@ def pairwise_exclusivity(
         (a, b): exclusivity(profile, clusters[a], clusters[b], engaged_frac)
         for a, b in combinations(sorted(clusters), 2)
     }
+
+
+def observed_frequencies(entries: Dict[str, List[str]]) -> Optional[pd.DataFrame]:
+    """Interaction-type shares per residue, weighted by how often it is engaged.
+
+    Args:
+        entries: Structure ID to observed entries (RESIDUE|Type).
+
+    Returns:
+        Residue x type table, or None when there are no structures.
+    """
+    total = len(entries)
+    if total == 0:
+        return None
+    amino_counts: Dict[str, int] = defaultdict(int)
+    raw_data: List[List[str]] = []
+    for rows in entries.values():
+        unique_res_in_struct: set = set()
+        for entry in rows:
+            if "|" in entry:
+                # Use maxsplit=1 to handle subtypes that contain a second "|".
+                res, inter = entry.split("|", 1)
+                raw_data.append([res, inter])
+                unique_res_in_struct.add(res)
+        for res in unique_res_in_struct:
+            amino_counts[res] += 1
+
+    df = pd.DataFrame(raw_data, columns=["amino", "inter"])
+    if df.empty:
+        return pd.DataFrame()
+    global_freqs = pd.Series({a: (c / total) * 100.0 for a, c in amino_counts.items()})
+    ratios = pd.crosstab(df["amino"], df["inter"], normalize="index")
+    weighted = ratios.mul(global_freqs, axis=0)
+    return weighted.reset_index()
+
+
+def potential_frequencies(entries: Dict[str, List[str]]) -> Optional[pd.DataFrame]:
+    """Share of structures whose pocket contains each residue.
+
+    Args:
+        entries: Structure ID to potential entries (RESIDUE).
+
+    Returns:
+        Residue, Frequency (%), Count table, or None when there are no structures.
+    """
+    total_structures = len(entries)
+    if total_structures == 0:
+        return None
+    amino_counts: Dict[str, int] = defaultdict(int)
+    for rows in entries.values():
+        if len(rows) == 0:
+            continue
+        for res in set(rows):
+            amino_counts[res] += 1
+
+    data = [
+        {"Residue": amino, "Frequency (%)": (count / total_structures) * 100.0, "Count": count}
+        for amino, count in amino_counts.items()
+    ]
+    # Residue as the tie-break: the counts are accumulated by iterating a set,
+    # whose order varies with string hash randomisation.
+    return pd.DataFrame(data).sort_values(["Frequency (%)", "Residue"], ascending=[False, True])
+
+
+def utilization(observed: Dict[str, List[str]], potential: Dict[str, List[str]]) -> pd.DataFrame:
+    """Percentage of each pocket's residues the ligand engages.
+
+    Args:
+        observed: Structure ID to observed entries.
+        potential: Structure ID to potential entries.
+
+    Returns:
+        pdb_id, utilization table, highest first; empty if nothing overlaps.
+    """
+    utilization_data = []
+    for pdb_id in set(observed) & set(potential):
+        pot_set = set(potential[pdb_id])
+        if not pot_set:
+            continue
+        # Observed entries are "RESNAME_NUM|InteractionType" — strip the subtype.
+        obs_set = {x.split("|", 1)[0] for x in observed[pdb_id]}
+        utilized = obs_set.intersection(pot_set)
+        utilization_data.append({"pdb_id": pdb_id, "utilization": (len(utilized) / len(pot_set)) * 100.0})
+    if not utilization_data:
+        return pd.DataFrame()
+    return pd.DataFrame(utilization_data).sort_values("utilization", ascending=False)

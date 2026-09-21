@@ -74,3 +74,16 @@ def write_featurized(out_path: Path, table: pd.DataFrame, features: Dict[str, np
     for name, values in features.items():
         out[name] = values
     out.to_csv(out_path, index=False)
+
+
+def write_points(coords: np.ndarray, path: Path) -> None:
+    """Write a point cloud as an x,y,z CSV.
+
+    Args:
+        coords: (N, 3) points.
+        path: Target CSV.
+    """
+    with open(path, "w") as f:
+        f.write("x,y,z\n")
+        for pt in coords:
+            f.write(f"{pt[0]},{pt[1]},{pt[2]}\n")

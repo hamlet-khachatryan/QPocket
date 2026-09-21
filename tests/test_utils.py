@@ -12,15 +12,13 @@ import numpy as np
 import pytest
 
 from qpocket.core.sequence import calculate_sequence_identity
-from qpocket.utils import (
+from qpocket.core.geometry import (
     check_overlap,
     create_bounding_box_pocket,
     crop_pocket_by_interactions,
-    extract_pdb_block,
-    is_residue_ligand,
-    save_to_hdf5_ascii,
-    setup_directory_hierarchy,
 )
+from qpocket.core.pocket import extract_pdb_block, is_residue_ligand
+from qpocket.utils import save_to_hdf5_ascii, setup_directory_hierarchy
 
 
 # ---------------------------------------------------------------------------

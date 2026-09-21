@@ -28,20 +28,22 @@ from Bio.PDB import PDBParser
 from Bio.PDB.PDBExceptions import PDBConstructionWarning
 from biopandas.pdb import PandasPdb
 from eliot import log_message, start_action
-from plip.structure.preparation import PDBComplex
-
-from cavitomix.cavfind import CavFind
-from qpocket.utils import (
-    check_overlap,
+from qpocket.core.geometry import (
     compute_pocket_bounding_box,
-    compute_volumetric_overlap,
     crop_pocket_by_interactions,
     create_bounding_box_pocket,
-    extract_pdb_block,
-    get_interacting_residues_coords,
-    get_smiles_from_pdb_block,
-    is_residue_ligand,
 )
+from qpocket.core.pocket import (
+    extract_pdb_block,
+    get_smiles_from_pdb_block,
+    pick_ligand,
+    select_cavity_by_bbox,
+    select_cavity_by_centroid,
+)
+from qpocket.io.tables import write_points as _write_coords_csv
+from qpocket.io.tools import plip_interactions as get_plip_interactions  # noqa: F401 (re-exported)
+from qpocket.io.tools import run_cavfind
+from qpocket.utils import get_interacting_residues_coords
 from qpocket.pipelines.stages import featurize
 
 warnings.simplefilter("ignore", PDBConstructionWarning)
@@ -50,21 +52,6 @@ warnings.simplefilter("ignore", PDBConstructionWarning)
 # ---------------------------------------------------------------------------
 # Internal helper: safe attribute access for CavFind cavity objects
 # ---------------------------------------------------------------------------
-
-def _cavity_coords(cavity) -> np.ndarray:
-    """Returns the coordinate array of a CavFind cavity object.
-
-    Centralises access to the internal ``coords`` attribute so that a single
-    change here covers all call sites if cavitomix's API evolves.
-
-    Args:
-        cavity: A cavity object returned by :class:`cavitomix.cavfind.CavFind`.
-
-    Returns:
-        ``(N, 3)`` numpy array of cavity grid point coordinates.
-    """
-    return cavity.__dict__["coords"]
-
 
 # ---------------------------------------------------------------------------
 # Reference pocket bounding box
@@ -106,10 +93,7 @@ def extract_reference_pocket_bbox(
         pocket_save_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(pdb_path, "r") as f:
-                cf = CavFind(name=pdb_id, obj_name=pdb_id)
-                cf.struct_from_pdb(f.read())
-                found_cavities = cf.run().cavities
+            found_cavities = run_cavfind(pdb_path, pdb_id)
         except Exception as e:
             log_message(
                 message_type="error",
@@ -128,14 +112,8 @@ def extract_reference_pocket_bbox(
             )
             return None
 
-        target_cavity = None
-        for cavity in found_cavities:
-            coords = _cavity_coords(cavity)
-            if check_overlap(ref_centroid, coords, use_majority=True):
-                target_cavity = cavity
-                break
-
-        if target_cavity is None:
+        coords = select_cavity_by_centroid(found_cavities, ref_centroid)
+        if coords is None:
             log_message(
                 message_type="warning",
                 stage="extract_reference_pocket_bbox",
@@ -144,7 +122,6 @@ def extract_reference_pocket_bbox(
             )
             return None
 
-        coords = _cavity_coords(target_cavity)
         n_points = len(coords)
 
         pocket_csv = pocket_save_dir / "binding_site.csv"
@@ -269,10 +246,7 @@ def extract_pocket_from_structure(
 
         else:  # cavity_detection
             try:
-                with open(cleaned_path, "r") as f:
-                    cf = CavFind(name=pdb_id, obj_name=pdb_id)
-                    cf.struct_from_pdb(f.read())
-                    found_cavities = cf.run().cavities
+                found_cavities = run_cavfind(cleaned_path, pdb_id)
             except Exception as e:
                 log_message(
                     message_type="warning",
@@ -293,16 +267,9 @@ def extract_pocket_from_structure(
                 if target_coords is None:
                     return None, "CAVITY_CLOSED"
             else:
-                target_cavity = None
-                for cavity in found_cavities:
-                    coords = _cavity_coords(cavity)
-                    if check_overlap(ref_centroid, coords, use_majority=True):
-                        target_cavity = cavity
-                        break
-
-                if target_cavity is None:
+                target_coords = select_cavity_by_centroid(found_cavities, ref_centroid)
+                if target_coords is None:
                     return None, "CAVITY_CLOSED"
-                target_coords = _cavity_coords(target_cavity)
 
         # ── Save initial pocket (optional) ────────────────────────────────────
         if save_intermediate:
@@ -356,22 +323,11 @@ def extract_pocket_from_structure(
         except Exception:
             return None, "FAILED"
 
-        candidates: List[Tuple] = []
-        for model in structure:
-            for chain in model:
-                for res in chain:
-                    if not is_residue_ligand(res, allowed_cofactors_list):
-                        continue
-                    atoms = np.array([a.get_coord() for a in res])
-                    if len(atoms) == 0:
-                        continue
-                    if check_overlap(atoms, final_pocket_coords, use_majority=True):
-                        candidates.append((res, chain.id, len(atoms)))
-
-        if not candidates:
+        choice = pick_ligand(structure, final_pocket_coords, allowed_cofactors_list)
+        if choice is None:
             return None, "UNBOUND_STATE"
 
-        best_res, best_chain_id, n_atoms = max(candidates, key=lambda x: x[2])
+        best_res, best_chain_id, n_atoms = choice.residue, choice.chain_id, choice.n_atoms
         res_name = best_res.get_resname().strip()
         fname = f"{pdb_id}_{res_name}.pdb"
 
@@ -390,7 +346,7 @@ def extract_pocket_from_structure(
             pdb_id=pdb_id,
             ligand=res_name,
             n_atoms=n_atoms,
-            n_candidates=len(candidates),
+            n_candidates=choice.n_candidates,
         )
         return str(lig_out), "BOUND_STATE"
 
@@ -398,82 +354,6 @@ def extract_pocket_from_structure(
 # ---------------------------------------------------------------------------
 # Interaction analysis
 # ---------------------------------------------------------------------------
-
-def get_plip_interactions(pdb_path: Path, ligand_name: str) -> List[str]:
-    """Analyses protein–ligand interactions with PLIP.
-
-    Collects interactions from **all** binding sites whose residue name
-    matches *ligand_name* (handles structures with multiple copies of the
-    same ligand in different chains / symmetry mates).
-
-    Args:
-        pdb_path: Path to a PDB structure file.
-        ligand_name: Residue name of the ligand to analyse (case-insensitive).
-
-    Returns:
-        List of interaction strings formatted as
-        ``"RESNAME_RESNUM|InteractionType"``.  Returns ``["no_ligand_found"]``
-        when no matching interactions are detected and ``["analysis_error"]``
-        on PLIP failure.
-    """
-    interactions: List[str] = []
-
-    try:
-        protlig = PDBComplex()
-        protlig.load_pdb(str(pdb_path))
-        protlig.analyze()
-
-        for k, binding_site in protlig.interaction_sets.items():
-            # PLIP key format: "RESNAME:CHAIN:RESNUM:" — match on residue name only
-            # to capture all chains that carry the same ligand.
-            if ligand_name.upper() != k.upper().split(":")[0]:
-                continue
-
-            bind_site_interactions = [
-                i for i in binding_site.all_itypes if "waterbridge" not in str(i)
-            ]
-
-            for inter in bind_site_interactions:
-                inter_type = str(inter).split("(")[0]
-
-                # Interaction strings include the chain ID so that residues on
-                # different chains are unambiguously distinguished (critical for
-                # interface pockets with two chains carrying the same residue numbers).
-                res_key = (
-                    f"{inter.restype.upper()}_{inter.resnr}_{inter.reschain}"
-                )
-
-                if inter_type == "pistack":
-                    interactions.append(
-                        f"{res_key}|Pi-stacking ({inter.type})"
-                    )
-                elif inter_type == "hbond":
-                    itype = "H-bond Donor" if inter.protisdon else "H-bond Acceptor"
-                    interactions.append(f"{res_key}|{itype}")
-                elif inter_type == "pication":
-                    itype = "Pi-Cation (Cat)" if inter.protcharged else "Pi-Cation (Pi)"
-                    interactions.append(f"{res_key}|{itype}")
-                elif inter_type == "saltbridge":
-                    itype = "Saltbridge (+)" if inter.protispos else "Saltbridge (-)"
-                    interactions.append(f"{res_key}|{itype}")
-                elif inter_type == "metal_complex":
-                    interactions.append(f"{res_key}|Metal Complex")
-                elif inter_type == "halogenbond":
-                    interactions.append(f"{res_key}|Halogen Bond")
-                elif inter_type == "hydroph_interaction":
-                    interactions.append(f"{res_key}|Hydrophobic")
-
-    except Exception as e:
-        log_message(
-            message_type="error",
-            stage="plip_analysis",
-            pdb_path=str(pdb_path),
-            error=str(e),
-        )
-        return ["analysis_error"]
-
-    return interactions if interactions else ["no_ligand_found"]
-
 
 def run_analysis_step(
     row: pd.Series,
@@ -561,14 +441,6 @@ def run_analysis_step(
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _write_coords_csv(coords: np.ndarray, path: Path) -> None:
-    """Writes a point cloud to a CSV file with x, y, z columns."""
-    with open(path, "w") as f:
-        f.write("x,y,z\n")
-        for pt in coords:
-            f.write(f"{pt[0]},{pt[1]},{pt[2]}\n")
-
-
 def _select_best_cavity_by_bbox(
     cavities,
     bbox_min: np.ndarray,
@@ -578,7 +450,7 @@ def _select_best_cavity_by_bbox(
     """Returns coords of the cavity with the highest volumetric overlap with the bbox.
 
     Args:
-        cavities: Iterable of cavity objects from CavFind.
+        cavities: Cavity point clouds from run_cavfind.
         bbox_min: Lower corner of the reference bounding box.
         bbox_max: Upper corner of the reference bounding box.
         pdb_id: Used for logging only.
@@ -587,17 +459,7 @@ def _select_best_cavity_by_bbox(
         Point cloud array ``(N, 3)`` of the best cavity, or ``None`` if no
         cavity overlaps at all.
     """
-    best_coords: Optional[np.ndarray] = None
-    best_overlap: int = 0
-
-    for cavity in cavities:
-        coords = _cavity_coords(cavity)
-        if len(coords) == 0:
-            continue
-        overlap = compute_volumetric_overlap(coords, bbox_min, bbox_max)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_coords = coords
+    best_coords, best_overlap = select_cavity_by_bbox(cavities, bbox_min, bbox_max)
 
     if best_coords is None or best_overlap == 0:
         log_message(
