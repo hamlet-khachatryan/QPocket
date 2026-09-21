@@ -24,19 +24,20 @@ except ImportError:
 
 
 def repair_pqr_with_missing_ions(pdb_path: Path, pqr_path: Path) -> None:
-    """Scans the original PDB for ions."""
+    """Append ions that pdb2pqr dropped to its PQR, with PARSE-style charges and radii."""
     pdb_ions = []
     with pdb_path.open("r") as f:
         for line in f:
             if line.startswith("HETATM"):
-                parts = line.split()
-
-                atom_name = parts[2]
-                res_name = parts[3]
+                # Fixed PDB columns: atom name 13-16, residue name 18-20.
+                atom_name = line[12:16].strip()
+                res_name = line[17:20].strip().upper()
 
                 clean_name = "".join([c for c in atom_name if c.isalpha()]).upper()
 
-                if clean_name in ION_PARAMS:
+                # An ion is its own residue (ZN in ZN). Matching the atom name alone
+                # turned a cofactor's alpha carbon (CA in CME) into a calcium ion.
+                if clean_name in ION_PARAMS and res_name == clean_name:
                     # extract coordinates (PDB columns are fixed width, but split works for most clean PDBs)
                     # standard PDB: X(30-38), Y(38-46), Z(46-54)
                     try:

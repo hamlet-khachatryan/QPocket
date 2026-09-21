@@ -67,3 +67,21 @@ def test_cp_sees_the_repaired_ion(tmp_path, minimal_pdb):
     (tmp_path / "p.pqr").write_text(PQR)
     data = tools.structure_data(minimal_pdb, tables.read_pqr(tmp_path / "p.pqr"))
     assert 2.0 in data.charges.tolist() and -2.0 in data.hydrophobicity.tolist()
+
+
+def test_ion_repair_adds_real_ions_only(tmp_path):
+    """A cofactor's alpha carbon named CA must not come back as a calcium ion."""
+    from qpocket.io.tools import repair_pqr_with_missing_ions
+
+    pdb = tmp_path / "p.pdb"
+    pdb.write_text(
+        "HETATM  100  CA  CME A 123      10.000  10.000  10.000  1.00  0.00           C\n"
+        "HETATM  101 ZN    ZN A 900      20.000  20.000  20.000  1.00  0.00          ZN\n"
+        "HETATM  102 CA    CA A 901      30.000  30.000  30.000  1.00  0.00          CA\n"
+    )
+    pqr = tmp_path / "p.pqr"
+    pqr.write_text("ATOM      1  N   ALA A   1       0.000   0.000   0.000 -0.4000 1.5000\n")
+    repair_pqr_with_missing_ions(pdb, pqr)
+    added = [line.split() for line in pqr.read_text().splitlines()[1:]]
+    assert sorted(a[2] for a in added) == ["CA", "ZN"]
+    assert all(float(a[5]) in (20.0, 30.0) for a in added)   # nothing at the CME carbon

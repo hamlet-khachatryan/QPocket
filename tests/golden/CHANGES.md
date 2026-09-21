@@ -49,3 +49,21 @@ Identical on PARG: cleaning strips its ions, and AMBER names map back to the sam
 hydrophobicity. Each pocket now keeps protein.pqr (and pdb2pqr's protein.log); pdb2pqr
 runs once per structure instead of twice. Structures that keep ions (via
 cleaning.allowed_cofactors) now get them in cp/lp as well as APBS.
+
+## Task 14b — ion repair adds real ions only (no calcium from a cofactor's CA)
+
+- `spectral_distance_matrix`: max |delta| 1.37 (max value 768)
+- `shape_distance_matrix`: max |delta| 0 (max value 0.035)
+- `feature_distance_matrix`: max |delta| 0.733 (max value 409)
+- 4A0D featurized: identical
+- 4B1H featurized: identical
+- 4B1J featurized: identical
+- 6HMM featurized: identical
+- 6O9Y featurized: identical
+- 7KFP featurized: apbs 0.062
+- 7KG6 featurized: apbs 0.0574
+- clusters: ARI 1.000, 0 structure(s) moved
+
+Only the two structures carrying the CME cofactor change (7KG6, 7KFP): ion repair had
+re-added CME's alpha carbon (atom CA) as a +2 calcium ion, which shifted APBS. The
+bug predates the refactor; it now matches ions by residue name.
