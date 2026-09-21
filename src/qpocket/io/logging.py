@@ -4,7 +4,12 @@ from __future__ import annotations
 import atexit
 from pathlib import Path
 
+from typing import TYPE_CHECKING
+
 from eliot import add_destinations, to_file
+
+if TYPE_CHECKING:
+    from qpocket.config import QPocketConfig
 
 
 def configure(cfg: QPocketConfig, log_path: Path) -> None:

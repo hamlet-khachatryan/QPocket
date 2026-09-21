@@ -1,29 +1,226 @@
-"""Protein and ligand preparation for AutoDock Vina / QuickVina.
-
-Public API:
-- ``prepare_protein_pdbqt(input_pdb, output_pdbqt, cfg)``
-- ``prepare_ligand_pdbqt(smiles, output_pdbqt, cfg)``
-- ``prepare_all_proteins(screening_dir, representatives_csv, master_csv, cfg)``
-- ``prepare_all_ligands(screening_dir, actives_smi, decoys_smi, cfg, mode)``
-"""
+"""Screening files and tools: Vina output, boxes, ChEMBL, receptor and ligand PDBQT."""
 from __future__ import annotations
 
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 from eliot import log_message, start_action
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from qpocket.screen.config import DockingConfig, PreparationConfig, ScreenConfig
+from qpocket.core.screening import calculate_box, pdbqt_lines_to_mol
+from qpocket.screen_config import PreparationConfig
 
 
-# ---------------------------------------------------------------------------
-# Protein preparation
-# ---------------------------------------------------------------------------
+def parse_vina_output(pdbqt_path: Path) -> Tuple[Optional[float], Optional[Chem.Mol]]:
+    """Parse an AutoDock Vina output PDBQT file.
+
+    Extracts the best (lowest) docking score from ``REMARK VINA RESULT``
+    lines and converts the first MODEL block to an RDKit Mol.
+
+    Args:
+        pdbqt_path: Path to the docking output PDBQT.
+
+    Returns:
+        ``(best_score, best_pose_mol)`` — either may be ``None`` on failure.
+    """
+    if not pdbqt_path.exists():
+        return None, None
+
+    best_score: Optional[float] = None
+    model_lines: List[str] = []
+    in_first_model = False
+
+    try:
+        with open(pdbqt_path) as fh:
+            for line in fh:
+                # Score lines: "REMARK VINA RESULT:  -8.5   0.000   0.000"
+                if line.startswith("REMARK VINA RESULT"):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        try:
+                            score = float(parts[3])
+                            if best_score is None or score < best_score:
+                                best_score = score
+                        except ValueError:
+                            pass
+
+                if line.startswith("MODEL"):
+                    if not in_first_model:
+                        in_first_model = True
+                        model_lines = []
+                elif line.startswith("ENDMDL"):
+                    if in_first_model:
+                        break
+                elif in_first_model:
+                    model_lines.append(line)
+
+        mol = pdbqt_lines_to_mol(model_lines)
+        return best_score, mol
+
+    except Exception as e:
+        log_message(message_type="error", stage="parse_vina_output", path=str(pdbqt_path), error=str(e))
+        return None, None
+
+
+def parse_vina_box(vina_box_txt: Path) -> Dict[str, float]:
+    """Parse a Vina-style ``vina_box.txt`` file.
+
+    Expected line format: ``key = value``
+
+    Args:
+        vina_box_txt: Path to the box config file.
+
+    Returns:
+        Dict with keys ``center_x/y/z``, ``size_x/y/z``,
+        ``exhaustiveness``, ``num_modes``, ``energy_range``.
+    """
+    params: Dict[str, float] = {}
+    with open(vina_box_txt) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, val = line.partition("=")
+                try:
+                    params[key.strip()] = float(val.strip())
+                except ValueError:
+                    pass
+    return params
+
+
+def extract_vina_box(
+        cfg: Dict,
+        dirs: Dict[str, Path]
+):
+    """
+    Generates a Vina-compatible config.txt with bounding box coordinates.
+    Mode: 'ligand_based' (uses extracted ligands) or 'cavity_based' (uses pocket CSVs).
+    """
+    mode = cfg.get('box_mode', 'ligand_based') # or 'cavity_based'
+    padding = cfg.get('padding', 5.0)
+
+    log_message(message_type="box_extraction_start", mode=mode, padding=padding)
+
+    all_points = []
+
+    if mode == 'ligand_based':
+        # Iterate all extracted ligands in metadata/ligands
+        ligand_files = list(dirs['ligands'].glob("*.pdb"))
+        if not ligand_files:
+            log_message(message_type="error", error_message="No ligands found for box calculation.")
+            return
+
+        for lig_file in ligand_files:
+            try:
+                mol = Chem.MolFromPDBFile(str(lig_file))
+                if mol:
+                    conf = mol.GetConformer()
+                    coords = conf.GetPositions()
+                    all_points.append(coords)
+            except Exception as e:
+                log_message(message_type="warning", msg=f"Failed to read {lig_file.name}: {e}")
+
+    elif mode == 'cavity_based':
+        # Iterate all cavity CSVs
+        # Assumes structure: metadata/cavities/{pdb_id}/*_binding_site.csv
+        # Known issue (spec §6): pockets are saved as binding_site.csv, so this glob matches nothing.
+        cavity_files = list(dirs['cavities'].rglob("*_binding_site.csv"))
+        if not cavity_files:
+            log_message(message_type="error", error_message="No binding site files found.")
+            return
+
+        for csv_file in cavity_files:
+            try:
+                df = pd.read_csv(csv_file)
+                # Ensure columns exist
+                if {'x', 'y', 'z'}.issubset(df.columns):
+                    coords = df[['x', 'y', 'z']].values
+                    all_points.append(coords)
+            except Exception as e:
+                log_message(message_type="warning", msg=f"Failed to read {csv_file.name}: {e}")
+
+    else:
+        log_message(message_type="error", error_message=f"Unknown box mode: {mode}")
+        return
+
+    if not all_points:
+        log_message(message_type="error", error_message="No coordinates collected. Box generation failed.")
+        return
+
+    global_points = np.vstack(all_points)
+    box = calculate_box(global_points, padding=padding)
+
+    out_path = dirs['screening'] / "vina_box.txt"
+    dirs['screening'].mkdir(parents=True, exist_ok=True)
+
+    with open(out_path, "w") as f:
+        f.write(f"center_x = {box['center_x']:.3f}\n")
+        f.write(f"center_y = {box['center_y']:.3f}\n")
+        f.write(f"center_z = {box['center_z']:.3f}\n")
+        f.write(f"size_x = {box['size_x']:.3f}\n")
+        f.write(f"size_y = {box['size_y']:.3f}\n")
+        f.write(f"size_z = {box['size_z']:.3f}\n")
+        f.write("num_modes = 10\n")
+        f.write("energy_range = 3\n")
+        f.write(f"exhaustiveness = { cfg.get('exhaustiveness', 8.0)}\n") # Optional
+
+    log_message(message_type="box_extraction_complete", file=str(out_path), box=box)
+
+
+def download_chembl_dataset(url: str, local_dir: Union[str, Path]) -> Path:
+    """Download a ChEMBL dataset from Google Drive (or any direct URL).
+
+    Uses ``gdown`` for Google Drive links.  Extracts ZIP archives if
+    necessary.  Skips the download entirely when ``.txt`` files are already
+    present in *local_dir*.
+
+    Args:
+        url: Google Drive share URL or direct download URL.
+        local_dir: Target directory.  Created if it does not exist.
+
+    Returns:
+        Resolved path to *local_dir*.
+    """
+    local_dir = Path(local_dir).expanduser().resolve()
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_txt = list(local_dir.glob("*.txt"))
+    if existing_txt:
+        log_message(
+            message_type="chembl_download_skipped",
+            reason="txt files already present",
+            count=len(existing_txt),
+            local_dir=str(local_dir),
+        )
+        return local_dir
+
+    import gdown  # lazy import so the rest of the module works without gdown
+
+    log_message(message_type="chembl_download_start", url=url, local_dir=str(local_dir))
+
+    archive_path = local_dir / "chembl_data.zip"
+    gdown.download(url, str(archive_path), quiet=False, fuzzy=True)
+
+    if archive_path.exists() and zipfile.is_zipfile(archive_path):
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            zf.extractall(local_dir)
+        archive_path.unlink()
+        log_message(message_type="chembl_extracted", local_dir=str(local_dir))
+    elif not archive_path.exists():
+        log_message(
+            message_type="warning",
+            msg="gdown did not produce an archive — check the URL or download manually",
+        )
+
+    return local_dir
+
 
 def prepare_protein_pdbqt(
     input_pdb: Path,
@@ -40,7 +237,7 @@ def prepare_protein_pdbqt(
     Args:
         input_pdb: Path to the cleaned protein PDB file.
         output_pdbqt: Desired output path.
-        cfg: :class:`~qpocket.screen.config.PreparationConfig`.
+        cfg: :class:`~qpocket.screen_config.PreparationConfig`.
 
     Returns:
         ``True`` on success, ``False`` if preparation failed.
@@ -155,10 +352,6 @@ def _pqr_to_pdbqt_fallback(input_path: Path, output_pdbqt: Path) -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Ligand preparation
-# ---------------------------------------------------------------------------
-
 def prepare_ligand_pdbqt(
     smiles: str,
     output_pdbqt: Path,
@@ -173,7 +366,7 @@ def prepare_ligand_pdbqt(
     Args:
         smiles: Input SMILES string.
         output_pdbqt: Desired output path.
-        cfg: :class:`~qpocket.screen.config.PreparationConfig`.
+        cfg: :class:`~qpocket.screen_config.PreparationConfig`.
         ligand_id: Short identifier used in log messages.
 
     Returns:
@@ -292,6 +485,7 @@ def _write_ligand_pdbqt_sdf_fallback(
     ``obabel`` CLI.  Requires OpenBabel to be installed as a command.
     """
     import tempfile
+
     from rdkit.Chem import SDWriter
 
     try:
@@ -329,139 +523,3 @@ def _write_ligand_pdbqt_sdf_fallback(
     except Exception as e:
         log_message(message_type="error", stage="sdf_fallback", ligand_id=ligand_id, error=str(e))
         return False
-
-
-# ---------------------------------------------------------------------------
-# Orchestrators
-# ---------------------------------------------------------------------------
-
-def prepare_all_proteins(
-    screening_dir: Path,
-    representatives_csv: Path,
-    master_csv: Path,
-    cfg: ScreenConfig,
-) -> list[str]:
-    """Prepare PDBQT files for all representative structures.
-
-    Reads ``selected_representatives.csv`` to identify which PDB IDs to
-    prepare, looks up their cleaned file paths in ``master.csv``, then calls
-    :func:`prepare_protein_pdbqt` for each.
-
-    Args:
-        screening_dir: Root screening directory (``screening/proteins/`` is created here).
-        representatives_csv: Path to ``metadata/selected_representatives.csv``.
-        master_csv: Path to ``metadata/master.csv``.
-        cfg: Full :class:`~qpocket.screen.config.ScreenConfig`.
-
-    Returns:
-        List of PDB IDs that were successfully prepared.
-    """
-    proteins_dir = screening_dir / "proteins"
-    proteins_dir.mkdir(parents=True, exist_ok=True)
-
-    df_reps = pd.read_csv(representatives_csv)
-    df_master = pd.read_csv(master_csv)
-
-    rep_ids: list[str] = df_reps["pdb_id"].tolist() if "pdb_id" in df_reps.columns else df_reps.iloc[:, 0].tolist()
-
-    prepared: list[str] = []
-    for pdb_id in rep_ids:
-        row = df_master[df_master["pdb_id"] == pdb_id]
-        if row.empty:
-            log_message(message_type="warning", msg=f"{pdb_id} not in master.csv, skipping")
-            continue
-
-        cleaned_file = row.iloc[0].get("cleaned_file")
-        if not cleaned_file or pd.isna(cleaned_file):
-            log_message(message_type="warning", msg=f"{pdb_id} has no cleaned_file, skipping")
-            continue
-
-        # Resolve relative path (master.csv stores filenames relative to structures/)
-        structures_dir = screening_dir.parent / "structures"
-        cleaned_path = structures_dir / "cleaned" / cleaned_file
-        if not cleaned_path.exists():
-            log_message(message_type="warning", msg=f"cleaned file not found: {cleaned_path}")
-            continue
-
-        out_pdbqt = proteins_dir / f"{pdb_id}.pdbqt"
-        if out_pdbqt.exists():
-            log_message(message_type="skip", reason="already prepared", pdb_id=pdb_id)
-            prepared.append(pdb_id)
-            continue
-
-        ok = prepare_protein_pdbqt(cleaned_path, out_pdbqt, cfg.preparation)
-        if ok:
-            prepared.append(pdb_id)
-
-    log_message(
-        message_type="proteins_prepared",
-        total=len(rep_ids),
-        prepared=len(prepared),
-    )
-    return prepared
-
-
-def prepare_all_ligands(
-    screening_dir: Path,
-    actives_smi: Path,
-    decoys_smi: Optional[Path],
-    cfg: ScreenConfig,
-    mode: str = "cross_docking",
-) -> dict[str, list[str]]:
-    """Prepare PDBQT files for all actives (and optionally decoys).
-
-    Args:
-        screening_dir: Root screening directory.
-        actives_smi: Path to ``screening/actives.smi``.
-        decoys_smi: Path to ``screening/decoys.smi``; only used when
-            *mode* is ``"virtual_screening"``.
-        cfg: Full :class:`~qpocket.screen.config.ScreenConfig`.
-        mode: ``"cross_docking"`` or ``"virtual_screening"``.
-
-    Returns:
-        Dict with keys ``"actives"`` and ``"decoys"``, each a list of
-        prepared ligand IDs.
-    """
-    actives_dir = screening_dir / "actives"
-    decoys_dir = screening_dir / "decoys"
-    actives_dir.mkdir(parents=True, exist_ok=True)
-
-    result: dict[str, list[str]] = {"actives": [], "decoys": []}
-
-    # Actives
-    if actives_smi.exists():
-        df_act = pd.read_csv(actives_smi, sep="\t", header=None, names=["SMILES", "PDB_ID", "Ligand_Name"])
-        for _, row in df_act.iterrows():
-            smiles = row["SMILES"]
-            lig_id = f"{row['PDB_ID']}_{row['Ligand_Name']}"
-            out_pdbqt = actives_dir / f"{lig_id}.pdbqt"
-            if out_pdbqt.exists():
-                result["actives"].append(lig_id)
-                continue
-            ok = prepare_ligand_pdbqt(smiles, out_pdbqt, cfg.preparation, ligand_id=lig_id)
-            if ok:
-                result["actives"].append(lig_id)
-    else:
-        log_message(message_type="warning", msg="actives.smi not found", path=str(actives_smi))
-
-    # Decoys (virtual_screening only)
-    if mode == "virtual_screening" and decoys_smi and decoys_smi.exists():
-        decoys_dir.mkdir(parents=True, exist_ok=True)
-        df_dec = pd.read_csv(decoys_smi, sep="\t", header=None, names=["SMILES", "ID"])
-        for _, row in df_dec.iterrows():
-            smiles = row["SMILES"]
-            lig_id = str(row["ID"])
-            out_pdbqt = decoys_dir / f"{lig_id}.pdbqt"
-            if out_pdbqt.exists():
-                result["decoys"].append(lig_id)
-                continue
-            ok = prepare_ligand_pdbqt(smiles, out_pdbqt, cfg.preparation, ligand_id=lig_id)
-            if ok:
-                result["decoys"].append(lig_id)
-
-    log_message(
-        message_type="ligands_prepared",
-        actives=len(result["actives"]),
-        decoys=len(result["decoys"]),
-    )
-    return result

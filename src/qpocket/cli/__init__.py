@@ -780,5 +780,8 @@ from qpocket.cli.compare import (  # noqa: E402  (registered after the group exi
     featurize_command,
 )
 
+from qpocket.cli.screen import screen_cli  # noqa: E402
+
 for _command in (featurize_command, compare_command, compare_structures_command):
     cli.add_command(_command)
+cli.add_command(screen_cli, name="screen")

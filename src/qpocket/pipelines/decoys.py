@@ -1,179 +1,18 @@
-"""
-Decoy generation based on LUDe (Liquid Decoy Generation) methodology.
-
-Main public API:
-- ``download_chembl_dataset(url, local_dir)`` — fetch ChEMBL data from Google Drive
-- ``generate_decoys_lude(actives_path, chembl_dir, output_dir, config)`` — generate property-matched decoys
-"""
+"""Decoy generation (LUDe-style) for virtual screening."""
 from __future__ import annotations
 
 import random
-import zipfile
 from pathlib import Path
-from typing import Union
 
 import pandas as pd
 from eliot import log_message
-from rdkit import Chem, DataStructs
-from rdkit.Chem import AllChem, Descriptors, Lipinski
-from rdkit.Chem.Scaffolds import MurckoScaffold
 from molvs import Standardizer
+from rdkit import Chem, DataStructs
+from rdkit.Chem import AllChem
 
-from openbabel import openbabel
+from qpocket.core.screening import calc_descriptors, standardize_molecule
+from qpocket.screen_config import DecoyConfig
 
-from qpocket.screen.config import DecoyConfig
-
-
-# ---------------------------------------------------------------------------
-# ChEMBL download
-# ---------------------------------------------------------------------------
-
-def download_chembl_dataset(url: str, local_dir: Union[str, Path]) -> Path:
-    """Download a ChEMBL dataset from Google Drive (or any direct URL).
-
-    Uses ``gdown`` for Google Drive links.  Extracts ZIP archives if
-    necessary.  Skips the download entirely when ``.txt`` files are already
-    present in *local_dir*.
-
-    Args:
-        url: Google Drive share URL or direct download URL.
-        local_dir: Target directory.  Created if it does not exist.
-
-    Returns:
-        Resolved path to *local_dir*.
-    """
-    local_dir = Path(local_dir).expanduser().resolve()
-    local_dir.mkdir(parents=True, exist_ok=True)
-
-    existing_txt = list(local_dir.glob("*.txt"))
-    if existing_txt:
-        log_message(
-            message_type="chembl_download_skipped",
-            reason="txt files already present",
-            count=len(existing_txt),
-            local_dir=str(local_dir),
-        )
-        return local_dir
-
-    import gdown  # lazy import so the rest of the module works without gdown
-
-    log_message(message_type="chembl_download_start", url=url, local_dir=str(local_dir))
-
-    archive_path = local_dir / "chembl_data.zip"
-    gdown.download(url, str(archive_path), quiet=False, fuzzy=True)
-
-    if archive_path.exists() and zipfile.is_zipfile(archive_path):
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(local_dir)
-        archive_path.unlink()
-        log_message(message_type="chembl_extracted", local_dir=str(local_dir))
-    elif not archive_path.exists():
-        log_message(
-            message_type="warning",
-            msg="gdown did not produce an archive — check the URL or download manually",
-        )
-
-    return local_dir
-
-
-# ---------------------------------------------------------------------------
-# Chemistry helpers
-# ---------------------------------------------------------------------------
-
-def charges_ph(molecule_smi: str) -> str:
-    """Corrects pH using OpenBabel."""
-    if openbabel is None:
-        return molecule_smi
-
-    obConversion = openbabel.OBConversion()
-    obConversion.SetInAndOutFormats("smi", "smi")
-    mol = openbabel.OBMol()
-    obConversion.ReadString(mol, molecule_smi)
-    mol.AddHydrogens()
-    mol.CorrectForPH(7.4)
-    mol.AddHydrogens()
-    return obConversion.WriteString(mol).strip()
-
-
-def smile_obabel_corrector(smiles_ionized: str) -> str:
-    """Manually corrects specific functional group protonations."""
-    mol1 = Chem.MolFromSmiles(smiles_ionized, sanitize=False)
-    if not mol1:
-        return smiles_ionized
-
-    # Ether correction
-    p1 = Chem.MolFromSmarts("[#6]-[#8-]-[#6]")
-    if mol1.HasSubstructMatch(p1):
-        for match in mol1.GetSubstructMatches(p1):
-            atom = mol1.GetAtomWithIdx(match[1])
-            atom.SetFormalCharge(0)
-            atom.UpdatePropertyCache()
-
-    try:
-        return Chem.MolToSmiles(mol1)
-    except Exception:
-        return smiles_ionized
-
-
-def standardize_molecule(smiles: str, standardizer: Standardizer):
-    """Runs MolVS standardization + LUDe corrections."""
-    try:
-        mol = Chem.MolFromSmiles(smiles)
-        if not mol:
-            return None
-        mol_std = standardizer.fragment_parent(mol)
-        mol_std = standardizer.charge_parent(mol_std, skip_standardize=True)
-        mol_std = standardizer.isotope_parent(mol_std, skip_standardize=True)
-
-        smi_std = Chem.MolToSmiles(mol_std)
-        smi_ph = charges_ph(smi_std)
-        smi_final = smile_obabel_corrector(smi_ph)
-
-        return Chem.MolFromSmiles(smi_final)
-    except Exception:
-        return None
-
-
-def calc_descriptors(mol):
-    """Calculates MW, LogP, RB, HBA, HBD, Charge.
-
-    Returns:
-        (pd.Series of properties, heavy atom count)
-    """
-    props = {
-        "MW": Descriptors.MolWt(mol),
-        "LogP": Chem.Crippen.MolLogP(mol),
-        "Hba": Lipinski.NumHAcceptors(mol),
-        "Hbd": Lipinski.NumHDonors(mol),
-        "rb": Lipinski.NumRotatableBonds(mol),
-        "charge": Chem.rdmolops.GetFormalCharge(mol),
-    }
-    return pd.Series(props), Descriptors.HeavyAtomCount(mol)
-
-
-def calculate_pss(df_decoys_props: pd.DataFrame, query_props: pd.Series, prop_cols) -> list:
-    """Calculates Physicochemical Similarity Score (PSS)."""
-    distances = {}
-    for col in prop_cols:
-        d_min = abs(query_props[col] - df_decoys_props[col].min())
-        d_max = abs(query_props[col] - df_decoys_props[col].max())
-        distances[f"f_{col}"] = max(d_min, d_max)
-
-    pss_scores = []
-    for _, row in df_decoys_props.iterrows():
-        score_sum = 0.0
-        for col in prop_cols:
-            denom = distances[f"f_{col}"]
-            val = 1.0 if denom == 0 else 1.0 - (abs(query_props[col] - row[col]) / denom)
-            score_sum += val
-        pss_scores.append(score_sum / len(prop_cols))
-
-    return pss_scores
-
-
-# ---------------------------------------------------------------------------
-# Main decoy generation
-# ---------------------------------------------------------------------------
 
 def generate_decoys_lude(
     actives_path: Path,
@@ -194,7 +33,7 @@ def generate_decoys_lude(
         actives_path: Path to ``actives.smi`` (tab-separated).
         chembl_dir: Directory containing ChEMBL ``.txt`` / ``.csv`` files.
         output_dir: Directory in which to write ``decoys.smi``.
-        config: :class:`~qpocket.screen.config.DecoyConfig` instance.
+        config: :class:`~qpocket.screen_config.DecoyConfig` instance.
     """
     log_message(message_type="decoy_gen_start", actives=str(actives_path))
 
@@ -308,10 +147,7 @@ def generate_decoys_lude(
         log_message(message_type="warning", msg="No decoys generated")
 
 
-# ---------------------------------------------------------------------------
-# Legacy orchestrator (kept for backward compatibility)
-# ---------------------------------------------------------------------------
-
+# Known issue (spec §6): unused and out of date; prepare() is the entry point.
 def run_screening_prep(
     base_dir: str,
     chembl_path: str,
@@ -319,7 +155,7 @@ def run_screening_prep(
     decoy_config: dict,
 ) -> None:
     """Orchestrates Vina Box Extraction + Decoy Generation."""
-    from qpocket.screen.binding_box import extract_vina_box
+    from qpocket.io.screening import extract_vina_box
 
     BASE = Path(base_dir)
     DIRS = {

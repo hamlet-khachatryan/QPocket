@@ -1,8 +1,11 @@
 """CLI entry point for QPocket-Screen.
 
 Usage:
-    qpocket-screen prepare --workdir <pipeline_outdir> [--config screen.yaml]
-    qpocket-screen analyze  --workdir <pipeline_outdir> [--config screen.yaml]
+    qpocket screen prepare --workdir <run> [--config screen.yaml] [--submit slurm|local]
+    qpocket screen run-local <run>/screening/docking_jobs.csv --workers 4
+    qpocket screen analyze  --workdir <run> [--config screen.yaml]
+
+``qpocket-screen`` is the same group under its old name.
 """
 from __future__ import annotations
 
@@ -36,7 +39,9 @@ def screen_cli() -> None:
 @click.option("--exhaustiveness", default=None, type=int, help="Vina exhaustiveness.")
 @click.option("--num-modes", default=None, type=int, help="Number of binding modes per run.")
 @click.option("--cpus", default=None, type=int, help="CPUs per docking job.")
-@click.option("--use-slurm", is_flag=True, default=False, help="Enable SLURM job array script.")
+@click.option("--use-slurm", is_flag=True, default=False, help="Same as --submit slurm.")
+@click.option("--submit", type=click.Choice(["slurm", "local"]), default=None,
+              help="Write SLURM array scripts or a local run command (default: slurm.enabled).")
 @click.option("--slurm-partition", default=None, help="SLURM partition name.")
 @click.option("--slurm-time", default=None, help="SLURM time limit (e.g. 02:00:00).")
 @click.option("--box-mode", default=None, type=click.Choice(["ligand_based", "cavity_based"]))
@@ -51,13 +56,14 @@ def prepare(
     num_modes: int | None,
     cpus: int | None,
     use_slurm: bool,
+    submit: str | None,
     slurm_partition: str | None,
     slurm_time: str | None,
     box_mode: str | None,
     box_padding: float | None,
 ) -> None:
     """Prepare proteins, ligands, and docking job scripts."""
-    from qpocket.screen.api import run_qpocket_screen_prepare
+    from qpocket.pipelines.screening import prepare as prepare_campaign
 
     overrides: dict = {"run_mode": run_mode, "docking": {"engine": engine}}
 
@@ -80,7 +86,12 @@ def prepare(
     if box_padding is not None:
         overrides.setdefault("box", {})["padding"] = box_padding
 
-    run_qpocket_screen_prepare(workdir, config_path, **overrides)
+    # Known issue (spec §6): these defaults always override the config file.
+    plan = prepare_campaign(workdir, config_path, submit=submit or ("slurm" if use_slurm else None), **overrides)
+    click.echo(f"\nTask list: {plan.jobs_csv}")
+    for script in plan.scripts:
+        click.echo(f"Script:    {script}")
+    click.echo(f"\nNext:\n  {plan.command.replace(chr(10), chr(10) + '  ')}")
 
 
 @screen_cli.command("analyze")
@@ -107,7 +118,7 @@ def analyze(
     bedroc_alpha: float | None,
 ) -> None:
     """Analyse docking results and write CSV reports."""
-    from qpocket.screen.api import run_qpocket_screen_analyze
+    from qpocket.pipelines.screening import analyze as analyze_campaign
 
     overrides: dict = {}
     if run_mode:
@@ -117,4 +128,37 @@ def analyze(
     if bedroc_alpha is not None:
         overrides.setdefault("analysis", {})["bedroc_alpha"] = bedroc_alpha
 
-    run_qpocket_screen_analyze(workdir, config_path, **overrides)
+    click.echo(f"Reports written to: {analyze_campaign(workdir, config_path, **overrides)}")
+
+
+@screen_cli.command("run-task")
+@click.argument("jobs_csv", type=click.Path(exists=True))
+@click.option("--index", type=int, required=True, help="0-based row of the task list.")
+@click.option("--cpus", type=int, default=1, show_default=True, help="Threads for the engine.")
+@click.option("--engine", default=None, help="Docking executable (default: config engine_path).")
+def run_task(jobs_csv: str, index: int, cpus: int, engine: str | None) -> None:
+    """Run one docking job; used by the SLURM array script."""
+    from pathlib import Path
+
+    from qpocket.pipelines.screening import run_job
+
+    code = run_job(Path(jobs_csv), index, cpus, engine)
+    if code:
+        raise SystemExit(code)
+
+
+@screen_cli.command("run-local")
+@click.argument("jobs_csv", type=click.Path(exists=True))
+@click.option("--workers", type=int, default=1, show_default=True, help="Jobs run at once.")
+@click.option("--cpus", type=int, default=1, show_default=True, help="Threads per job.")
+@click.option("--engine", default=None, help="Docking executable (default: config engine_path).")
+def run_local(jobs_csv: str, workers: int, cpus: int, engine: str | None) -> None:
+    """Run every docking job on this machine (any OS)."""
+    from pathlib import Path
+
+    from qpocket.pipelines.screening import run_local as run_all
+
+    failed = run_all(Path(jobs_csv), workers, cpus, engine)
+    click.echo(f"{failed} job(s) failed" if failed else "All docking jobs completed.")
+    if failed:
+        raise SystemExit(1)

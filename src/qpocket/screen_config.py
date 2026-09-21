@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from omegaconf import OmegaConf
 
@@ -27,7 +27,7 @@ class DecoyConfig:
 
 @dataclass
 class BoxConfig:
-    mode: Literal["ligand_based", "cavity_based"] = "ligand_based"
+    mode: str = "ligand_based"  # ligand_based | cavity_based
     padding: float = 5.0
 
 
@@ -40,7 +40,7 @@ class PreparationConfig:
 
 @dataclass
 class DockingConfig:
-    engine: Literal["vina", "quickvina"] = "vina"
+    engine: str = "vina"  # vina | quickvina
     engine_path: str = "vina"
     exhaustiveness: int = 8
     num_modes: int = 10
@@ -56,6 +56,9 @@ class SlurmConfig:
     mem: str = "4G"
     time: str = "02:00:00"
     max_concurrent: int = 100
+    max_array_size: int = 1000
+    # Lines run before each job, e.g. module loads or `source .venv/bin/activate`.
+    environment: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -67,7 +70,7 @@ class AnalysisConfig:
 
 @dataclass
 class ScreenConfig:
-    run_mode: Literal["cross_docking", "virtual_screening"] = "cross_docking"
+    run_mode: str = "cross_docking"  # cross_docking | virtual_screening
     chembl: ChemblDatasetConfig = field(default_factory=ChemblDatasetConfig)
     decoy: DecoyConfig = field(default_factory=DecoyConfig)
     box: BoxConfig = field(default_factory=BoxConfig)
@@ -114,6 +117,9 @@ def validate_screen_config(cfg: ScreenConfig) -> None:
 
     if not (0.0 < cfg.decoy.max_similarity <= 1.0):
         errors.append("decoy.max_similarity must be in (0, 1]")
+
+    if cfg.box.mode not in ("ligand_based", "cavity_based"):
+        errors.append(f"box.mode must be 'ligand_based' or 'cavity_based', got '{cfg.box.mode}'")
 
     if cfg.box.padding < 0:
         errors.append("box.padding must be >= 0")

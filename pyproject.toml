@@ -78,7 +78,7 @@ Repository = "https://github.com/hamlet-khachatryan/QPocket"
 
 [project.scripts]
 qpocket = "qpocket.cli:cli"
-qpocket-screen = "qpocket.screen.cli:screen_cli"
+qpocket-screen = "qpocket.cli.screen:screen_cli"
 
 [tool.uv.build-backend]
 module-root = "src"

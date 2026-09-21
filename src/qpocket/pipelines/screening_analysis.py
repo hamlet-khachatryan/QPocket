@@ -1,106 +1,17 @@
-"""Post-docking analysis: score collection, RMSD, enrichment, interactions.
-
-Public API:
-- ``parse_vina_output(pdbqt_path)`` → (best_score, best_pose_mol)
-- ``collect_docking_scores(screening_dir, jobs_csv)`` → DataFrame
-- ``compute_rmsd_mcs(docked_mol, crystal_mol)`` → float
-- ``run_rmsd_analysis(scores_df, crystal_ligands_dir, master_csv, cfg)`` → DataFrame
-- ``compute_enrichment_metrics(scores_df, cfg)`` → dict
-- ``run_interaction_analysis(screening_dir, jobs_csv, cfg)`` → DataFrame
-- ``run_full_analysis(screening_dir, pipeline_dir, cfg)`` → None (writes CSVs)
-"""
+"""Post-docking analysis: scores, pose RMSD, enrichment and interactions."""
 from __future__ import annotations
 
-import io
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
 from eliot import log_message, start_action
 from rdkit import Chem
 
-from qpocket.screen.config import AnalysisConfig, ScreenConfig
+from qpocket.io.screening import parse_vina_output
+from qpocket.screen_config import AnalysisConfig, ScreenConfig
 
-
-# ---------------------------------------------------------------------------
-# PDBQT parsing
-# ---------------------------------------------------------------------------
-
-def parse_vina_output(pdbqt_path: Path) -> Tuple[Optional[float], Optional[Chem.Mol]]:
-    """Parse an AutoDock Vina output PDBQT file.
-
-    Extracts the best (lowest) docking score from ``REMARK VINA RESULT``
-    lines and converts the first MODEL block to an RDKit Mol.
-
-    Args:
-        pdbqt_path: Path to the docking output PDBQT.
-
-    Returns:
-        ``(best_score, best_pose_mol)`` — either may be ``None`` on failure.
-    """
-    if not pdbqt_path.exists():
-        return None, None
-
-    best_score: Optional[float] = None
-    model_lines: List[str] = []
-    in_first_model = False
-
-    try:
-        with open(pdbqt_path) as fh:
-            for line in fh:
-                # Score lines: "REMARK VINA RESULT:  -8.5   0.000   0.000"
-                if line.startswith("REMARK VINA RESULT"):
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        try:
-                            score = float(parts[3])
-                            if best_score is None or score < best_score:
-                                best_score = score
-                        except ValueError:
-                            pass
-
-                if line.startswith("MODEL"):
-                    if not in_first_model:
-                        in_first_model = True
-                        model_lines = []
-                elif line.startswith("ENDMDL"):
-                    if in_first_model:
-                        break
-                elif in_first_model:
-                    model_lines.append(line)
-
-        mol = _pdbqt_lines_to_mol(model_lines)
-        return best_score, mol
-
-    except Exception as e:
-        log_message(message_type="error", stage="parse_vina_output", path=str(pdbqt_path), error=str(e))
-        return None, None
-
-
-def _pdbqt_lines_to_mol(lines: List[str]) -> Optional[Chem.Mol]:
-    """Convert PDBQT ATOM/HETATM lines to an RDKit Mol via PDB block."""
-    pdb_lines = []
-    for line in lines:
-        record = line[:6].strip()
-        if record in ("ATOM", "HETATM"):
-            # PDBQT has extra partial-charge column — truncate to standard PDB width
-            pdb_lines.append(line[:60].ljust(60) + "\n")
-    if not pdb_lines:
-        return None
-    pdb_block = "".join(pdb_lines) + "END\n"
-    try:
-        mol = Chem.MolFromPDBBlock(pdb_block, sanitize=False, removeHs=False)
-        if mol is not None:
-            Chem.SanitizeMol(mol, catchErrors=True)
-        return mol
-    except Exception:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Score collection
-# ---------------------------------------------------------------------------
 
 def collect_docking_scores(
     screening_dir: Path,
@@ -141,10 +52,6 @@ def collect_docking_scores(
     )
     return df
 
-
-# ---------------------------------------------------------------------------
-# RMSD analysis
-# ---------------------------------------------------------------------------
 
 def compute_rmsd_mcs(docked_mol: Chem.Mol, crystal_mol: Chem.Mol) -> Optional[float]:
     """Compute RMSD between a docked pose and the crystal ligand using MCS.
@@ -241,6 +148,7 @@ def run_rmsd_analysis(
         # Parse docked pose
         # Look up output_pdbqt from jobs_csv if available; fallback to None
         _, docked_mol = parse_vina_output(
+            # Known issue (spec §6): placeholder path; RMSD reference lookup is not implemented.
             Path(str(crystal_ligands_dir).replace("extracted_ligands", ".."))  # placeholder
         )
 
@@ -312,10 +220,6 @@ def _run_rmsd_analysis_from_jobs(
         columns=["pdb_id", "ligand_id", "best_score", "rmsd", "success"]
     )
 
-
-# ---------------------------------------------------------------------------
-# Enrichment metrics
-# ---------------------------------------------------------------------------
 
 def compute_enrichment_metrics(
     scores_df: pd.DataFrame,
@@ -391,10 +295,6 @@ def compute_enrichment_metrics(
     return metrics
 
 
-# ---------------------------------------------------------------------------
-# Interaction statistics
-# ---------------------------------------------------------------------------
-
 def run_interaction_analysis(
     screening_dir: Path,
     jobs_csv: Path,
@@ -410,7 +310,7 @@ def run_interaction_analysis(
     Returns:
         DataFrame with columns: job_id, pdb_id, ligand_id, interaction_type, count.
     """
-    from qpocket.pipelines.pockets import get_plip_interactions
+    from qpocket.io.tools import plip_interactions as get_plip_interactions
 
     df_jobs = pd.read_csv(jobs_csv)
     actives_jobs = df_jobs[df_jobs["molecule_type"] == "actives"]
@@ -434,6 +334,7 @@ def run_interaction_analysis(
                     tmp.write(pdb_block)
                     tmp_path = Path(tmp.name)
 
+            # Known issue (spec §6): the pose is analysed without its receptor.
             interactions = get_plip_interactions(tmp_path, "LIG")
             tmp_path.unlink(missing_ok=True)
 
@@ -470,10 +371,6 @@ def run_interaction_analysis(
     log_message(message_type="interaction_analysis_done", n_interactions=len(df))
     return df
 
-
-# ---------------------------------------------------------------------------
-# Full analysis orchestrator
-# ---------------------------------------------------------------------------
 
 def run_full_analysis(
     screening_dir: Path,
