@@ -7,7 +7,7 @@ from typing import Optional
 import pandas as pd
 from eliot import log_message
 
-from qpocket.io.screening import prepare_ligand_pdbqt, prepare_protein_pdbqt
+from qpocket.io.screening import prepare_ligand_pdbqt, prepare_protein_pdbqt, receptor_from_pqr
 from qpocket.screen_config import ScreenConfig
 
 
@@ -61,7 +61,15 @@ def prepare_all_proteins(
             prepared.append(pdb_id)
             continue
 
-        ok = prepare_protein_pdbqt(cleaned_path, out_pdbqt, cfg.preparation)
+        # The featurisation PQR carries the run's protonation states and charges;
+        # runs made before it existed fall back to preparing the cleaned PDB.
+        pqr = screening_dir.parent / "pockets" / pdb_id / "protein.pqr"
+        if pqr.exists():
+            ok = receptor_from_pqr(pqr, out_pdbqt)
+        else:
+            log_message(message_type="warning", pdb_id=pdb_id,
+                        msg="no protein.pqr from the run; preparing the receptor from the cleaned PDB")
+            ok = prepare_protein_pdbqt(cleaned_path, out_pdbqt, cfg.preparation)
         if ok:
             prepared.append(pdb_id)
 

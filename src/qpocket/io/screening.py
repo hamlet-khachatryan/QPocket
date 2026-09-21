@@ -1,6 +1,7 @@
 """Screening files and tools: Vina output, boxes, ChEMBL, receptor and ligand PDBQT."""
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 import zipfile
@@ -263,7 +264,8 @@ def prepare_protein_pdbqt(
 
             # Step 2: mk_prepare_receptor (Meeko)
             meeko_cmd = [
-                "mk_prepare_receptor",
+                # Meeko >= 0.6 installs the script with a .py suffix.
+                shutil.which("mk_prepare_receptor") or shutil.which("mk_prepare_receptor.py") or "mk_prepare_receptor",
                 "-i", str(prep_input),
                 "-o", str(output_pdbqt),
             ]
@@ -492,4 +494,27 @@ def _write_ligand_pdbqt_sdf_fallback(
 
     except Exception as e:
         log_message(message_type="error", stage="sdf_fallback", ligand_id=ligand_id, error=str(e))
+        return False
+
+
+def receptor_from_pqr(pqr_path: Path, out_pdbqt: Path) -> bool:
+    """Write a docking receptor from a run's protonated PQR.
+
+    Args:
+        pqr_path: pockets/<ID>/protein.pqr.
+        out_pdbqt: Receptor PDBQT to write.
+
+    Returns:
+        True when written.
+    """
+    from qpocket.core.screening import receptor_pdbqt
+    from qpocket.io.tables import read_pqr
+
+    try:
+        out_pdbqt.parent.mkdir(parents=True, exist_ok=True)
+        out_pdbqt.write_text(receptor_pdbqt(read_pqr(pqr_path)), encoding="utf-8")
+        log_message(message_type="protein_prepared", source="pqr", pqr=str(pqr_path), pdbqt=str(out_pdbqt))
+        return True
+    except Exception as e:
+        log_message(message_type="error", stage="receptor_from_pqr", pqr=str(pqr_path), error=str(e))
         return False

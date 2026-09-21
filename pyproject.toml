@@ -57,6 +57,7 @@ dependencies = [
   "apbs-binary>=3.4",
   "molvs>=0.1.1",
   "meeko>=0.5",
+  "gemmi>=0.6",   # imported by meeko >= 0.6 but not declared by it
   "gdown>=4.7",
   "openbabel-wheel>=3.1",
 ]

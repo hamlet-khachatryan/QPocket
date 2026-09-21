@@ -9,6 +9,9 @@ import pandas as pd
 from molvs import Standardizer
 from openbabel import openbabel
 from rdkit import Chem
+from scipy.spatial import cKDTree
+
+from qpocket.constants import STANDARD_AA, canonical_residue, element_of
 from rdkit.Chem import Descriptors, Lipinski
 
 
@@ -268,3 +271,71 @@ def slurm_array_script(jobs_csv, slurm_cfg, offset: int, n_tasks: int, log_dir,
         command,
         "",
     ])
+
+
+_AROMATIC_CARBONS = {
+    "PHE": {"CG", "CD1", "CD2", "CE1", "CE2", "CZ"},
+    "TYR": {"CG", "CD1", "CD2", "CE1", "CE2", "CZ"},
+    "TRP": {"CG", "CD1", "CD2", "CE2", "CE3", "CZ2", "CZ3", "CH2"},
+    "HIS": {"CG", "CD2", "CE1"},
+}
+_AD_ELEMENT_TYPES = {"O": "OA", "S": "SA", "P": "P", "F": "F", "CL": "Cl", "BR": "Br", "I": "I",
+                     "ZN": "Zn", "MG": "Mg", "CA": "Ca", "FE": "Fe", "MN": "Mn", "CO": "Co", "CU": "Cu", "NI": "Ni"}
+_H_BOND_MAX = 1.3  # A; an H further than this from every heavy atom keeps its own line
+
+
+def receptor_pdbqt(atoms) -> str:
+    """AutoDock/Vina receptor PDBQT text from a protonated PQR.
+
+    Args:
+        atoms: PQRAtoms from read_pqr (pdb2pqr output with AMBER names).
+
+    Returns:
+        PDBQT text: PQR charges, AutoDock types, non-polar hydrogens merged.
+    """
+    n = len(atoms.coords)
+    elements = [element_of(a, r) for a, r in zip(atoms.atom_names, atoms.res_names)]
+    heavy = [i for i in range(n) if elements[i] != "H"]
+    charges = np.array(atoms.charges, dtype=float)
+    parent = {}
+    if heavy:
+        tree = cKDTree(atoms.coords[heavy])
+        for i in (i for i in range(n) if elements[i] == "H"):
+            d, j = tree.query(atoms.coords[i])
+            if d <= _H_BOND_MAX:
+                parent[i] = heavy[j]
+
+    n_hydrogens = {}
+    for h, p in parent.items():
+        n_hydrogens[p] = n_hydrogens.get(p, 0) + 1
+    merged = {h for h, p in parent.items() if elements[p] == "C"}
+    for h in merged:
+        charges[parent[h]] += charges[h]  # united atom: carbon carries its hydrogens' charge
+
+    lines = []
+    serial = 0
+    for i in range(n):
+        if i in merged:
+            continue
+        name, res = atoms.atom_names[i], atoms.res_names[i]
+        std = canonical_residue(res)
+        element = elements[i]
+        if element == "H":
+            ad_type = "HD" if i in parent else "H"
+        elif element == "C":
+            ad_type = "A" if name in _AROMATIC_CARBONS.get(std, ()) else "C"
+        elif element == "N":
+            # An N with no hydrogen accepts: HIE's ND1, HID's NE2, ligand ring N (not proline).
+            accepts = n_hydrogens.get(i, 0) == 0 and not (std == "PRO" or name == "N")
+            ad_type = "NA" if accepts else "N"
+        else:
+            ad_type = _AD_ELEMENT_TYPES.get(element, element.capitalize())
+        serial += 1
+        record = "ATOM" if std in STANDARD_AA else "HETATM"
+        label = name[:4] if len(name) >= 4 else f" {name:<3}"
+        x, y, z = atoms.coords[i]
+        lines.append(
+            f"{record:<6}{serial:5d} {label} {res[:3]:>3} {atoms.chain_ids[i][:1]:1}{atoms.res_seqs[i]:4d}    "
+            f"{x:8.3f}{y:8.3f}{z:8.3f}{1.0:6.2f}{0.0:6.2f}    {charges[i]:6.3f} {ad_type:<2}"
+        )
+    return "\n".join(lines) + "\n"
