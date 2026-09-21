@@ -489,13 +489,21 @@ def _stage_labels(
     linkage_name: str,
     k: Optional[int],
     k_range: Sequence[int],
+    criterion: str = "count",
+    threshold: Optional[float] = None,
+    damping: float = PIPELINE_DAMPING,
+    max_iter: int = PIPELINE_MAX_ITER,
 ) -> Clustering:
-    """Run one stage, resolving ``k`` by silhouette when it is not pinned."""
+    """Run one stage: affinity, k-medoids, or a hierarchical cut by count or height."""
     resolved = AFFINITY if method == "affinity" else (
         KMEDOIDS if method == "kmedoids" else linkage_name
     )
+    if criterion in ("threshold", THRESHOLD):
+        if resolved in (AFFINITY, KMEDOIDS):
+            raise ValueError(f"a threshold cut needs a hierarchical stage, not {method!r}")
+        return cluster_labels(distances, method=resolved, criterion=THRESHOLD, threshold=threshold)
     if resolved == AFFINITY:
-        return affinity_labels(distances)
+        return affinity_labels(distances, damping=damping, max_iter=max_iter)
     if k is None:
         return best_k_by_silhouette(distances, method=resolved, k_range=k_range)
     return cluster_labels(distances, method=resolved, n_clusters=int(k))
@@ -514,6 +522,14 @@ def two_stage_labels(
     chem_k_range: Sequence[int] = (2, 6),
     min_cluster_size: int = 4,
     combined_distances: Optional[np.ndarray] = None,
+    shape_criterion: str = "count",
+    shape_threshold: Optional[float] = None,
+    shape_damping: float = PIPELINE_DAMPING,
+    shape_max_iter: int = PIPELINE_MAX_ITER,
+    chem_criterion: str = "count",
+    chem_threshold: Optional[float] = None,
+    chem_damping: float = PIPELINE_DAMPING,
+    chem_max_iter: int = PIPELINE_MAX_ITER,
 ) -> TwoStageClustering:
     """Group on shape, then subdivide each group on chemistry.
 
@@ -530,6 +546,14 @@ def two_stage_labels(
         chem_k_range: As ``shape_k_range``, for stage two.
         min_cluster_size: Shape clusters smaller than this are not subdivided.
         combined_distances: Matrix used to pick each final cluster's medoid.
+        shape_criterion: "count" (k or silhouette) or "threshold" (cut the shape tree at a height).
+        shape_threshold: Cut height for a threshold shape stage.
+        shape_damping: Affinity Propagation damping for an affinity shape stage.
+        shape_max_iter: Affinity Propagation iteration cap for the shape stage.
+        chem_criterion: As shape_criterion, for stage two.
+        chem_threshold: Cut height for a threshold chemistry stage, applied within each shape cluster.
+        chem_damping: As shape_damping, for stage two.
+        chem_max_iter: As shape_max_iter, for stage two.
 
     Returns:
         The two-level grouping.
@@ -547,7 +571,8 @@ def two_stage_labels(
 
     n = len(shape_d)
     stage_one = _stage_labels(
-        shape_d, shape_method, shape_linkage, shape_k, shape_k_range
+        shape_d, shape_method, shape_linkage, shape_k, shape_k_range,
+        shape_criterion, shape_threshold, shape_damping, shape_max_iter,
     )
     shape_labels = stage_one.labels
 
@@ -563,7 +588,8 @@ def two_stage_labels(
             continue
         sub = chem_d[np.ix_(members, members)]
         stage_two = _stage_labels(
-            sub, chem_method, chem_linkage, chem_k, chem_k_range
+            sub, chem_method, chem_linkage, chem_k, chem_k_range,
+            chem_criterion, chem_threshold, chem_damping, chem_max_iter,
         )
         chem_clusterings[int(value)] = stage_two
         chem_labels[members] = stage_two.labels

@@ -130,6 +130,8 @@ class StageClustering:
         k_range: Inclusive ``[lo, hi]`` bounds scanned when ``k`` is ``None``.
         damping: Affinity Propagation damping, in ``[0.5, 1.0)``.
         max_iter: Affinity Propagation iteration cap.
+        criterion: ``"count"`` uses k (or silhouette); ``"threshold"`` cuts a hierarchical tree at ``threshold``.
+        threshold: Cut height for a threshold stage, in that stage's distance units.
     """
     method: Literal["hierarchical", "kmedoids", "affinity"] = "hierarchical"
     linkage: Literal["average", "complete", "single", "weighted"] = "average"
@@ -137,6 +139,8 @@ class StageClustering:
     k_range: List[int] = field(default_factory=lambda: [2, 10])
     damping: float = 0.9
     max_iter: int = 300
+    criterion: Literal["count", "threshold"] = "count"
+    threshold: Optional[float] = None
 
 
 @dataclass
@@ -675,6 +679,16 @@ def validate_config(cfg: "QPocketConfig") -> None:
             raise ValueError(
                 f"{prefix}.max_iter must be >= 1, got: {stage.max_iter}"
             )
+        criterion = getattr(stage, "criterion", "count")
+        if criterion not in ("count", "threshold"):
+            raise ValueError(f"{prefix}.criterion must be 'count' or 'threshold', got: {criterion!r}")
+        if criterion == "threshold":
+            threshold = getattr(stage, "threshold", None)
+            if stage.method != "hierarchical" or threshold is None or threshold <= 0:
+                raise ValueError(
+                    f"{prefix}.threshold must be > 0 with method 'hierarchical' when "
+                    f"criterion is 'threshold', got method {stage.method!r}, threshold {threshold!r}"
+                )
 
     # --- SlurmConfig ---
     sl = cfg.slurm

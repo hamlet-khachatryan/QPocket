@@ -91,3 +91,20 @@ instead of counting fully. lp barely moves. Robustness, 7KG6 protein jittered by
 
 No change: a fresh run builds each cache once. Reruns and resubmitted SLURM tasks no
 longer reuse a cache from an older featurized.csv or a different neighbour radius.
+
+## Task 18 — two-stage threshold cuts, affinity settings honoured, recluster
+
+- `spectral_distance_matrix`: max |delta| 0 (max value 767)
+- `shape_distance_matrix`: max |delta| 0 (max value 0.035)
+- `feature_distance_matrix`: max |delta| 0 (max value 409)
+- 4A0D featurized: identical
+- 4B1H featurized: identical
+- 4B1J featurized: identical
+- 6HMM featurized: identical
+- 6O9Y featurized: identical
+- 7KFP featurized: identical
+- 7KG6 featurized: identical
+- clusters: ARI 1.000, 0 structure(s) moved
+
+Only clustering_params.json changes: each stage now records criterion and threshold.
+Defaults (count criterion) reproduce the stored clustering exactly.

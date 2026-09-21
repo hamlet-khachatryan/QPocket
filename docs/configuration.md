@@ -175,11 +175,15 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
       linkage: "average"      # average | complete | single | weighted
       k: null                 # null = choose by silhouette over k_range
       k_range: [2, 10]        # inclusive, lower bound >= 2
+      criterion: "count"      # "count" (k / silhouette) or "threshold"
+      threshold: null         # cut height when criterion is "threshold"
 
     chem:                   # stage two: within each shape cluster
       method: "kmedoids"
       k: null
       k_range: [2, 6]
+      criterion: "count"      # "threshold" needs method "hierarchical"
+      threshold: null
 
     single:                 # only when mode == "single"
       method: "affinity"
@@ -196,6 +200,11 @@ A stage ignores the settings its method does not use: `linkage` applies only to
 `hierarchical`, `k`/`k_range` only to `hierarchical` and `kmedoids`, and
 `damping`/`max_iter` only to `affinity`. They are still accepted, so switching
 method needs no other edit.
+
+`criterion: "threshold"` cuts a hierarchical stage at `threshold` instead of
+choosing a cluster count; for the chemistry stage the cut applies within each shape
+cluster. Pick the heights by eye with the sliders in the explorer notebook, or try
+them on a finished run with `qpocket recluster RUN_DIR --shape-threshold ...`.
 
 ---
 

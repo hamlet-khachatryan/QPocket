@@ -177,3 +177,5 @@ __all__ = [
     "volume_table",
     "voxel_index",
 ]
+
+from qpocket.viz import two_stage  # noqa: E402,F401  (qviz.two_stage in the notebook)

@@ -290,11 +290,29 @@ def _stage_params(stage) -> Dict[str, object]:
         "k_range": [int(v) for v in stage.k_range],
         "damping": float(stage.damping),
         "max_iter": int(stage.max_iter),
+        "criterion": getattr(stage, "criterion", "count"),
+        "threshold": None if getattr(stage, "threshold", None) is None else float(stage.threshold),
     }
 
 
-def assign_clusters(
-    cfg: QPocketConfig,
+def assign_clusters(cfg: QPocketConfig, d_shape: np.ndarray, d_chem: np.ndarray,
+                    combined: np.ndarray) -> ClusterAssignment:
+    """Group the pockets with the run's clustering settings.
+
+    Args:
+        cfg: QPocket configuration.
+        d_shape: Shape distance matrix.
+        d_chem: Physicochemical distance matrix.
+        combined: The blend.
+
+    Returns:
+        The assignment.
+    """
+    return cluster_pockets(cfg.distance.clustering, d_shape, d_chem, combined)
+
+
+def cluster_pockets(
+    settings,
     d_shape: np.ndarray,
     d_chem: np.ndarray,
     combined: np.ndarray,
@@ -302,7 +320,7 @@ def assign_clusters(
     """Group the pockets, in one pass or two depending on the config.
 
     Args:
-        cfg: QPocket configuration.
+        settings: distance.clustering settings (ClusteringParams).
         d_shape: Shape distance matrix.
         d_chem: Physicochemical distance matrix.
         combined: The blend, used for representatives and for single-stage mode.
@@ -310,8 +328,6 @@ def assign_clusters(
     Returns:
         The assignment, with a record of what was run.
     """
-    settings = cfg.distance.clustering
-
     if settings.mode == "single":
         stage = settings.single
         if stage.method == "affinity":
@@ -368,6 +384,14 @@ def assign_clusters(
         chem_k_range=chem_cfg.k_range,
         min_cluster_size=int(settings.min_cluster_size),
         combined_distances=combined,
+        shape_criterion=getattr(shape_cfg, "criterion", "count"),
+        shape_threshold=getattr(shape_cfg, "threshold", None),
+        shape_damping=float(shape_cfg.damping),
+        shape_max_iter=int(shape_cfg.max_iter),
+        chem_criterion=getattr(chem_cfg, "criterion", "count"),
+        chem_threshold=getattr(chem_cfg, "threshold", None),
+        chem_damping=float(chem_cfg.damping),
+        chem_max_iter=int(chem_cfg.max_iter),
     )
 
     n_final = int(len(np.unique(result.labels)))
@@ -514,41 +538,59 @@ def compute_spectral_distance_matrix(
         ):
             assignment = assign_clusters(cfg, d_shape, d_chem, combined)
 
-            exemplar_by_cluster = {
-                int(assignment.labels[pos]): pos
-                for pos in assignment.exemplar_positions
-            }
+            write_clustering(dirs["metadata"], ids, assignment, combined, file_by_id)
 
-            results_data = []
-            for i, pid in enumerate(ids):
-                cluster_id = int(assignment.labels[i])
-                exemplar_idx = exemplar_by_cluster.get(cluster_id, i)
-                results_data.append({
-                    "pdb_id": pid,
-                    "pocket_file": str(file_by_id.get(pid, "")),
-                    "cluster_id": cluster_id,
-                    "shape_cluster_id": int(assignment.shape_labels[i]),
-                    "chem_cluster_id": int(assignment.chem_labels[i]),
-                    "is_representative": bool(i == exemplar_idx),
-                    "dist_to_exemplar": float(combined[i, exemplar_idx]),
-                })
 
-            df_res = pd.DataFrame(results_data)
-            out_meta = dirs["metadata"] / "clustering_metadata.csv"
-            df_res.to_csv(out_meta, index=False)
+def write_clustering(meta_dir: Path, ids: List[str], assignment: ClusterAssignment,
+                     combined: np.ndarray, file_by_id: Dict[str, Path]) -> Path:
+    """Write clustering_metadata.csv, selected_representatives.csv and clustering_params.json.
 
-            df_rep = df_res[df_res["is_representative"]]
-            out_rep = dirs["metadata"] / "selected_representatives.csv"
-            df_rep.to_csv(out_rep, index=False)
+    Args:
+        meta_dir: The run's metadata directory.
+        ids: Pocket IDs in matrix order.
+        assignment: Result of cluster_pockets.
+        combined: Blended distance matrix, for dist_to_exemplar.
+        file_by_id: Featurised pocket file per ID.
 
-            out_params = dirs["metadata"] / "clustering_params.json"
-            out_params.write_text(json.dumps(assignment.params, indent=2) + "\n")
+    Returns:
+        Path of clustering_metadata.csv.
+    """
+    exemplar_by_cluster = {
+        int(assignment.labels[pos]): pos
+        for pos in assignment.exemplar_positions
+    }
 
-            log_message(
-                message_type="clustering_saved",
-                n_clusters=int(len(set(assignment.labels.tolist()))),
-                n_representatives=len(df_rep),
-                metadata_path=str(out_meta),
-                representatives_path=str(out_rep),
-                params_path=str(out_params),
-            )
+    results_data = []
+    for i, pid in enumerate(ids):
+        cluster_id = int(assignment.labels[i])
+        exemplar_idx = exemplar_by_cluster.get(cluster_id, i)
+        results_data.append({
+            "pdb_id": pid,
+            "pocket_file": str(file_by_id.get(pid, "")),
+            "cluster_id": cluster_id,
+            "shape_cluster_id": int(assignment.shape_labels[i]),
+            "chem_cluster_id": int(assignment.chem_labels[i]),
+            "is_representative": bool(i == exemplar_idx),
+            "dist_to_exemplar": float(combined[i, exemplar_idx]),
+        })
+
+    df_res = pd.DataFrame(results_data)
+    out_meta = meta_dir / "clustering_metadata.csv"
+    df_res.to_csv(out_meta, index=False)
+
+    df_rep = df_res[df_res["is_representative"]]
+    out_rep = meta_dir / "selected_representatives.csv"
+    df_rep.to_csv(out_rep, index=False)
+
+    out_params = meta_dir / "clustering_params.json"
+    out_params.write_text(json.dumps(assignment.params, indent=2) + "\n")
+
+    log_message(
+        message_type="clustering_saved",
+        n_clusters=int(len(set(assignment.labels.tolist()))),
+        n_representatives=len(df_rep),
+        metadata_path=str(out_meta),
+        representatives_path=str(out_rep),
+        params_path=str(out_params),
+    )
+    return out_meta
