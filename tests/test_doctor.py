@@ -1,15 +1,15 @@
 """Deciding whether a machine can run Q-Pocket, before anything is installed.
 
-Two dependencies ship as platform wheels with no source fallback, so the install
-either can or cannot succeed and pip is the wrong thing to find that out with:
+One dependency ships only as platform wheels with no source fallback, so the
+install either can or cannot succeed and pip is the wrong thing to find that out
+with:
 
     apbs-binary        x86_64, glibc >= 2.28
-    pymol-open-source  x86_64, glibc >= 2.35  (3.2.0a0)
-                       x86_64, glibc >= 2.34, CPython 3.11 only  (3.1.0a0)
 
-Rocky/RHEL 8 is glibc 2.28 and Rocky 9 is 2.34, so most HPC misses the 2.35
-wheel by a hair. These tests pin the verdict for each of those machines, because
-the machine that matters cannot be reached from here to try it on.
+PyMOL used to add a stricter one (glibc >= 2.34, CPython 3.11 only on Rocky 9),
+which ruled out Rocky/RHEL 8 -- the most common cluster OS -- entirely. It was
+replaced by Biopython. These tests pin the verdict for each common machine,
+because the machine that matters cannot be reached from here to try it on.
 """
 
 from __future__ import annotations
@@ -52,32 +52,31 @@ def test_a_modern_ubuntu_node_is_fine(monkeypatch):
 
 def test_macos_needs_no_glibc_checks(monkeypatch):
     rows, _ = verdict(monkeypatch, system="Darwin", machine="arm64", glibc=None)
-    assert "pymol wheel" not in rows and status_of(rows, "platform") == OK
+    assert "apbs-binary wheel" not in rows and status_of(rows, "platform") == OK
+
+
+# --- the machines PyMOL used to rule out ------------------------------------
+
+
+@pytest.mark.parametrize("python", [(3, 9, 18), (3, 11, 7), (3, 12, 4)])
+def test_rocky_8_is_supported_on_any_current_python(monkeypatch, python):
+    """glibc 2.28 is exactly the apbs-binary floor, and nothing else is gated."""
+    rows, _ = verdict(monkeypatch, glibc=(2, 28), python=python)
+    assert all(s != FAIL for s, _ in rows.values())
+
+
+@pytest.mark.parametrize("python", [(3, 10, 0), (3, 12, 4)])
+def test_rocky_9_no_longer_needs_python_311(monkeypatch, python):
+    rows, _ = verdict(monkeypatch, glibc=(2, 34), python=python)
+    assert all(s != FAIL for s, _ in rows.values())
+
+
+def test_pymol_is_no_longer_checked(monkeypatch):
+    rows, _ = verdict(monkeypatch, glibc=(2, 28))
+    assert not any("pymol" in label for label in rows)
 
 
 # --- machines that do not ---------------------------------------------------
-
-
-def test_rocky_9_misses_the_pymol_wheel_unless_python_is_311(monkeypatch):
-    """glibc 2.34: only the 3.1.0a0 wheel exists, and only for CPython 3.11."""
-    rows, _ = verdict(monkeypatch, glibc=(2, 34), python=(3, 12, 0))
-    assert status_of(rows, "pymol wheel") == FAIL
-
-
-def test_rocky_9_works_on_python_311(monkeypatch):
-    rows, advice = verdict(monkeypatch, glibc=(2, 34), python=(3, 11, 7))
-    assert status_of(rows, "pymol wheel") == OK
-
-
-def test_rocky_9_on_python_311_says_which_version_to_pin(monkeypatch):
-    _, advice = verdict(monkeypatch, glibc=(2, 34), python=(3, 11, 7))
-    assert any("3.1.0a0" in a for a in advice)
-
-
-def test_rocky_8_can_still_run_apbs(monkeypatch):
-    """glibc 2.28 is exactly the apbs-binary floor."""
-    rows, _ = verdict(monkeypatch, glibc=(2, 28))
-    assert status_of(rows, "apbs-binary wheel") == OK
 
 
 def test_centos_7_cannot_install_apbs(monkeypatch):
@@ -87,7 +86,7 @@ def test_centos_7_cannot_install_apbs(monkeypatch):
 
 def test_centos_7_is_told_where_else_to_get_apbs(monkeypatch):
     _, advice = verdict(monkeypatch, glibc=(2, 17))
-    assert any("module" in a or "conda" in a for a in advice)
+    assert any("module" in a or "container" in a for a in advice)
 
 
 def test_arm_linux_is_refused_outright(monkeypatch):
@@ -106,10 +105,11 @@ def test_windows_is_refused(monkeypatch):
     assert status_of(rows, "platform") == FAIL
 
 
-@pytest.mark.parametrize("python", [(3, 8, 10), (3, 14, 0)])
-def test_an_unsupported_python_is_flagged(monkeypatch, python):
-    rows, _ = verdict(monkeypatch, python=python)
-    assert status_of(rows, "python") in (FAIL, WARN)
+@pytest.mark.parametrize("python", [(3, 6, 8), (3, 8, 10)])
+def test_a_too_old_python_fails_with_a_way_forward(monkeypatch, python):
+    """3.6 is the system python3 on RHEL 7 and 8 -- the machine this crashed on."""
+    rows, advice = verdict(monkeypatch, python=python)
+    assert status_of(rows, "python") == FAIL and any("module" in a for a in advice)
 
 
 def test_an_undeterminable_glibc_warns_rather_than_guessing(monkeypatch):
@@ -128,6 +128,24 @@ def test_a_usable_machine_exits_zero(monkeypatch, capsys):
 def test_an_unusable_machine_exits_nonzero(monkeypatch, capsys):
     verdict(monkeypatch, machine="aarch64")
     assert probe.main([]) == 1
+
+
+def test_the_probe_parses_as_python_3_4():
+    """It crashed on a node whose python3 was 3.6, before it could say so."""
+    import ast
+    source = Path(probe.__file__).read_text()
+    tree = ast.parse(source, feature_version=(3, 4))  # f-strings would fail here
+    futures = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+               and n.module == "__future__" for a in n.names}
+    calls = {n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Attribute)}
+    keywords = {k.arg for n in ast.walk(tree) if isinstance(n, ast.Call) for k in n.keywords}
+    annotated = any(isinstance(n, ast.FunctionDef) and (n.returns or any(a.annotation for a in n.args.args))
+                    for n in ast.walk(tree))
+    assert "annotations" not in futures      # 3.7+
+    assert "run" not in calls                # subprocess.run is 3.5+
+    assert not {"capture_output", "text"} & keywords  # 3.7+
+    assert not annotated
 
 
 def test_the_probe_imports_nothing_outside_the_standard_library():

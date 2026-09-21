@@ -82,7 +82,7 @@ results/
     ├── qpocket_pipeline.log
     ├── structures/
     │   ├── original/      ← downloaded CIF files
-    │   ├── aligned/       ← PyMOL-aligned PDB files
+    │   ├── aligned/       ← structures superposed onto the reference
     │   ├── cleaned/       ← residue-cleaned PDB files
     │   └── extracted_ligands/  ← per-structure ligand PDB files
     ├── pockets/

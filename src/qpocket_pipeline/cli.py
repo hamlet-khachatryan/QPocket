@@ -673,7 +673,6 @@ def doctor(config: Optional[str], smoke: bool):
         ("h5py", ""), ("joblib", ""), ("hydra", ""), ("omegaconf", ""),
         ("eliot", ""), ("Bio", "biopython"), ("biopandas", ""), ("rdkit", ""),
         ("openbabel", ""), ("pdb2pqr", ""),
-        ("pymol", ""),
         ("apbs_binary", "featurisation"),
     ):
         try:

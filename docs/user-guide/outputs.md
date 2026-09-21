@@ -7,7 +7,7 @@
 ├── qpocket_pipeline.log             ← Eliot structured log (JSON or text)
 ├── structures/
 │   ├── original/                    ← downloaded .cif files
-│   ├── aligned/                     ← PyMOL-aligned .pdb files
+│   ├── aligned/                     ← structures superposed onto the reference
 │   ├── cleaned/                     ← cleaned .pdb (protein-only + cofactors)
 │   └── extracted_ligands/           ← per-structure ligand .pdb files
 ├── pockets/

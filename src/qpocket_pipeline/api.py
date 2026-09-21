@@ -14,7 +14,6 @@ from eliot import add_destinations, log_message, start_action, to_file
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
-from pymol import cmd
 
 from qpocket_pipeline.config import (
     QPocketConfig,
@@ -29,6 +28,7 @@ from qpocket_pipeline import pdb_query
 from qpocket_pipeline.processing import alignment
 from qpocket_pipeline.processing import cleaning
 from qpocket_pipeline.processing import extraction
+from qpocket_pipeline.processing import structure as st
 
 def _find_conf_dir() -> Path:
     """Locate the Hydra config directory.
@@ -460,7 +460,6 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
 
     with start_action(action_type="align_structures", interface_mode=interface_mode):
 
-        cmd.delete("all")
         ref_id = reference_id(cfg, dirs)
 
         # A PDB query always downloads CIF; fragment screening copies whatever
@@ -483,13 +482,15 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
             )
 
         # ── Load reference; extract primary chain sequence ────────────────────
-        cmd.load(str(reference_path), "static")
-        cmd.remove("resn hoh")
-
-        ref_chain_seq = cmd.get_fastastr(
-            selection=f"static and chain {cfg.reference.chain_id}"
-        )
-        ref_chain_seq = "".join(ref_chain_seq.split()[1:])
+        ref_structure = st.load(reference_path)
+        st.remove_water(ref_structure)
+        ref_model = ref_structure[0]
+        if cfg.reference.chain_id not in ref_model:
+            raise ValueError(
+                f"reference chain {cfg.reference.chain_id!r} not found in {reference_path.name}; "
+                f"it has {[c.id for c in ref_model]}"
+            )
+        ref_chain_seq = st.chain_sequence(ref_model[cfg.reference.chain_id])
 
         # ── Collect auxiliary chain data from the reference structure ─────────
         ref_aux_seqs: Dict[str, str] = {}
@@ -497,16 +498,17 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
 
         if interface_mode:
             for aux_chain in cfg.reference.auxiliary_chain_ids:
-                raw_fasta = cmd.get_fastastr(
-                    selection=f"static and chain {aux_chain}"
-                )
-                ref_aux_seqs[aux_chain] = "".join(raw_fasta.split()[1:])
-
-                ca_xyz = cmd.get_coords(
-                    f"static and chain {aux_chain} and name CA", state=1
-                )
-                if ca_xyz is not None and len(ca_xyz) > 0:
-                    ref_aux_centroids[aux_chain] = np.mean(np.array(ca_xyz), axis=0)
+                if aux_chain not in ref_model:
+                    log_message(
+                        message_type="warning",
+                        stage="align_structures",
+                        warning=f"reference auxiliary chain {aux_chain!r} not in structure",
+                    )
+                    continue
+                ref_aux_seqs[aux_chain] = st.chain_sequence(ref_model[aux_chain])
+                ca_xyz = st.ca_coords(ref_model[aux_chain])
+                if len(ca_xyz):
+                    ref_aux_centroids[aux_chain] = ca_xyz.mean(axis=0)
                 else:
                     log_message(
                         message_type="warning",
@@ -515,16 +517,13 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
                     )
 
         # ── Save aligned reference (primary + auxiliary if interface mode) ─────
+        keep = [cfg.reference.chain_id]
         if interface_mode:
-            all_ref_chains = [cfg.reference.chain_id] + list(cfg.reference.auxiliary_chain_ids)
-            chain_sel = " or ".join(f"chain {c}" for c in all_ref_chains)
-            cmd.select("keep", f"static and ({chain_sel})")
-        else:
-            cmd.select("keep", f"static and chain {cfg.reference.chain_id}")
+            keep += list(cfg.reference.auxiliary_chain_ids)
 
         aligned_reference_path = dirs["aligned"] / f"{ref_id}_aligned.pdb"
-        cmd.save(str(aligned_reference_path), "keep")
-        cmd.delete("all")
+        st.save(st.keep_chains(ref_structure, keep), aligned_reference_path,
+                st.read_links(reference_path))
 
         log_message(
             message_type="reference_processed",
@@ -560,14 +559,14 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
                     if uid:
                         resolved_aux_uniprots[aux_chain] = uid
 
-        # ── Build reference_obj used for alignment of all targets ─────────────
-        cmd.load(aligned_reference_path, "ref_full")
-        cmd.remove("ref_full and (solvent or resn HOH)")
-        cmd.create(
-            "reference_obj",
-            f"ref_full and chain {cfg.reference.chain_id} and polymer.protein",
+        # ── Reference residues every target is fitted onto ─────────────────────
+        # Read back from the saved file, as PyMOL did, so targets are fitted to
+        # exactly the coordinates on disk.
+        reference_residues = st.polymer_residues(
+            st.keep_chains(
+                st.load(aligned_reference_path), [cfg.reference.chain_id], protein_only=True
+            )[0][cfg.reference.chain_id]
         )
-        cmd.delete("ref_full")
 
         # ── Align all targets ─────────────────────────────────────────────────
         rmsd_data = []
@@ -596,7 +595,7 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
                     alignment.process_structure_interface(
                         target_path=pid_path,
                         output_dir=dirs["aligned"],
-                        ref_obj_name="reference_obj",
+                        reference=reference_residues,
                         ref_seq=ref_chain_seq,
                         ref_aux_seqs=ref_aux_seqs,
                         ref_aux_centroids=ref_aux_centroids,
@@ -614,7 +613,7 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
                 success, rmsd, aligned_file = alignment.process_structure(
                     target_path=pid_path,
                     output_dir=dirs["aligned"],
-                    ref_obj_name="reference_obj",
+                    reference=reference_residues,
                     ref_seq=ref_chain_seq,
                     uniprot_id=uniprot_id,
                     renumber=renumber,
@@ -651,7 +650,6 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
                 n_structures=len(rmsd_data),
             )
 
-        cmd.delete("all")
         log_message(message_type="stage_complete", stage="align_structures")
 
 

@@ -1,15 +1,15 @@
-"""Structure cleaning: removes non-standard residues and cofactors via PyMOL."""
+"""Structure cleaning: keeps protein residues and allowed cofactors.
+
+Biopython rather than PyMOL; see :mod:`qpocket_pipeline.processing.structure`.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
 
 from eliot import log_message, start_action
-from pymol import cmd
 
-from qpocket_pipeline.global_vars import STANDARD_AA
-
-cmd.feedback("disable", "all", "everything")
+from qpocket_pipeline.processing import structure as st
 
 
 def clean_structure(
@@ -19,19 +19,18 @@ def clean_structure(
 ) -> bool:
     """Filters a PDB file to retain only protein residues and allowed cofactors.
 
-    Removes water molecules, ions, ligands, and modified residues that are
-    not in *allowed_cofactors*.  Assumes *input_pdb_path* already contains
-    only the relevant chain.
+    Removes water, ions, ligands and modified residues not named in
+    *allowed_cofactors*. Assumes *input_pdb_path* already holds only the
+    relevant chain(s).
 
     Args:
         input_pdb_path: Path to the aligned PDB file.
         output_pdb_path: Destination path for the cleaned PDB file.
         allowed_cofactors: ``"|"``-separated residue names to keep
-            (e.g. ``"HEM|MG"``).  Pass ``None`` to keep only standard AA.
+            (e.g. ``"HEM|MG"``). ``None`` keeps only standard amino acids.
 
     Returns:
-        ``True`` on success, ``False`` if the cleaning failed or the output
-        structure is empty.
+        ``True`` on success, ``False`` if cleaning failed or left nothing.
     """
     allowed_set = allowed_cofactors.split("|") if allowed_cofactors else []
     struct_name = Path(input_pdb_path).stem
@@ -58,22 +57,8 @@ def clean_structure(
             return True
 
         try:
-            cmd.reinitialize()
-            cmd.load(input_pdb_path, "target")
-
-            valid_res_list = list(STANDARD_AA) + allowed_set
-            valid_res_str = "+".join(valid_res_list)
-            to_remove_sel = f"target and not resn {valid_res_str}"
-
-            myspace: dict = {"dropped_ids": set()}
-            cmd.iterate(
-                to_remove_sel,
-                "dropped_ids.add((chain, resi))",
-                space=myspace,
-            )
-            n_dropped = len(myspace["dropped_ids"])
-
-            cmd.remove(to_remove_sel)
+            structure = st.load(Path(input_pdb_path))
+            n_dropped = st.clean(structure, allowed_set)
 
             log_message(
                 message_type="cleaning_stats",
@@ -82,7 +67,7 @@ def clean_structure(
                 allowed_cofactors=allowed_set,
             )
 
-            if cmd.count_atoms("target") == 0:
+            if st.count_atoms(structure) == 0:
                 log_message(
                     message_type="error",
                     stage="clean_structure",
@@ -91,8 +76,9 @@ def clean_structure(
                 )
                 return False
 
-            cmd.save(output_pdb_path, "target")
-            cmd.delete("target")
+            # Links come from the aligned file's CONECT records, so a kept
+            # covalent cofactor stays bonded to the protein.
+            st.save(structure, Path(output_pdb_path), st.read_links(Path(input_pdb_path)))
             return True
 
         except Exception as e:

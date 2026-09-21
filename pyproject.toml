@@ -59,11 +59,6 @@ dependencies = [
   "meeko>=0.5",
   "gdown>=4.7",
   "openbabel-wheel>=3.1",
-  # Imported at module level by the alignment and cleaning stages.
-  # Linux wheels are x86_64 only and glibc-gated (3.2.0a0 needs 2.35,
-  # 3.1.0a0 needs 2.34 and CPython 3.11). Run scripts/qpocket_doctor.py
-  # on the target machine before installing.
-  "pymol-open-source>=3.1.0a0",
 ]
 
 [project.optional-dependencies]

@@ -2,45 +2,38 @@
 
 ## Check the machine first
 
-Two dependencies ship only as platform wheels with no source build to fall back
-on, so whether Q-Pocket installs at all is decided by the machine, not by pip.
-Run the preflight **on the machine that will do the work** — on a cluster, that
-means a compute node, not the login node:
+One dependency, `apbs-binary`, ships only as platform wheels with no source build
+to fall back on, so whether Q-Pocket installs is decided by the machine, not by
+pip. Run the preflight **on the machine that will do the work** — on a cluster,
+that means a compute node, not the login node:
 
 ```bash
-git clone https://github.com/denovosciences/QPocket.git
-cd QPocket
 python3 scripts/qpocket_doctor.py
 ```
 
-It needs nothing but the standard library, so it runs before anything is
-installed, and it prints the exact install command for that machine.
+It needs nothing but the standard library and runs on any Python from 2.7 and
+3.4 up, so it can tell you when the system `python3` is too old instead of
+failing on it.
 
 ### What can install
 
-| | Python 3.10 | 3.11 | 3.12 |
-|---|---|---|---|
-| **Ubuntu 22.04+, Debian 12** (glibc ≥ 2.35) | ✓ | ✓ | ✓ |
-| **Rocky / RHEL / Alma 9** (glibc 2.34) | ✗ | ✓ | ✗ |
-| **Rocky / RHEL / CentOS 8** (glibc 2.28) | ✗ | ✗ | ✗ |
-| **Any aarch64 / ARM** | ✗ | ✗ | ✗ |
-| **macOS** (arm64, x86_64) | ✗ via pip — see below | | |
-
-This table was produced by resolving the full dependency set for each platform,
-not from the package pages. Resolving is not the same as working, which is why
-`qpocket doctor` (below) must pass on the target machine: the macOS
-`pymol-open-source` 3.2.0a0 wheel installs cleanly and then fails to import,
-because it was linked against a library path on its builder's machine. On macOS
-use a conda environment with `conda install -c conda-forge pymol-open-source`. The constraints behind it:
-
-| package | Linux wheels |
+| | Python 3.9 – 3.12 |
 |---|---|
-| `pymol-open-source` 3.2.0a0 | x86_64, glibc ≥ 2.35, CPython 3.9–3.13 |
-| `pymol-open-source` 3.1.0a0 | x86_64, glibc ≥ 2.34, **CPython 3.11 only** |
-| `apbs-binary` 3.4.1 | x86_64, glibc ≥ 2.28 — **no aarch64 build** |
+| **Ubuntu 22.04+, Debian 12** | ✓ |
+| **Rocky / RHEL / Alma 8 and 9** | ✓ |
+| **macOS** (arm64, x86_64) | ✓ |
+| **CentOS / RHEL 7** (glibc 2.17) | ✗ — no APBS wheel |
+| **Any aarch64 / ARM** | ✗ — no APBS wheel |
 
-On Rocky 9, use Python 3.11 — often `module load python/3.11` on a cluster —
-and pip will select the 3.1.0a0 PyMOL wheel on its own.
+This was produced by resolving the full dependency set for each platform. The
+one constraint behind it is `apbs-binary`: x86_64 only, glibc ≥ 2.28.
+
+Q-Pocket needs Python 3.9 or newer. The system `python3` on RHEL 7 and 8 is 3.6;
+on a cluster, `module avail python` usually offers a newer one.
+
+Structure alignment and cleaning used to need PyMOL, whose wheels require glibc
+≥ 2.34 and ruled out RHEL 8 entirely. They now use Biopython. On the 20 PARG
+structures every aligned atom lands within 0.0016 Å of where PyMOL put it.
 
 ## Install
 
@@ -78,7 +71,6 @@ its shared libraries — only running it tells you.
 
 ```
   ok     platform               Linux x86_64, glibc 2.35
-  ok     import pymol           
   ok     import apbs_binary     featurisation
   ok     pdb2pqr runs           wrote 888 bytes in 1.0s
   ok     apbs runs              wrote 468 KiB grid in 1.0s
@@ -94,14 +86,6 @@ srun -p <partition> --pty .venv/bin/qpocket doctor
 
 ## When the machine is not supported
 
-The preflight names what is missing. The usual fixes:
-
-- **PyMOL has no wheel** (Rocky 8, or Rocky 9 on a Python other than 3.11): use
-  Python 3.11 on Rocky 9; otherwise there is no pip route. PyMOL is imported
-  when the package loads, so every `qpocket` command needs it, not only the
-  alignment stage.
-- **APBS has no wheel** (glibc < 2.28, or ARM): APBS must come from a site module
-  or a separate build, on `PATH`.
-
-Either is a reason to consider a container image built on a supported base,
-which sidesteps the host's glibc entirely.
+The preflight names what is missing. For APBS on glibc < 2.28 or ARM, it has to
+come from a site module or a separate build on `PATH`, or Q-Pocket has to run in
+a container built on a supported base image.

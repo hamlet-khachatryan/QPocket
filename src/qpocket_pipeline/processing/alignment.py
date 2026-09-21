@@ -1,20 +1,24 @@
-"""Structure alignment against a reference using PyMOL and UniProt-based renumbering."""
+"""Structure alignment against a reference, and UniProt-based renumbering.
+
+Uses :mod:`qpocket_pipeline.processing.structure` (Biopython) rather than PyMOL,
+which has no pip wheel for most cluster operating systems. The superposition
+reproduces ``cmd.align``; on the 20 PARG structures every atom lands within
+0.0016 A of where PyMOL placed it.
+"""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import requests
 from Bio import Align
+from Bio.PDB.Residue import Residue
 from eliot import log_message, start_action
-from pymol import cmd
 
+from qpocket_pipeline.processing import structure as st
 from qpocket_pipeline.utils import calculate_sequence_identity, find_auxiliary_chain
-from qpocket_pipeline.global_vars import THREE_TO_ONE_MAPPING, FASTA_UNIPROT_TEMPLATE
-
-cmd.feedback("disable", "all", "everything")
-
+from qpocket_pipeline.global_vars import FASTA_UNIPROT_TEMPLATE
 
 def fetch_uniprot_sequence(uniprot_id: str) -> Optional[str]:
     """Fetches the canonical amino acid sequence for a UniProt accession.
@@ -100,7 +104,7 @@ def generate_renumbering_map(
 def process_structure(
     target_path: str | Path,
     output_dir: str | Path,
-    ref_obj_name: str,
+    reference: Sequence[Residue],
     ref_seq: str,
     uniprot_id: Optional[str] = None,
     renumber: bool = True,
@@ -109,23 +113,25 @@ def process_structure(
 
     Steps:
 
-    1. Load target CIF into PyMOL, strip waters.
-    2. Select the chain with ≥ 90 % sequence identity to the reference.
-    3. Align selected chain to *ref_obj_name* via ``cmd.align``.
+    1. Load the target, strip water.
+    2. Select the chain with >= 20 % sequence identity to the reference (the
+       highest, if several).
+    3. Superimpose that chain onto *reference*, as ``cmd.align`` did.
     4. If *renumber* and *uniprot_id* are given, remap residue numbers to
        UniProt positions.
-    5. Save the aligned (and possibly renumbered) structure as a PDB file.
+    5. Save the aligned chain, ligands included, as a PDB file.
 
     Args:
         target_path: Path to the input CIF or PDB file.
         output_dir: Directory to write the output PDB.
-        ref_obj_name: Name of the reference PyMOL object.
+        reference: Amino-acid residues of the reference chain, already in the
+            reference frame.
         ref_seq: Single-letter sequence of the reference chain.
         uniprot_id: UniProt accession used for renumbering (optional).
         renumber: Whether to apply UniProt-based renumbering.
 
     Returns:
-        ``(success, rmsd, output_file_path)`` — on failure rmsd is ``-1.0``
+        ``(success, rmsd, output_file_path)`` -- on failure rmsd is ``-1.0``
         and path is an empty string.
     """
     target_path = Path(target_path)
@@ -135,56 +141,46 @@ def process_structure(
 
     with start_action(action_type="process_structure", pdb_id=name):
         try:
-            cmd.load(str(target_path), "dynamic_full")
-            cmd.remove("dynamic_full and (solvent or resn HOH)")
+            full = st.load(target_path)
+            st.remove_water(full)
 
-            chains = cmd.get_chains("dynamic_full")
             best_chain: Optional[str] = None
             best_identity = 0.0
-
-            for chain in chains:
-                chain_seq = cmd.get_fastastr(selection=f"dynamic_full and chain {chain}")
-                chain_seq = "".join(chain_seq.split()[1:])
-                identity = calculate_sequence_identity(ref_seq, chain_seq)
+            for chain in full[0]:
+                identity = calculate_sequence_identity(ref_seq, st.chain_sequence(chain))
                 if identity >= 20.0 and identity > best_identity:
                     best_identity = identity
-                    best_chain = chain
+                    best_chain = chain.id
 
             if best_chain is None:
                 log_message(
                     message_type="skip",
                     stage="process_structure",
                     pdb_id=name,
-                    reason="no chain with >=90% sequence identity",
+                    reason="no chain with >=20% sequence identity",
                 )
-                cmd.delete("dynamic_full")
                 return False, -1.0, ""
 
-            cmd.create(name, f"dynamic_full and chain {best_chain}")
-            cmd.delete("dynamic_full")
-
-            aln_result = cmd.align(name, ref_obj_name)
-            rmsd = float(aln_result[0])
+            mobile = st.keep_chains(full, [best_chain])
+            fit = st.superpose(st.polymer_residues(mobile[0][best_chain]), reference)
+            st.apply(mobile, fit)
 
             log_message(
                 message_type="alignment_stats",
                 pdb_id=name,
                 chain=best_chain,
                 identity=best_identity,
-                rmsd=rmsd,
+                rmsd=fit.rmsd,
+                n_atoms=fit.n_atoms,
             )
 
             if renumber and uniprot_id:
                 _apply_uniprot_renumbering(
-                    obj_name=name,
-                    chain_id=best_chain,
-                    uniprot_id=uniprot_id,
-                    pdb_id=name,
+                    chain=mobile[0][best_chain], uniprot_id=uniprot_id, pdb_id=name,
                 )
 
-            cmd.save(str(output_path), name)
-            cmd.delete(name)
-            return True, rmsd, str(output_path)
+            st.save(mobile, output_path, st.read_links(target_path))
+            return True, fit.rmsd, str(output_path)
 
         except Exception as e:
             log_message(
@@ -193,15 +189,13 @@ def process_structure(
                 pdb_id=name,
                 error=str(e),
             )
-            cmd.delete(name)
-            cmd.delete("dynamic_full")
             return False, -1.0, ""
 
 
 def process_structure_interface(
     target_path: str | Path,
     output_dir: str | Path,
-    ref_obj_name: str,
+    reference: Sequence[Residue],
     ref_seq: str,
     ref_aux_seqs: Dict[str, str],
     ref_aux_centroids: Dict[str, np.ndarray],
@@ -215,49 +209,41 @@ def process_structure_interface(
     """Aligns a multi-chain interface structure to the reference.
 
     Extends :func:`process_structure` for binding pockets formed at the
-    interface between two or more chains.  The alignment strategy is:
+    interface between two or more chains:
 
     1. Load the full target structure.
-    2. Identify the primary chain by sequence identity (≥ 90 %) against
-       *ref_seq*.
-    3. Align the **entire object** using the primary chain as the anchor,
-       so all auxiliary chains are carried into the reference frame.
+    2. Identify the primary chain by sequence identity (>= 90 %) to *ref_seq*.
+    3. Fit on the primary chain and move the **whole structure**, so every
+       auxiliary chain arrives in the reference frame.
     4. For each reference auxiliary chain, find the matching target chain via
-       :func:`~qpocket_pipeline.utils.find_auxiliary_chain` (sequence filter
-       followed by Cα centroid proximity for homodimer disambiguation).
-    5. Skip the structure if *require_all_chains* is ``True`` and any
-       auxiliary chain cannot be matched.
-    6. Save a multi-chain PDB containing the primary chain and all matched
-       auxiliary chains.
-    7. Optionally renumber each chain to canonical UniProt residue positions.
+       :func:`~qpocket_pipeline.utils.find_auxiliary_chain` (sequence filter,
+       then C-alpha centroid proximity to separate homodimer copies).
+    5. Skip the structure if *require_all_chains* and any auxiliary chain is
+       unmatched.
+    6. Save the primary chain and all matched auxiliary chains.
+    7. Optionally renumber each chain to canonical UniProt positions.
 
     Args:
         target_path: Path to the input CIF or PDB file.
         output_dir: Directory to write the output PDB.
-        ref_obj_name: Name of the reference PyMOL object (primary chain only).
+        reference: Amino-acid residues of the reference primary chain.
         ref_seq: Single-letter sequence of the reference primary chain.
-        ref_aux_seqs: Mapping ``{ref_chain_id: sequence}`` for each reference
-            auxiliary chain.
-        ref_aux_centroids: Mapping ``{ref_chain_id: centroid_xyz}`` — Cα mean
-            coordinates of each reference auxiliary chain in the reference
-            coordinate frame.
+        ref_aux_seqs: ``{ref_chain_id: sequence}`` for each auxiliary chain.
+        ref_aux_centroids: ``{ref_chain_id: centroid_xyz}`` of each reference
+            auxiliary chain's C-alpha atoms, in the reference frame.
         uniprot_id: UniProt accession for the primary chain (renumbering).
-        auxiliary_uniprot_ids: Per-chain UniProt overrides keyed by reference
-            chain ID (e.g. ``{"B": "P00533"}``).  Chains absent from this
-            mapping are not renumbered.
+        auxiliary_uniprot_ids: Per-chain UniProt accessions keyed by reference
+            chain ID. Chains absent from it are not renumbered.
         renumber: Whether to apply UniProt-based renumbering.
-        min_auxiliary_identity: Minimum sequence identity fraction to accept an
-            auxiliary chain match.
-        max_auxiliary_centroid_deviation: Cα centroid deviation threshold (Å)
-            above which a match triggers a warning.
-        require_all_chains: When ``True``, return failure if any auxiliary
-            chain cannot be matched.
+        min_auxiliary_identity: Minimum identity fraction for an auxiliary match.
+        max_auxiliary_centroid_deviation: Centroid deviation (A) above which a
+            match is reported as suspicious.
+        require_all_chains: Fail the structure if any auxiliary chain is missing.
 
     Returns:
-        ``(success, rmsd, output_file_path, aux_mapping)`` where *aux_mapping*
-        maps each reference auxiliary chain ID to its matched target chain ID.
-        On failure, *rmsd* is ``-1.0``, *output_file_path* is empty, and
-        *aux_mapping* is an empty dict.
+        ``(success, rmsd, output_file_path, aux_mapping)``, where *aux_mapping*
+        maps each reference auxiliary chain to its matched target chain. On
+        failure: ``-1.0``, ``""`` and ``{}``.
     """
     target_path = Path(target_path)
     output_dir = Path(output_dir)
@@ -266,22 +252,20 @@ def process_structure_interface(
 
     with start_action(action_type="process_structure_interface", pdb_id=name):
         try:
-            cmd.load(str(target_path), name)
-            cmd.remove(f"{name} and (solvent or resn HOH)")
+            full = st.load(target_path)
+            st.remove_water(full)
+            chains = [c.id for c in full[0]]
 
-            chains = cmd.get_chains(name)
-
-            # ── Step 1: identify primary chain ────────────────────────────────
+            # -- Step 1: identify primary chain --------------------------------
             best_chain: Optional[str] = None
             best_identity = 0.0
-
-            for chain in chains:
-                raw_fasta = cmd.get_fastastr(selection=f"{name} and chain {chain}")
-                chain_seq = "".join(raw_fasta.split()[1:])
-                identity = calculate_sequence_identity(ref_seq, chain_seq)
+            for chain_id in chains:
+                identity = calculate_sequence_identity(
+                    ref_seq, st.chain_sequence(full[0][chain_id])
+                )
                 if identity >= 90.0 and identity > best_identity:
                     best_identity = identity
-                    best_chain = chain
+                    best_chain = chain_id
 
             if best_chain is None:
                 log_message(
@@ -290,34 +274,25 @@ def process_structure_interface(
                     pdb_id=name,
                     reason="no chain with >=90% sequence identity to primary reference",
                 )
-                cmd.delete(name)
                 return False, -1.0, "", {}
 
-            # ── Step 2: align entire object using primary chain as anchor ─────
-            # cmd.align transforms ALL atoms of the object that contains the
-            # mobile selection, so auxiliary chains are automatically moved
-            # into the reference coordinate frame.
-            aln_result = cmd.align(f"{name} and chain {best_chain}", ref_obj_name)
-            rmsd = float(aln_result[0])
+            # -- Step 2: fit on the primary chain, move everything --------------
+            fit = st.superpose(st.polymer_residues(full[0][best_chain]), reference)
+            st.apply(full, fit)
+            rmsd = fit.rmsd
 
-            # ── Step 3: collect per-chain sequences and Cα centroids ──────────
-            # Both are now in the reference coordinate frame.
+            # -- Step 3: per-chain sequences and C-alpha centroids --------------
             chain_sequences: Dict[str, str] = {}
             chain_ca_centroids: Dict[str, np.ndarray] = {}
+            for chain_id in chains:
+                chain = full[0][chain_id]
+                chain_sequences[chain_id] = st.chain_sequence(chain)
+                ca = st.ca_coords(chain)
+                if len(ca):
+                    chain_ca_centroids[chain_id] = ca.mean(axis=0)
 
-            for chain in chains:
-                raw_fasta = cmd.get_fastastr(selection=f"{name} and chain {chain}")
-                chain_sequences[chain] = "".join(raw_fasta.split()[1:])
-
-                ca_xyz = cmd.get_coords(
-                    f"{name} and chain {chain} and name CA", state=1
-                )
-                if ca_xyz is not None and len(ca_xyz) > 0:
-                    chain_ca_centroids[chain] = np.mean(np.array(ca_xyz), axis=0)
-
-            # ── Step 4: find each auxiliary chain in the target ───────────────
-            aux_mapping: Dict[str, str] = {}  # ref_chain_id → target_chain_id
-
+            # -- Step 4: find each auxiliary chain -----------------------------
+            aux_mapping: Dict[str, str] = {}
             for ref_chain_id, ref_aux_seq in ref_aux_seqs.items():
                 ref_aux_centroid = ref_aux_centroids.get(ref_chain_id)
                 if ref_aux_centroid is None:
@@ -350,9 +325,7 @@ def process_structure_interface(
                         min_identity=min_auxiliary_identity,
                     )
                     if require_all_chains:
-                        cmd.delete(name)
                         return False, -1.0, "", {}
-                    # require_all_chains=False: continue with the chains we have
                 else:
                     aux_mapping[ref_chain_id] = matched
                     log_message(
@@ -362,36 +335,24 @@ def process_structure_interface(
                         target_chain=matched,
                     )
 
-            # ── Step 5: build output object with primary + auxiliary chains ───
-            chains_to_keep = [best_chain] + list(aux_mapping.values())
-            chain_sel = " or ".join(f"chain {c}" for c in chains_to_keep)
-            output_obj = f"{name}_interface"
-            cmd.create(output_obj, f"{name} and ({chain_sel})")
-            cmd.delete(name)
+            # -- Step 5: primary + auxiliary chains -----------------------------
+            output = st.keep_chains(full, [best_chain] + list(aux_mapping.values()))
 
-            # ── Step 6: renumber chains to UniProt positions ──────────────────
+            # -- Step 6: renumber to UniProt positions ------------------------
             if renumber:
                 if uniprot_id:
                     _apply_uniprot_renumbering(
-                        obj_name=output_obj,
-                        chain_id=best_chain,
-                        uniprot_id=uniprot_id,
-                        pdb_id=name,
+                        chain=output[0][best_chain], uniprot_id=uniprot_id, pdb_id=name,
                     )
+                for ref_chain_id, target_chain_id in aux_mapping.items():
+                    aux_uniprot = (auxiliary_uniprot_ids or {}).get(ref_chain_id)
+                    if aux_uniprot:
+                        _apply_uniprot_renumbering(
+                            chain=output[0][target_chain_id], uniprot_id=aux_uniprot,
+                            pdb_id=name,
+                        )
 
-                if aux_mapping and auxiliary_uniprot_ids:
-                    for ref_chain_id, target_chain_id in aux_mapping.items():
-                        aux_uniprot = (auxiliary_uniprot_ids or {}).get(ref_chain_id)
-                        if aux_uniprot:
-                            _apply_uniprot_renumbering(
-                                obj_name=output_obj,
-                                chain_id=target_chain_id,
-                                uniprot_id=aux_uniprot,
-                                pdb_id=name,
-                            )
-
-            cmd.save(str(output_path), output_obj)
-            cmd.delete(output_obj)
+            st.save(output, output_path, st.read_links(target_path))
 
             log_message(
                 message_type="alignment_stats",
@@ -410,8 +371,6 @@ def process_structure_interface(
                 pdb_id=name,
                 error=str(e),
             )
-            cmd.delete(name)
-            cmd.delete(f"{name}_interface")
             return False, -1.0, "", {}
 
 
@@ -419,62 +378,44 @@ def process_structure_interface(
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _apply_uniprot_renumbering(
-    obj_name: str,
-    chain_id: str,
-    uniprot_id: str,
-    pdb_id: str,
-) -> None:
-    """Renumbers residues of *chain_id* in a PyMOL object to UniProt positions.
+def _apply_uniprot_renumbering(chain, uniprot_id: str, pdb_id: str) -> None:
+    """Renumbers a chain's residues, in place, to UniProt positions.
 
-    Fetches the canonical sequence for *uniprot_id*, aligns it against the
-    PDB sequence extracted from PyMOL, and calls ``cmd.alter`` to update each
-    residue's sequence number in-place.
+    Fetches the canonical sequence for *uniprot_id*, aligns the chain's sequence
+    against it, and moves every residue carrying a mapped number to its UniProt
+    position.
+
+    The chain sequence has one letter per amino acid. PyMOL built it from
+    "every atom named CA", which also caught calcium ions and counted a residue
+    twice when it had alternate locations -- both of which shift the sequence
+    being aligned.
 
     Args:
-        obj_name: Name of the PyMOL object to modify.
-        chain_id: Chain whose residues are to be renumbered.
+        chain: Biopython chain to renumber.
         uniprot_id: UniProt accession supplying the canonical numbering.
         pdb_id: Used for logging only.
     """
-    model: Dict = {"resis": [], "seq": []}
-    cmd.iterate(
-        f"{obj_name} and chain {chain_id} and name CA",
-        "resis.append(resi); seq.append(resn)",
-        space=model,
-    )
-
-    pdb_seq_str = "".join(
-        THREE_TO_ONE_MAPPING.get(r, "X") for r in model["seq"]
-    )
-
-    try:
-        pdb_resis = [
-            int("".join(filter(str.isdigit, r))) for r in model["resis"]
-        ]
-    except ValueError:
-        pdb_resis = []
-
-    if not pdb_resis:
+    residues = st.polymer_residues(chain)
+    if not residues:
         return
+
+    pdb_seq = "".join(st.one_letter(r) for r in residues)
+    pdb_resis = [r.id[1] for r in residues]
 
     uni_seq = fetch_uniprot_sequence(uniprot_id)
     if not uni_seq:
         return
 
-    relative_map = generate_renumbering_map(pdb_seq_str, uni_seq, pdb_start_resi=0)
-    for seq_idx, new_uni_res in relative_map.items():
-        if seq_idx < len(pdb_resis):
-            old_res_id = pdb_resis[seq_idx]
-            cmd.alter(
-                f"{obj_name} and chain {chain_id} and resi {old_res_id}",
-                f"resi='{new_uni_res}'",
-            )
-    cmd.sort(obj_name)
+    relative_map = generate_renumbering_map(pdb_seq, uni_seq, pdb_start_resi=0)
+    old_to_new = {
+        pdb_resis[idx]: new for idx, new in relative_map.items() if idx < len(pdb_resis)
+    }
+    clashes = st.renumber(chain, old_to_new)
 
     log_message(
         message_type="renumbering_applied",
         pdb_id=pdb_id,
-        chain=chain_id,
+        chain=chain.id,
         n_mapped=len(relative_map),
+        n_clashes=clashes,
     )

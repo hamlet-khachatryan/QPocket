@@ -1,9 +1,9 @@
 """
 conftest.py — session-scoped mock injection + shared fixtures.
 
-Heavy modules (pymol, apbs_binary, cavitomix) are patched into sys.modules
+Heavy modules (apbs_binary, cavitomix) are patched into sys.modules
 *before* any test imports them, so module-level side-effects
-(cmd.feedback in alignment.py, popen_apbs in features.py) never execute.
+(popen_apbs in features.py) never execute.
 """
 from __future__ import annotations
 
@@ -21,17 +21,6 @@ import pytest
 # Inject mock modules before any QPocket source is imported
 # ---------------------------------------------------------------------------
 
-def _make_pymol_mock() -> types.ModuleType:
-    pymol_mod = types.ModuleType("pymol")
-    cmd_mock = MagicMock()
-    # Make cmd.get_chains return a list so iteration works
-    cmd_mock.get_chains.return_value = ["A"]
-    cmd_mock.get_fastastr.return_value = ">header\nAACCGG"
-    cmd_mock.align.return_value = (0.5, 10, 10, 10, 1, 0.5, 10)
-    pymol_mod.cmd = cmd_mock
-    return pymol_mod
-
-
 def _make_apbs_mock() -> types.ModuleType:
     apbs_mod = types.ModuleType("apbs_binary")
     proc_mock = MagicMock()
@@ -48,7 +37,6 @@ def _make_cavitomix_mock() -> types.ModuleType:
 
 # Patch before any src imports happen
 for _name, _factory in [
-    ("pymol", _make_pymol_mock),
     ("apbs_binary", _make_apbs_mock),
     ("cavitomix", _make_cavitomix_mock),
     ("cavitomix.cavfind", lambda: MagicMock()),

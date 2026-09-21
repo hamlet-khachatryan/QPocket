@@ -25,7 +25,7 @@ PDB / fragment CSV
       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 2 – Preprocessing                                    │
-│  align_structures()     – PyMOL alignment + UniProt renum.  │
+│  align_structures()     – alignment + UniProt renumbering   │
 │  clean_structures()     – remove non-standard residues       │
 │  extract_pockets_and_interactions()                         │
 │    ├── Reference: centroid → cavity → bounding box (1 Å)   │
