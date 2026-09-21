@@ -86,3 +86,8 @@ cp changes by design (median 10% of its range on 7KG6): atoms 10-12 A away now f
 instead of counting fully. lp barely moves. Robustness, 7KG6 protein jittered by
 +-0.0005 A (PDB rounding) over 20 trials: max |cp change| 2.71 with the hard cutoff,
 0.04 with switching.
+
+## Task 17 — geodesic cache keyed on featurized.csv content and radius
+
+No change: a fresh run builds each cache once. Reruns and resubmitted SLURM tasks no
+longer reuse a cache from an older featurized.csv or a different neighbour radius.

@@ -1,4 +1,5 @@
 """Tabular files: PQR atoms and pocket point clouds."""
+import hashlib
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -86,3 +87,15 @@ def read_pqr(pqr_path: Path) -> PQRAtoms:
     coords_arr = np.array(coords, dtype=FP_DTYPE).reshape(-1, 3)
     return PQRAtoms(coords_arr, np.array(charges, dtype=FP_DTYPE), np.array(radii, dtype=FP_DTYPE),
                     names, residues, chains, seqs)
+
+
+def file_hash(path: Path) -> str:
+    """sha256 of a file's bytes.
+
+    Args:
+        path: Any file.
+
+    Returns:
+        Hex digest.
+    """
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()

@@ -84,4 +84,4 @@ def test_compute_geodesic_still_writes_the_same_cache(tmp_path):
     with np.load(compute_geodesic(tmp_path / "featurized.csv", 2.0)) as z:
         pts = pd.read_csv(tmp_path / "featurized.csv")[list("xyz")].to_numpy(float)
         assert np.array_equal(z["D_geo"], sp.geodesic_matrix(pts, 2.0))
-        assert set(z.files) == {"D_geo", "features", "weights"}
+        assert set(z.files) == {"D_geo", "features", "weights", "source_hash", "radius"}

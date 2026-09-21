@@ -7,17 +7,40 @@ import numpy as np
 from qpocket.types import Scaler
 
 
-def save_geodesic(path: Path, d_geo: np.ndarray, features: np.ndarray) -> None:
-    """Write a pocket's geodesic matrix and raw features.
+def save_geodesic(path: Path, d_geo: np.ndarray, features: np.ndarray,
+                  source_hash: str = "", radius: float = float("nan")) -> None:
+    """Write a pocket's geodesic matrix and raw features, with what they came from.
 
     Args:
         path: Target .npz file.
         d_geo: (N, N) geodesic matrix.
         features: (N, D) raw features.
+        source_hash: sha256 of the featurized.csv they were computed from.
+        radius: Neighbour radius used.
     """
     n_points = len(d_geo)
     weights = np.ones(n_points) / n_points  # kept for readers of older caches
-    np.savez_compressed(path, D_geo=d_geo, features=features, weights=weights)
+    np.savez_compressed(path, D_geo=d_geo, features=features, weights=weights,
+                        source_hash=np.array(source_hash), radius=np.array(radius))
+
+
+def is_current(path: Path, source_hash: str, radius: float) -> bool:
+    """Whether a geodesic cache was built from this input and radius.
+
+    Args:
+        path: Cache .npz.
+        source_hash: sha256 of the current featurized.csv.
+        radius: Neighbour radius wanted.
+
+    Returns:
+        False for a missing, unreadable or provenance-free cache.
+    """
+    try:
+        with np.load(path) as data:
+            return (str(data["source_hash"]) == source_hash
+                    and float(data["radius"]) == float(radius))
+    except Exception:
+        return False
 
 
 def load_geodesic(path: Path) -> Tuple[np.ndarray, np.ndarray]:

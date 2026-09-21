@@ -14,7 +14,7 @@ from qpocket.config import QPocketConfig
 from qpocket.core import clustering as cl
 from qpocket.core import spectral as sp
 from qpocket.core.spectral import pad_or_truncate  # noqa: F401  (re-exported)
-from qpocket.io import cache
+from qpocket.io import cache, tables
 from qpocket.types import Fingerprint
 
 
@@ -29,14 +29,10 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
         Path to the cached ``geospectral_cache.npz`` file, or ``None`` if the point cloud has fewer than 5 points or an error occurs.
     """
     cache_path = csv_path.with_name("geospectral_cache.npz")
-
-    if cache_path.exists():
-        try:
-            with np.load(cache_path) as _:
-                pass
-            return cache_path
-        except Exception:
-            pass
+    # Keyed on content: the Interactions pass rewrites featurized.csv after a first geodesic.
+    source_hash = tables.file_hash(csv_path) if csv_path.exists() else ""
+    if cache_path.exists() and cache.is_current(cache_path, source_hash, neighbor_radius):
+        return cache_path
 
     with start_action(
         action_type="compute_geodesic",
@@ -82,7 +78,7 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
                 )
                 return None
 
-            cache.save_geodesic(cache_path, D_geo, features)
+            cache.save_geodesic(cache_path, D_geo, features, source_hash, neighbor_radius)
 
             log_message(
                 message_type="geodesic_complete",
