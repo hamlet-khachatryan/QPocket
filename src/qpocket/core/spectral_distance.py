@@ -4,12 +4,6 @@ import json
 from typing import Dict, List, NamedTuple, Optional, Tuple, Union
 
 import numpy as np
-from scipy import linalg
-from scipy.spatial import cKDTree
-from scipy.spatial.distance import pdist, squareform
-from scipy.sparse.csgraph import shortest_path
-from scipy.sparse import csr_matrix
-from sklearn.preprocessing import StandardScaler
 from pathlib import Path
 import pandas as pd
 from eliot import log_message, start_action
@@ -17,6 +11,10 @@ from joblib import Parallel, delayed
 
 from qpocket.config import QPocketConfig
 from qpocket.core import clustering as cl
+from qpocket.core import spectral as sp
+from qpocket.core.spectral import pad_or_truncate  # noqa: F401  (re-exported)
+from qpocket.io import cache
+from qpocket.types import Fingerprint
 
 
 def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path, None]:
@@ -84,11 +82,8 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
                 )
                 return None
 
-            # Build sparse adjacency with KD-tree — O(N · k) instead of O(N²).
-            tree = cKDTree(coords)
-            pairs = tree.query_pairs(r=neighbor_radius, output_type="ndarray")
-
-            if len(pairs) == 0:
+            D_geo = sp.geodesic_matrix(coords, neighbor_radius)
+            if D_geo is None:
                 log_message(
                     message_type="warning",
                     stage="compute_geodesic",
@@ -97,38 +92,12 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
                 )
                 return None
 
-            rows_idx = pairs[:, 0]
-            cols_idx = pairs[:, 1]
-            edge_dists = np.linalg.norm(coords[rows_idx] - coords[cols_idx], axis=1)
-
-            # Symmetric sparse matrix (both directions).
-            data = np.concatenate([edge_dists, edge_dists])
-            row_indices = np.concatenate([rows_idx, cols_idx])
-            col_indices = np.concatenate([cols_idx, rows_idx])
-            graph = csr_matrix(
-                (data, (row_indices, col_indices)), shape=(n_points, n_points)
-            )
-
-            D_geo = shortest_path(csgraph=graph, directed=False, method="D")
-
-            finite_vals = D_geo[np.isfinite(D_geo)]
-            max_finite = float(np.max(finite_vals)) if len(finite_vals) > 0 else 100.0
-            D_geo[~np.isfinite(D_geo)] = max_finite * 1.5
-
-            if D_geo.max() > 0:
-                D_geo /= D_geo.max()
-
-            weights = np.ones(n_points) / n_points
-
-            np.savez_compressed(
-                cache_path, D_geo=D_geo, features=features, weights=weights
-            )
+            cache.save_geodesic(cache_path, D_geo, features)
 
             log_message(
                 message_type="geodesic_complete",
                 pocket=csv_path.parent.name,
                 n_points=n_points,
-                n_edges=len(pairs),
             )
             return cache_path
 
@@ -140,18 +109,6 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
                 error=str(e),
             )
             return None
-
-
-def pad_or_truncate(vector: np.ndarray, target_k: int) -> np.ndarray:
-    """Ensures *vector* is exactly *target_k* elements long.
-
-    Pads with zeros on the right (high-frequency components carry no energy)
-    or truncates to remove high-frequency noise.
-    """
-    curr_k = len(vector)
-    if curr_k < target_k:
-        return np.pad(vector, (0, target_k - curr_k), "constant")
-    return vector[:target_k]
 
 
 def compute_spectral_fingerprint(
@@ -178,50 +135,20 @@ def compute_spectral_fingerprint(
         ``(None, None)`` when the matrix is too small.
     """
     with start_action(action_type="compute_spectral_fingerprint", n_points=D_geo.shape[0]):
-        N = D_geo.shape[0]
-
-        # Gaussian heat kernel: W_ij = exp(-d² / σ²)
-        W = np.exp(-(D_geo ** 2) / (sigma ** 2))
-        np.fill_diagonal(W, 0)
-
-        # Normalised Laplacian: L = I - D^-0.5 W D^-0.5
-        degrees = np.sum(W, axis=1)
-        d_inv_sqrt = np.where(degrees > 1e-12, np.power(degrees, -0.5, where=degrees > 1e-12), 0.0)
-        D_mat = np.diag(d_inv_sqrt)
-        L = np.eye(N) - (D_mat @ W @ D_mat)
-
-        # Eigen-decomposition — skip trivial mode 0
-        k_req = min(global_k + 1, N - 1)
-        if k_req < 1:
-            return None, None
-
-        eigvals, eigvecs = linalg.eigh(L, subset_by_index=[0, k_req])
-
-        lam = eigvals[1:]
-        U = eigvecs[:, 1:]
-
-        # Graph Fourier Transform power spectrum (sign-invariant)
-        spec_feat = np.abs(U.T @ F) ** 2
-        lam_fixed = pad_or_truncate(lam, global_k)
-
-        curr_k = spec_feat.shape[0]
-        if curr_k < global_k:
-            spec_feat = np.pad(spec_feat, ((0, global_k - curr_k), (0, 0)), "constant")
-        else:
-            spec_feat = spec_feat[:global_k, :]
-
-        return lam_fixed, spec_feat.flatten()
+        return sp.spectral_fingerprint(D_geo, F, global_k, sigma)
 
 
 def data_processing_spectral(
     cfg: QPocketConfig,
     geo_dist_paths: List[Path],
+    scaler_out: Optional[Path] = None,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
     """Loads geodesic NPZ caches, normalises features, and computes spectral fingerprints.
 
     Args:
         cfg: QPocket configuration.
         geo_dist_paths: List of paths to ``geospectral_cache.npz`` files.
+        scaler_out: Where to save the fitted scaler, if given.
 
     Returns:
         Mapping from pocket ID to ``(eigenvalues, spectral_feature_vector)``.
@@ -236,11 +163,10 @@ def data_processing_spectral(
         for p in geo_dist_paths:
             try:
                 pid = p.parent.name if p.name == "geospectral_cache.npz" else p.stem
-                with np.load(p) as d:
-                    D, F = d["D_geo"], d["features"]
-                    if D.shape[0] <= cfg.distance.max_points:
-                        raw_data[pid] = (D, F)
-                        valid_ids.append(pid)
+                D, F = cache.load_geodesic(p)
+                if D.shape[0] <= cfg.distance.max_points:
+                    raw_data[pid] = (D, F)
+                    valid_ids.append(pid)
             except Exception as e:
                 log_message(
                     message_type="load_error",
@@ -266,23 +192,17 @@ def data_processing_spectral(
         # Global Z-score feature normalisation across all pockets.
         with start_action(action_type="normalise_features"):
             all_feats = [f for _, f in raw_data.values()]
-            stacked = np.vstack(all_feats)
-            scaler = StandardScaler()
-            scaler.fit(stacked)
+            scaler = sp.fit_scaler(all_feats)
+            if scaler_out is not None:
+                cache.save_scaler(scaler_out, scaler)
             log_message(
                 message_type="scaler_fit",
-                feature_shape=list(stacked.shape),
+                feature_shape=[sum(len(f) for f in all_feats), all_feats[0].shape[1]],
             )
 
         def _process_item(pid: str, D: np.ndarray, F: np.ndarray):
-            F_norm = np.clip(scaler.transform(F), -5, 5)
-            lam, spec_vec = compute_spectral_fingerprint(
-                D,
-                F_norm,
-                cfg.distance.global_k,
-                cfg.distance.sigma,
-            )
-            return pid, lam, spec_vec
+            fp = sp.fingerprint(D, F, scaler, cfg.distance.global_k, cfg.distance.sigma)
+            return (pid, None, None) if fp is None else (pid, fp.eigenvalues, fp.spectrum)
 
         results = Parallel(
             n_jobs=cfg.distance.parallel_jobs,
@@ -358,7 +278,7 @@ def pocket_manifest(cfg: QPocketConfig, dirs: Dict[str, Path]) -> Tuple[List[Pat
 
 def build_distance_matrices(
     cfg: QPocketConfig,
-    cache: Dict[str, Tuple[np.ndarray, np.ndarray]],
+    fingerprints: Dict[str, Tuple[np.ndarray, np.ndarray]],
     ids: List[str],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Turn spectral fingerprints into the three distance matrices.
@@ -376,7 +296,7 @@ def build_distance_matrices(
 
     Args:
         cfg: QPocket configuration.
-        cache: Pocket ID to ``(eigenvalues, spectral_feature_vector)``.
+        fingerprints: Pocket ID to ``(eigenvalues, spectral_feature_vector)``.
         ids: Pocket IDs, in the row order all three matrices will use.
 
     Returns:
@@ -385,20 +305,15 @@ def build_distance_matrices(
     shape_weight = cfg.distance.shape_weight
     chem_scale = cfg.distance.chem_scale
 
-    lam_matrix = np.array([cache[pid][0] for pid in ids], dtype=np.float64)
-    feat_matrix = np.array([cache[pid][1] for pid in ids], dtype=np.float64)
-
     with start_action(
         action_type="pairwise_distance_computation",
         matrix_size=len(ids),
         shape_weight=shape_weight,
         chem_scale=chem_scale,
     ):
-        d_shape = squareform(pdist(lam_matrix, metric="euclidean"))
-        d_chem = squareform(pdist(feat_matrix, metric="euclidean"))
-        combined = (shape_weight * d_shape + (1.0 - shape_weight) * chem_scale * d_chem).astype(np.float32)
-
-    return d_shape, d_chem, combined
+        return sp.distance_matrices(
+            [Fingerprint(*fingerprints[pid]) for pid in ids], shape_weight, chem_scale
+        )
 
 
 def _stage_params(stage) -> Dict[str, object]:
@@ -611,8 +526,10 @@ def compute_spectral_distance_matrix(
         )
 
         # ── Spectral fingerprints ─────────────────────────────────────────────
-        cache = data_processing_spectral(cfg, path_cache)
-        ids = sorted(cache.keys())
+        fingerprints = data_processing_spectral(
+            cfg, path_cache, scaler_out=dirs["metadata"] / "scaler.npz"
+        )
+        ids = sorted(fingerprints.keys())
         n_samples = len(ids)
 
         if n_samples == 0:
@@ -624,7 +541,7 @@ def compute_spectral_distance_matrix(
             return
 
         # ── Distance matrices ─────────────────────────────────────────────────
-        d_shape, d_chem, combined = build_distance_matrices(cfg, cache, ids)
+        d_shape, d_chem, combined = build_distance_matrices(cfg, fingerprints, ids)
 
         for name, matrix in (
             ("spectral_distance_matrix.csv", combined),
