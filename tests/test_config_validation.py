@@ -440,3 +440,15 @@ def test_affinity_max_iter_zero():
 def test_affinity_max_iter_positive_ok():
     cfg = make_config(distance=_single(max_iter=100))
     validate_config(cfg)
+
+
+def test_compute_defaults_and_validation():
+    cfg = make_config()
+    assert cfg.compute.workers == 0 and cfg.compute.backend == "process"
+    cfg.compute.backend = "cluster"
+    with pytest.raises(ValueError, match="compute.backend"):
+        validate_config(cfg)
+    cfg.compute.backend = "process"
+    cfg.compute.workers = -2
+    with pytest.raises(ValueError, match="compute.workers"):
+        validate_config(cfg)

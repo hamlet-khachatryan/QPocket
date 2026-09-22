@@ -246,6 +246,19 @@ def _plain(value):
 
 
 @dataclass
+class ComputeConfig:
+    """How much of this machine a local run may use.
+
+    Attributes:
+        workers: Parallel workers: 0 uses half the cores, -1 all of them, N exactly N.
+        backend: "process" (separate interpreters) or "thread" (shared memory).
+    """
+
+    workers: int = 0
+    backend: Literal["process", "thread"] = "process"
+
+
+@dataclass
 class QPocketConfig:
     """Aggregated configuration for QPocket pipeline execution."""
     mode: Literal["pdb_query", "fragment_screen"] = "pdb_query"
@@ -257,6 +270,7 @@ class QPocketConfig:
     cleaning: CleanParams = field(default_factory=CleanParams)
     io: IOConfig = field(default_factory=IOConfig)
     distance: DistanceConfig = field(default_factory=DistanceConfig)
+    compute: ComputeConfig = field(default_factory=ComputeConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
 
     def __str__(self) -> str:
@@ -689,6 +703,17 @@ def validate_config(cfg: "QPocketConfig") -> None:
                     f"{prefix}.threshold must be > 0 with method 'hierarchical' when "
                     f"criterion is 'threshold', got method {stage.method!r}, threshold {threshold!r}"
                 )
+
+    # --- ComputeConfig ---
+    if cfg.compute.workers < -1:
+        raise ValueError(
+            f"compute.workers must be >= -1 (0 = half the cores, -1 = all), "
+            f"got: {cfg.compute.workers}"
+        )
+    if cfg.compute.backend not in ("process", "thread"):
+        raise ValueError(
+            f"compute.backend must be 'process' or 'thread', got: {cfg.compute.backend!r}"
+        )
 
     # --- SlurmConfig ---
     sl = cfg.slurm

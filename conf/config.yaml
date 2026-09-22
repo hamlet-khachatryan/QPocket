@@ -55,6 +55,13 @@ io:
   save_intermediate: false    # Save intermediate pocket point clouds (binding_site_initial.csv)
   compression: "gzip"         # HDF5 compression: "gzip" or "none"
 
+compute:
+  # Local parallelism. Every per-structure step (align, clean, identify,
+  # featurise, geodesic, fingerprint) runs on this many workers; collect and the
+  # distance matrices stay serial.
+  workers: 0                      # 0 = half the cores, -1 = all, N = exactly N
+  backend: "process"              # "process" (separate interpreters) or "thread"
+
 distance:
   # --- pocket fingerprint ---------------------------------------------------
   geo_graph_neighbor_radius: 2.0  # geodesic graph neighbourhood (Angstroms)

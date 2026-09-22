@@ -136,6 +136,24 @@ io:
 
 ---
 
+## `compute`
+
+How much of the machine a local run uses.
+
+```yaml
+compute:
+  workers: 0              # 0 = half the cores, -1 = all, N = exactly N
+  backend: "process"      # "process" (separate interpreters) or "thread"
+```
+
+| key | meaning |
+|---|---|
+| `workers` | Parallel workers for per-structure work. `0` (the default) uses half the cores, `-1` all of them, `N` exactly `N`. `1` runs everything serially. |
+| `backend` | `process` runs workers in separate interpreters, which is what you want for featurisation; `thread` shares memory and suits work that waits on external tools. |
+
+Peak memory scales with `workers`, because each one can run APBS. See
+[Performance](user-guide/performance.md).
+
 ## `distance`
 
 Turns each pocket into a fingerprint, compares them, and groups the result.

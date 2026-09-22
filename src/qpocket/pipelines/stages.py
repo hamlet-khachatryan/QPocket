@@ -16,6 +16,7 @@ from hydra.core.global_hydra import GlobalHydra
 from omegaconf import OmegaConf
 
 from qpocket.config import (
+    ComputeConfig,
     QPocketConfig,
     SlurmConfig,
     fill_defaults,
@@ -119,6 +120,7 @@ def load_qpocket_config(
         # `slurm` is only read by the `qpocket slurm` commands. Falling back to
         # the dataclass default keeps a hand-written config that predates the
         # block loadable.
+        compute=cfg.get("compute", ComputeConfig()),
         slurm=cfg.get("slurm", SlurmConfig()),
     )
 
