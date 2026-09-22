@@ -44,3 +44,30 @@ def test_every_structure_is_processed_once(tmp_path, monkeypatch, workers):
     Cfg.compute.backend = "thread"   # a fake defined in a test module is not picklable
     stages.featurize_structures(Cfg(), {"root": tmp_path}, df, context=None)
     assert sorted(p.stem for p in seen.iterdir()) == [f"P{i}" for i in range(5)]
+
+
+def test_alignment_context_is_picklable():
+    """Workers reload the reference from disk; Biopython entities never cross a process."""
+    import pickle
+
+    from qpocket.pipelines.stages import AlignmentContext
+
+    ctx = AlignmentContext(reference_path="a.pdb", reference_chain="A", reference_sequence="ACD",
+                           uniprot_id=None, aux_sequences={}, aux_centroids={}, aux_uniprots={},
+                           renumber=False, interface_mode=False)
+    assert pickle.loads(pickle.dumps(ctx)) == ctx
+
+
+def test_reference_residues_are_loaded_once_per_process(tmp_path):
+    from qpocket.pipelines import stages
+
+    stages.reference_residues.cache_clear()
+    pdb = tmp_path / "ref.pdb"
+    pdb.write_text(
+        "ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00  0.00           N\n"
+        "ATOM      2  CA  ALA A   1       1.458   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C   ALA A   1       2.009   1.420   0.000  1.00  0.00           C\n",
+        encoding="utf-8")
+    first = stages.reference_residues(str(pdb), "A")
+    assert stages.reference_residues(str(pdb), "A") is first
+    assert stages.reference_residues.cache_info().hits == 1

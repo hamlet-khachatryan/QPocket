@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
@@ -327,195 +328,284 @@ def fetch_structures(cfg: QPocketConfig, output_dir: Union[str, Path]) -> List[s
     return download_structures(cfg, dirs)
 
 
+class AlignmentContext(NamedTuple):
+    """What a worker needs to align one structure onto the reference.
+
+    Attributes:
+        reference_path: Aligned reference PDB; workers reload it themselves.
+        reference_chain: Chain every target is fitted onto.
+        reference_sequence: That chain's sequence.
+        uniprot_id: Accession used for renumbering, or None.
+        aux_sequences: Auxiliary chain sequences, interface mode only.
+        aux_centroids: Auxiliary chain CA centroids, interface mode only.
+        aux_uniprots: Auxiliary chain accessions, interface mode only.
+        renumber: Whether to renumber onto UniProt positions.
+        interface_mode: Whether auxiliary chains are matched too.
+    """
+
+    reference_path: str
+    reference_chain: str
+    reference_sequence: str
+    uniprot_id: Optional[str]
+    aux_sequences: Dict[str, str]
+    aux_centroids: Dict[str, Tuple[float, float, float]]
+    aux_uniprots: Dict[str, str]
+    renumber: bool
+    interface_mode: bool
+
+
+@lru_cache(maxsize=4)
+def reference_residues(path: str, chain: str):
+    """Amino-acid residues of the aligned reference chain, cached per process.
+
+    Args:
+        path: Aligned reference PDB.
+        chain: Chain to fit onto.
+
+    Returns:
+        Residues in order.
+    """
+    # Read back from the saved file, as PyMOL did, so targets are fitted to
+    # exactly the coordinates on disk.
+    return st.polymer_residues(
+        st.keep_chains(sio.load(Path(path)), [chain], protein_only=True)[0][chain]
+    )
+
+
+def alignment_context(cfg: QPocketConfig, dirs: Dict[str, Path]) -> Tuple[AlignmentContext, Dict]:
+    """Prepare the reference and everything a target needs to be aligned to it.
+
+    Args:
+        cfg: QPocket configuration.
+        dirs: Run directories.
+
+    Returns:
+        (context, the reference's own master row).
+
+    Raises:
+        FileNotFoundError: If the reference structure is missing.
+        ValueError: If the reference chain is not in it.
+    """
+    interface_mode = bool(cfg.reference.auxiliary_chain_ids)
+    ref_id = reference_id(cfg, dirs)
+
+    # A PDB query always downloads CIF; fragment screening copies whatever
+    # the user had, so search the accepted suffixes rather than assuming one.
+    candidates = [dirs["original"] / f"{ref_id}.cif"]
+    if cfg.mode == "fragment_screen":
+        candidates = [dirs["original"] / f"{ref_id}{sfx}" for sfx in STRUCTURE_SUFFIXES]
+
+    reference_path = next((c for c in candidates if c.exists()), None)
+    if reference_path is None:
+        log_message(
+            message_type="error",
+            stage="align_structures",
+            error="reference structure not found",
+            reference_id=ref_id,
+            searched=[str(c) for c in candidates],
+        )
+        raise FileNotFoundError(
+            f"Reference structure for {ref_id!r} not found in {dirs['original']}"
+        )
+
+    # ── Load reference; extract primary chain sequence ────────────────────
+    ref_structure, _ = st.without_water(sio.load(reference_path))
+    ref_model = ref_structure[0]
+    if cfg.reference.chain_id not in ref_model:
+        raise ValueError(
+            f"reference chain {cfg.reference.chain_id!r} not found in {reference_path.name}; "
+            f"it has {[c.id for c in ref_model]}"
+        )
+    ref_chain_seq = st.chain_sequence(ref_model[cfg.reference.chain_id])
+
+    # ── Collect auxiliary chain data from the reference structure ─────────
+    ref_aux_seqs: Dict[str, str] = {}
+    ref_aux_centroids: Dict[str, np.ndarray] = {}
+
+    if interface_mode:
+        for aux_chain in cfg.reference.auxiliary_chain_ids:
+            if aux_chain not in ref_model:
+                log_message(
+                    message_type="warning",
+                    stage="align_structures",
+                    warning=f"reference auxiliary chain {aux_chain!r} not in structure",
+                )
+                continue
+            ref_aux_seqs[aux_chain] = st.chain_sequence(ref_model[aux_chain])
+            ca_xyz = st.ca_coords(ref_model[aux_chain])
+            if len(ca_xyz):
+                ref_aux_centroids[aux_chain] = ca_xyz.mean(axis=0)
+            else:
+                log_message(
+                    message_type="warning",
+                    stage="align_structures",
+                    warning=f"no Cα atoms found for reference auxiliary chain {aux_chain!r}",
+                )
+
+    # ── Save aligned reference (primary + auxiliary if interface mode) ─────
+    keep = [cfg.reference.chain_id]
+    if interface_mode:
+        keep += list(cfg.reference.auxiliary_chain_ids)
+
+    aligned_reference_path = dirs["aligned"] / f"{ref_id}_aligned.pdb"
+    sio.save(st.keep_chains(ref_structure, keep), aligned_reference_path,
+             sio.read_links(reference_path))
+
+    log_message(
+        message_type="reference_processed",
+        pdb_id=ref_id,
+        seq_length=len(ref_chain_seq),
+        interface_mode=interface_mode,
+        aux_chains=list(ref_aux_seqs.keys()) if interface_mode else [],
+    )
+
+    # ── Resolve UniProt IDs ───────────────────────────────────────────────
+    # Renumbering needs a UniProt accession resolved from a real PDB entry.
+    # In fragment-screen mode there is none, and the lookup is two HTTP round
+    # trips that return None and then silently no-op.
+    renumber = should_renumber(cfg)
+    uniprot_id = cfg.alignment.manual_uniprot_id
+    if uniprot_id is None and renumber:
+        uniprot_id = pdb_query.get_uniprot_accession(
+            cfg.reference.pdb_id, cfg.reference.chain_id
+        )
+
+    resolved_aux_uniprots: Dict[str, str] = {}
+    if interface_mode:
+        manual_aux = dict(cfg.alignment.auxiliary_uniprot_ids or {})
+        for aux_chain in cfg.reference.auxiliary_chain_ids:
+            if aux_chain in manual_aux:
+                resolved_aux_uniprots[aux_chain] = manual_aux[aux_chain]
+            else:
+                uid = (
+                    pdb_query.get_uniprot_accession(cfg.reference.pdb_id, aux_chain)
+                    if renumber
+                    else None
+                )
+                if uid:
+                    resolved_aux_uniprots[aux_chain] = uid
+
+
+    row: Dict = {
+        "pdb_id": ref_id,
+        "rmsd_to_ref": 0.0,
+        "aligned_file": str(aligned_reference_path),
+    }
+    if interface_mode:
+        row["aux_chain_mapping"] = str({c: c for c in cfg.reference.auxiliary_chain_ids})
+
+    context = AlignmentContext(
+        reference_path=str(aligned_reference_path),
+        reference_chain=cfg.reference.chain_id,
+        reference_sequence=ref_chain_seq,
+        uniprot_id=uniprot_id,
+        aux_sequences=dict(ref_aux_seqs),
+        aux_centroids={k: tuple(float(x) for x in v) for k, v in ref_aux_centroids.items()},
+        aux_uniprots=dict(resolved_aux_uniprots),
+        renumber=renumber,
+        interface_mode=interface_mode,
+    )
+    return context, row
+
+
+def align_one(cfg: QPocketConfig, context: AlignmentContext, pid_path: Path,
+              output_dir: Path) -> Dict:
+    """Align one structure onto the reference.
+
+    Args:
+        cfg: QPocket configuration.
+        context: Reference paths and sequences.
+        pid_path: Structure to align.
+        output_dir: Where the aligned PDB goes.
+
+    Returns:
+        Its master.csv row; aligned_file is absent when alignment failed.
+    """
+    pid = pid_path.stem
+    reference = reference_residues(context.reference_path, context.reference_chain)
+    row: Dict = {"pdb_id": pid}
+    if context.interface_mode:
+        success, rmsd, aligned_file, aux_mapping = (
+            alignment.process_structure_interface(
+                target_path=pid_path,
+                output_dir=output_dir,
+                reference=reference,
+                ref_seq=context.reference_sequence,
+                ref_aux_seqs=context.aux_sequences,
+                ref_aux_centroids=context.aux_centroids,
+                uniprot_id=context.uniprot_id,
+                auxiliary_uniprot_ids=context.aux_uniprots,
+                renumber=context.renumber,
+                min_auxiliary_identity=cfg.alignment.min_auxiliary_identity,
+                max_auxiliary_centroid_deviation=(
+                    cfg.alignment.max_auxiliary_centroid_deviation
+                ),
+                require_all_chains=cfg.alignment.require_all_chains,
+            )
+        )
+    else:
+        success, rmsd, aligned_file = alignment.process_structure(
+            target_path=pid_path,
+            output_dir=output_dir,
+            reference=reference,
+            ref_seq=context.reference_sequence,
+            uniprot_id=context.uniprot_id,
+            renumber=context.renumber,
+        )
+        aux_mapping = {}
+
+    if success:
+        row = {
+            "pdb_id": pid,
+            "rmsd_to_ref": rmsd,
+            "aligned_file": aligned_file,
+        }
+        if context.interface_mode:
+            row["aux_chain_mapping"] = str(aux_mapping)
+        log_message(
+            message_type="alignment_ok",
+            pdb_id=pid,
+            rmsd=rmsd,
+        )
+    else:
+        log_message(
+            message_type="alignment_failed",
+            pdb_id=pid,
+        )
+    return row
+
+
 def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
-    """Aligns all downloaded structures to the reference using PyMOL.
+    """Align every downloaded structure onto the reference, on compute.workers workers.
 
     Args:
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
     """
     interface_mode = bool(cfg.reference.auxiliary_chain_ids)
-
     with start_action(action_type="align_structures", interface_mode=interface_mode):
-
-        ref_id = reference_id(cfg, dirs)
-
-        # A PDB query always downloads CIF; fragment screening copies whatever
-        # the user had, so search the accepted suffixes rather than assuming one.
-        candidates = [dirs["original"] / f"{ref_id}.cif"]
-        if cfg.mode == "fragment_screen":
-            candidates = [dirs["original"] / f"{ref_id}{sfx}" for sfx in STRUCTURE_SUFFIXES]
-
-        reference_path = next((c for c in candidates if c.exists()), None)
-        if reference_path is None:
-            log_message(
-                message_type="error",
-                stage="align_structures",
-                error="reference structure not found",
-                reference_id=ref_id,
-                searched=[str(c) for c in candidates],
-            )
-            raise FileNotFoundError(
-                f"Reference structure for {ref_id!r} not found in {dirs['original']}"
-            )
-
-        # ── Load reference; extract primary chain sequence ────────────────────
-        ref_structure, _ = st.without_water(sio.load(reference_path))
-        ref_model = ref_structure[0]
-        if cfg.reference.chain_id not in ref_model:
-            raise ValueError(
-                f"reference chain {cfg.reference.chain_id!r} not found in {reference_path.name}; "
-                f"it has {[c.id for c in ref_model]}"
-            )
-        ref_chain_seq = st.chain_sequence(ref_model[cfg.reference.chain_id])
-
-        # ── Collect auxiliary chain data from the reference structure ─────────
-        ref_aux_seqs: Dict[str, str] = {}
-        ref_aux_centroids: Dict[str, np.ndarray] = {}
-
-        if interface_mode:
-            for aux_chain in cfg.reference.auxiliary_chain_ids:
-                if aux_chain not in ref_model:
-                    log_message(
-                        message_type="warning",
-                        stage="align_structures",
-                        warning=f"reference auxiliary chain {aux_chain!r} not in structure",
-                    )
-                    continue
-                ref_aux_seqs[aux_chain] = st.chain_sequence(ref_model[aux_chain])
-                ca_xyz = st.ca_coords(ref_model[aux_chain])
-                if len(ca_xyz):
-                    ref_aux_centroids[aux_chain] = ca_xyz.mean(axis=0)
-                else:
-                    log_message(
-                        message_type="warning",
-                        stage="align_structures",
-                        warning=f"no Cα atoms found for reference auxiliary chain {aux_chain!r}",
-                    )
-
-        # ── Save aligned reference (primary + auxiliary if interface mode) ─────
-        keep = [cfg.reference.chain_id]
-        if interface_mode:
-            keep += list(cfg.reference.auxiliary_chain_ids)
-
-        aligned_reference_path = dirs["aligned"] / f"{ref_id}_aligned.pdb"
-        sio.save(st.keep_chains(ref_structure, keep), aligned_reference_path,
-                 sio.read_links(reference_path))
-
-        log_message(
-            message_type="reference_processed",
-            pdb_id=ref_id,
-            seq_length=len(ref_chain_seq),
-            interface_mode=interface_mode,
-            aux_chains=list(ref_aux_seqs.keys()) if interface_mode else [],
-        )
-
-        # ── Resolve UniProt IDs ───────────────────────────────────────────────
-        # Renumbering needs a UniProt accession resolved from a real PDB entry.
-        # In fragment-screen mode there is none, and the lookup is two HTTP round
-        # trips that return None and then silently no-op.
-        renumber = should_renumber(cfg)
-        uniprot_id = cfg.alignment.manual_uniprot_id
-        if uniprot_id is None and renumber:
-            uniprot_id = pdb_query.get_uniprot_accession(
-                cfg.reference.pdb_id, cfg.reference.chain_id
-            )
-
-        resolved_aux_uniprots: Dict[str, str] = {}
-        if interface_mode:
-            manual_aux = dict(cfg.alignment.auxiliary_uniprot_ids or {})
-            for aux_chain in cfg.reference.auxiliary_chain_ids:
-                if aux_chain in manual_aux:
-                    resolved_aux_uniprots[aux_chain] = manual_aux[aux_chain]
-                else:
-                    uid = (
-                        pdb_query.get_uniprot_accession(cfg.reference.pdb_id, aux_chain)
-                        if renumber
-                        else None
-                    )
-                    if uid:
-                        resolved_aux_uniprots[aux_chain] = uid
-
-        # ── Reference residues every target is fitted onto ─────────────────────
-        # Read back from the saved file, as PyMOL did, so targets are fitted to
-        # exactly the coordinates on disk.
-        reference_residues = st.polymer_residues(
-            st.keep_chains(
-                sio.load(aligned_reference_path), [cfg.reference.chain_id], protein_only=True
-            )[0][cfg.reference.chain_id]
-        )
-
-        # ── Align all targets ─────────────────────────────────────────────────
-        rmsd_data = []
+        context, reference_row = alignment_context(cfg, dirs)
         targets = sorted(
             path
             for suffix in STRUCTURE_SUFFIXES
             for path in dirs["original"].glob(f"*{suffix}")
         )
-        for pid_path in targets:
-            pid = pid_path.stem
-            if pid == ref_id:
-                row: Dict = {
-                    "pdb_id": pid,
-                    "rmsd_to_ref": 0.0,
-                    "aligned_file": str(aligned_reference_path),
-                }
-                if interface_mode:
-                    row["aux_chain_mapping"] = str(
-                        {c: c for c in cfg.reference.auxiliary_chain_ids}
-                    )
-                rmsd_data.append(row)
-                continue
-
-            if interface_mode:
-                success, rmsd, aligned_file, aux_mapping = (
-                    alignment.process_structure_interface(
-                        target_path=pid_path,
-                        output_dir=dirs["aligned"],
-                        reference=reference_residues,
-                        ref_seq=ref_chain_seq,
-                        ref_aux_seqs=ref_aux_seqs,
-                        ref_aux_centroids=ref_aux_centroids,
-                        uniprot_id=uniprot_id,
-                        auxiliary_uniprot_ids=resolved_aux_uniprots,
-                        renumber=renumber,
-                        min_auxiliary_identity=cfg.alignment.min_auxiliary_identity,
-                        max_auxiliary_centroid_deviation=(
-                            cfg.alignment.max_auxiliary_centroid_deviation
-                        ),
-                        require_all_chains=cfg.alignment.require_all_chains,
-                    )
-                )
-            else:
-                success, rmsd, aligned_file = alignment.process_structure(
-                    target_path=pid_path,
-                    output_dir=dirs["aligned"],
-                    reference=reference_residues,
-                    ref_seq=ref_chain_seq,
-                    uniprot_id=uniprot_id,
-                    renumber=renumber,
-                )
-                aux_mapping = {}
-
-            if success:
-                row = {
-                    "pdb_id": pid,
-                    "rmsd_to_ref": rmsd,
-                    "aligned_file": aligned_file,
-                }
-                if interface_mode:
-                    row["aux_chain_mapping"] = str(aux_mapping)
-                rmsd_data.append(row)
-                log_message(
-                    message_type="alignment_ok",
-                    pdb_id=pid,
-                    rmsd=rmsd,
-                )
-            else:
-                log_message(
-                    message_type="alignment_failed",
-                    pdb_id=pid,
-                )
+        others = [p for p in targets if p.stem != reference_row["pdb_id"]]
+        rows = parallel.run_map(
+            lambda path: align_one(cfg, context, path, dirs["aligned"]),
+            others,
+            workers=cfg.compute.workers,
+            backend=cfg.compute.backend,
+            stage="align",
+            log_dir=Path(dirs["root"]) / parallel.WORKER_LOG_DIR,
+            label=lambda path: path.stem,
+        )
+        # Rows follow the sorted input order, reference included: master.csv order
+        # decides HDF5 insertion order and the frequency tables' tie-breaks.
+        by_id = {path.stem: row for path, row in zip(others, rows)}
+        by_id[reference_row["pdb_id"]] = reference_row
+        rmsd_data = [by_id[p.stem] for p in targets
+                     if p.stem in by_id and by_id[p.stem].get("aligned_file")]
 
         if rmsd_data:
             df = pd.DataFrame(rmsd_data)
@@ -528,6 +618,40 @@ def align_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
             )
 
         log_message(message_type="stage_complete", stage="align_structures")
+
+
+def clean_one(cfg: QPocketConfig, dirs: Dict[str, Path], row) -> Optional[str]:
+    """Clean one aligned structure.
+
+    Args:
+        cfg: QPocket configuration.
+        dirs: Run directories.
+        row: Its master.csv row.
+
+    Returns:
+        The cleaned file path, or None when cleaning failed or there was nothing to clean.
+    """
+    aligned_filename = row["aligned_file"]
+    if pd.isna(aligned_filename):
+        return None
+
+    clean_filename = Path(aligned_filename).stem.replace("_aligned", "_clean") + ".pdb"
+    output_path = dirs["cleaned"] / clean_filename
+
+    success = cleaning.clean_structure(
+        input_pdb_path=aligned_filename,
+        output_pdb_path=str(output_path),
+        allowed_cofactors=cfg.cleaning.allowed_cofactors,
+    )
+    if success:
+        log_message(
+            message_type="cleaning_ok",
+            pdb_id=row.get("pdb_id", "unknown"),
+            output=str(output_path),
+        )
+        return str(output_path)
+    log_message(message_type="cleaning_failed", pdb_id=row.get("pdb_id", "unknown"))
+    return None
 
 
 def clean_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
@@ -555,42 +679,20 @@ def clean_structures(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
         if "aligned_file" not in df.columns:
             raise FileNotFoundError("master.csv is missing 'aligned_file' column.")
 
-        cleaned_files = []
         log_message(
             message_type="cleaning_start",
             n_structures=len(df),
         )
 
-        for _, row in df.iterrows():
-            aligned_filename = row["aligned_file"]
-            if pd.isna(aligned_filename):
-                cleaned_files.append(None)
-                continue
-
-            clean_filename = (
-                Path(aligned_filename).stem.replace("_aligned", "_clean") + ".pdb"
-            )
-            output_path = dirs["cleaned"] / clean_filename
-
-            success = cleaning.clean_structure(
-                input_pdb_path=aligned_filename,
-                output_pdb_path=str(output_path),
-                allowed_cofactors=cfg.cleaning.allowed_cofactors,
-            )
-
-            if success:
-                cleaned_files.append(str(output_path))
-                log_message(
-                    message_type="cleaning_ok",
-                    pdb_id=row.get("pdb_id", "unknown"),
-                    output=str(output_path),
-                )
-            else:
-                cleaned_files.append(None)
-                log_message(
-                    message_type="cleaning_failed",
-                    pdb_id=row.get("pdb_id", "unknown"),
-                )
+        cleaned_files = parallel.run_map(
+            lambda row: clean_one(cfg, dirs, row),
+            [row for _, row in df.iterrows()],
+            workers=cfg.compute.workers,
+            backend=cfg.compute.backend,
+            stage="clean",
+            log_dir=Path(dirs["root"]) / parallel.WORKER_LOG_DIR,
+            label=lambda row: str(row.get("pdb_id", "unknown")),
+        )
 
         df["cleaned_file"] = cleaned_files
         df.to_csv(str(master_csv), index=False)
