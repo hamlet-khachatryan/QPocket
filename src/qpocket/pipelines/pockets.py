@@ -388,11 +388,6 @@ def extract_pocket_from_structure(
         with open(lig_out, "w", encoding="utf-8") as f:
             f.write(block)
 
-        smi = get_smiles_from_pdb_block(block)
-        if smi:
-            with open(dirs["screening"] / "actives.smi", "a", encoding="utf-8") as f:
-                f.write(f"{smi}\t{pdb_id}\t{res_name}\n")
-
         log_message(
             message_type="ligand_extracted",
             pdb_id=pdb_id,

@@ -25,7 +25,7 @@ from qpocket.config import (
 )
 from qpocket.io import hdf5, workspace
 from qpocket.io import logging as qlog
-from qpocket.pipelines import collect
+from qpocket.pipelines import collect, parallel
 from qpocket.pipelines.distance import compute_spectral_distance_matrix  # noqa: F401 (a stage)
 from qpocket.io import rcsb as pdb_query
 from qpocket.io import structures as sio
@@ -938,6 +938,27 @@ def process_one_structure(
         return result
 
 
+def featurize_structures(cfg: QPocketConfig, dirs: Dict[str, Path], df, context) -> None:
+    """Identify and featurise every structure's pocket, on compute.workers workers.
+
+    Args:
+        cfg: QPocket configuration.
+        dirs: Run directories.
+        df: master.csv rows.
+        context: Reference pocket context.
+    """
+    rows = [row for _, row in df.iterrows()]
+    parallel.run_map(
+        lambda row: process_one_structure(cfg, dirs, row, context),
+        rows,
+        workers=cfg.compute.workers,
+        backend=cfg.compute.backend,
+        stage="featurize",
+        log_dir=Path(dirs["root"]) / parallel.WORKER_LOG_DIR,
+        label=lambda row: str(row["pdb_id"]),
+    )
+
+
 def collect_structure_results(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
     """Merge the per-structure sidecars into the run-wide tables.
 
@@ -1056,9 +1077,7 @@ def extract_pockets_and_interactions(
 
         log_message(message_type="extraction_start", n_structures=len(df))
 
-        for _, row in df.iterrows():
-            process_one_structure(cfg, dirs, row, context)
-
+        featurize_structures(cfg, dirs, df, context)
         collect_structure_results(cfg, dirs)
 
         log_message(
