@@ -51,16 +51,54 @@ def test_local_submission_is_a_command_not_a_bash_parser(tmp_path):
     assert plan.scripts[0].name == "run_docking.sh" and plan.command in plan.scripts[0].read_text()
 
 
-@pytest.mark.parametrize("submit,suffix", [("slurm", ".sbatch"), ("local", ".sh")])
-def test_prepare_writes_task_list_and_the_chosen_submission(tmp_path, monkeypatch, submit, suffix):
+def _fake_inputs(monkeypatch):
     from qpocket.io import screening as io_screen
     from qpocket.pipelines import screening_prep
 
     monkeypatch.setattr(io_screen, "extract_vina_box", lambda params, dirs: None)
     monkeypatch.setattr(screening_prep, "prepare_all_proteins", lambda *a, **k: ["P1", "P2"])
-    monkeypatch.setattr(screening_prep, "prepare_all_ligands", lambda *a, **k: {"actives": ["L1"], "decoys": []})
+    monkeypatch.setattr(screening_prep, "prepare_all_ligands",
+                        lambda *a, **k: {"actives": ["L1"], "decoys": []})
+
+
+def test_prepare_writes_only_the_task_list_by_default(tmp_path, monkeypatch):
+    _fake_inputs(monkeypatch)
+    plan = screening.prepare(tmp_path)
+    assert len(pd.read_csv(plan.jobs_csv)) == 2 and plan.scripts == []
+    assert plan.command.startswith("qpocket screen run-local")
+    assert not list((tmp_path / "screening").glob("run_docking*"))
+
+
+@pytest.mark.parametrize("submit,suffix", [("slurm", ".sbatch"), ("local", ".sh")])
+def test_scripts_are_written_on_request(tmp_path, monkeypatch, submit, suffix):
+    _fake_inputs(monkeypatch)
     plan = screening.prepare(tmp_path, submit=submit)
-    assert len(pd.read_csv(plan.jobs_csv)) == 2 and plan.scripts[0].suffix == suffix
+    assert plan.scripts and plan.scripts[0].suffix == suffix
+
+
+def test_run_local_defaults_to_half_the_cores(tmp_path, monkeypatch):
+    import os
+
+    jobs = _jobs(tmp_path)
+    jobs.to_csv(tmp_path / "docking_jobs.csv", index=False)
+    sizes = []
+
+    class Pool:
+        def __init__(self, max_workers):
+            sizes.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def map(self, fn, items):
+            return [0 for _ in items]
+
+    monkeypatch.setattr(screening, "ThreadPoolExecutor", Pool)
+    assert screening.run_local(tmp_path / "docking_jobs.csv", engine="vina") == 0
+    assert sizes == [max(1, (os.cpu_count() or 2) // 2)]
 
 
 def test_run_local_runs_every_row_without_a_shell(tmp_path, monkeypatch):

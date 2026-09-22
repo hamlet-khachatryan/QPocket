@@ -33,7 +33,7 @@ def screen_cli() -> None:
 @click.option("--cpus", default=None, type=int, help="CPUs per docking job.")
 @click.option("--use-slurm", is_flag=True, default=False, help="Same as --submit slurm.")
 @click.option("--submit", type=click.Choice(["slurm", "local"]), default=None,
-              help="Write SLURM array scripts or a local run command (default: slurm.enabled).")
+              help="Also write submission scripts; by default only the task list is written.")
 @click.option("--slurm-partition", default=None, help="SLURM partition name.")
 @click.option("--slurm-time", default=None, help="SLURM time limit (e.g. 02:00:00).")
 @click.option("--box-mode", default=None, type=click.Choice(["ligand_based", "cavity_based"]))
@@ -80,10 +80,15 @@ def prepare(
 
     # Known issue (spec §6): these defaults always override the config file.
     plan = prepare_campaign(workdir, config_path, submit=submit or ("slurm" if use_slurm else None), **overrides)
-    click.echo(f"\nTask list: {plan.jobs_csv}")
+    import pandas as pd
+
+    click.echo(f"\nTask list: {plan.jobs_csv}  ({len(pd.read_csv(plan.jobs_csv))} jobs)")
     for script in plan.scripts:
         click.echo(f"Script:    {script}")
-    click.echo(f"\nNext:\n  {plan.command.replace(chr(10), chr(10) + '  ')}")
+    click.echo(f"\nRun it:\n  {plan.command.replace(chr(10), chr(10) + '  ')}")
+    if not plan.scripts:
+        click.echo("\nSubmission scripts (only if you want them):\n"
+                   f"  qpocket screen prepare --workdir {workdir} --submit slurm")
 
 
 @screen_cli.command("analyze")
@@ -141,7 +146,8 @@ def run_task(jobs_csv: str, index: int, cpus: int, engine: str | None) -> None:
 
 @screen_cli.command("run-local")
 @click.argument("jobs_csv", type=click.Path(exists=True))
-@click.option("--workers", type=int, default=1, show_default=True, help="Jobs run at once.")
+@click.option("--workers", type=int, default=0, show_default=True,
+              help="Jobs run at once; 0 uses half the cores.")
 @click.option("--cpus", type=int, default=1, show_default=True, help="Threads per job.")
 @click.option("--engine", default=None, help="Docking executable (default: config engine_path).")
 def run_local(jobs_csv: str, workers: int, cpus: int, engine: str | None) -> None:

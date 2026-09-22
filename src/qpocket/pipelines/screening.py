@@ -11,6 +11,7 @@ from eliot import log_message, start_action
 
 from qpocket.core import screening as scr
 from qpocket.io import screening as sio_screen
+from qpocket.pipelines.parallel import resolve_workers
 from qpocket.pipelines.slurm import chunk_bounds
 from qpocket.screen_config import ScreenConfig, load_screen_config, validate_screen_config
 
@@ -31,19 +32,22 @@ class ScreeningPlan(NamedTuple):
     command: str
 
 
-def write_submission(jobs_csv: Path, n_jobs: int, cfg: ScreenConfig, submit: Submit) -> ScreeningPlan:
+def write_submission(jobs_csv: Path, n_jobs: int, cfg: ScreenConfig,
+                     submit: Optional[Submit]) -> ScreeningPlan:
     """Write the submission files for a task list.
 
     Args:
         jobs_csv: docking_jobs.csv.
         n_jobs: Rows in it.
         cfg: Screening config.
-        submit: "slurm" for array scripts, "local" for a local runner.
+        submit: "slurm" for array scripts, "local" for a shell script, None for neither.
 
     Returns:
         The plan.
     """
     screening_dir = jobs_csv.parent
+    if submit is None:
+        return ScreeningPlan(jobs_csv, [], scr.local_command(jobs_csv, cfg.docking.cpus))
     if submit == "slurm":
         log_dir = screening_dir / "slurm_logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +77,7 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
     Args:
         pipeline_workdir: Run root (holds metadata/, structures/, pockets/).
         config_path: screen_config.yaml, or None for defaults.
-        submit: "slurm" or "local"; defaults to slurm when slurm.enabled.
+        submit: "slurm" or "local" to also write scripts; None writes only the task list.
         **overrides: Config overrides.
 
     Returns:
@@ -82,7 +86,8 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
     with start_action(action_type="qpocket_screen_prepare", workdir=str(pipeline_workdir)):
         cfg: ScreenConfig = load_screen_config(config_path, **overrides)
         validate_screen_config(cfg)
-        submit = submit or ("slurm" if cfg.slurm.enabled else "local")
+        # Submission artefacts are opt-in: preparing inputs writes the task list.
+        submit = submit or ("slurm" if cfg.slurm.enabled else None)
 
         base = Path(pipeline_workdir).resolve()
         screening_dir = base / "screening"
@@ -158,12 +163,12 @@ def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None)
     return subprocess.run(argv).returncode
 
 
-def run_local(jobs_csv: Path, workers: int = 1, cpus: int = 1, engine: Optional[str] = None) -> int:
+def run_local(jobs_csv: Path, workers: int = 0, cpus: int = 1, engine: Optional[str] = None) -> int:
     """Run every job on this machine, a few at a time.
 
     Args:
         jobs_csv: docking_jobs.csv.
-        workers: Jobs in parallel.
+        workers: Jobs in parallel; 0 uses half the cores.
         cpus: Threads per job.
         engine: Docking executable; defaults to the screening config's engine_path.
 
@@ -178,7 +183,7 @@ def run_local(jobs_csv: Path, workers: int = 1, cpus: int = 1, engine: Optional[
         Path(job["output_pdbqt"]).parent.mkdir(parents=True, exist_ok=True)
         return subprocess.run(scr.vina_argv(job, engine, cpus), capture_output=True, text=True).returncode
 
-    with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
+    with ThreadPoolExecutor(max_workers=resolve_workers(workers)) as pool:
         codes = list(pool.map(one, range(len(jobs))))
     failed = sum(1 for c in codes if c != 0)
     log_message(message_type="local_docking_done", n_jobs=len(codes), n_failed=failed)
