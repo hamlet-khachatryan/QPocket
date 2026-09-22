@@ -162,6 +162,23 @@ filesystem and point the config at them; see
 
 ---
 
+
+## Running on one node
+
+A whole run on a single machine, without SLURM:
+
+```bash
+"$QP_HOME/.venv/bin/qpocket" run --config my_target.yaml            # half the cores
+"$QP_HOME/.venv/bin/qpocket" run --config my_target.yaml --workers 16
+"$QP_HOME/.venv/bin/qpocket" run --config my_target.yaml --features hbond,aromatic
+```
+
+Each structure is aligned, cleaned, identified, featurised and turned into a
+geodesic graph on its own worker; see
+[Performance](docs/user-guide/performance.md). Memory scales with `--workers`,
+because each one can run APBS. Split the run across nodes with `qpocket slurm`
+instead, below.
+
 ## 5. Prepare, generate, submit
 
 ```bash

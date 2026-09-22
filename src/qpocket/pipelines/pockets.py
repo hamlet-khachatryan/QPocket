@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -23,8 +23,10 @@ from qpocket.core.pocket import (
     select_cavity_by_centroid,
 )
 from qpocket.core import pocket
-from qpocket.core.features import pocket_features
+from qpocket.core.features import DEFAULT_PROVIDERS, pocket_features
+from qpocket.core.providers import base
 from qpocket.io import tables, tools
+from qpocket.types import StructureData
 from qpocket.io.tables import write_points as _write_coords_csv
 from qpocket.io.tools import plip_interactions as get_plip_interactions  # noqa: F401 (re-exported)
 from qpocket.io.tools import run_cavfind
@@ -40,12 +42,14 @@ warnings.simplefilter("ignore", PDBConstructionWarning)
 # Reference pocket bounding box
 # ---------------------------------------------------------------------------
 
-def featurize(csv_path: Path, pdb_path: Path) -> None:
+def featurize(csv_path: Path, pdb_path: Path,
+              providers: Sequence[str] = DEFAULT_PROVIDERS) -> None:
     """Write featurized.csv beside a pocket's point cloud.
 
     Args:
         csv_path: Pocket point cloud CSV (x, y, z).
         pdb_path: Cleaned protein PDB.
+        providers: Feature providers to run.
     """
     with start_action(action_type="process_point_cloud"):
         if not csv_path.exists():
@@ -58,21 +62,31 @@ def featurize(csv_path: Path, pdb_path: Path) -> None:
             log_message(message_type="error", error=f"CSV read error: {e}")
             return
 
+        chosen = base.resolve(providers)
+        needs_pqr = any("pqr" in provider.requires for provider in chosen)
+        wants_apbs = any(provider.name == "apbs" for provider in chosen)
+
         pqr_path = csv_path.with_name("protein.pqr")
+        data = StructureData.empty()
+        apbs = np.zeros(len(points))
         try:
-            # One pdb2pqr run per structure; reused by the Interactions second pass.
-            if not pqr_path.exists() or pqr_path.stat().st_mtime < Path(pdb_path).stat().st_mtime:
-                tools.protonate(pdb_path, pqr_path)
-            data = tools.structure_data(pdb_path, tables.read_pqr(pqr_path))
+            if needs_pqr:
+                # One pdb2pqr run per structure; reused by the Interactions second pass.
+                if not pqr_path.exists() or pqr_path.stat().st_mtime < Path(pdb_path).stat().st_mtime:
+                    tools.protonate(pdb_path, pqr_path)
+                data = tools.structure_data(pdb_path, tables.read_pqr(pqr_path))
         except Exception as e:
             log_message(message_type="fatal_error", error=str(e))
             return
 
         out_path = csv_path.with_name("featurized.csv")
-        log_message(message_type="status", msg="Running APBS")
-        apbs = tools.apbs_potential(pqr_path, points)
-        log_message(message_type="status", msg="Running CP/LP and geometry")
-        tables.write_featurized(out_path, table, pocket_features(points, data, apbs))
+        if wants_apbs:
+            log_message(message_type="status", msg="Running APBS")
+            apbs = tools.apbs_potential(pqr_path, points)
+        log_message(message_type="status", msg="Running the feature providers",
+                    providers=list(providers))
+        tables.write_featurized(out_path, table,
+                                pocket_features(points, data, apbs, providers))
         log_message(message_type="success", output=str(out_path))
 
 
@@ -237,6 +251,7 @@ def extract_pocket_from_structure(
     ref_pocket_bbox: Optional[Tuple[np.ndarray, np.ndarray]] = None,
     save_intermediate: bool = False,
     force_featurize: bool = False,
+    providers: Sequence[str] = DEFAULT_PROVIDERS,
 ) -> Tuple[Optional[str], str]:
     """Extracts the binding pocket and largest co-crystallised ligand.
 
@@ -254,6 +269,7 @@ def extract_pocket_from_structure(
         ref_pocket_bbox: Pre-computed reference bounding box ``(bbox_min, bbox_max)`` used for non-reference structures.
         save_intermediate: Persist the pre-crop pocket point cloud.
         force_featurize: When ``True``, delete any existing ``featurized.csv`` and re-run featurisation.
+        providers: Feature providers to run.
 
     Returns:
         ``(ligand_file_path_or_None, status_string)`` where status is one of ``BOUND_STATE``, ``UNBOUND_STATE``, ``CAVITY_CLOSED``, ``NO_ANY_CAVITY_FOUND``, or ``FAILED``.
@@ -365,7 +381,7 @@ def extract_pocket_from_structure(
                     reason="already featurised",
                 )
             else:
-                featurize(final_pocket_csv, cleaned_path)
+                featurize(final_pocket_csv, cleaned_path, providers)
 
         # ── Ligand extraction (select largest molecule) ───────────────────────
         parser = PDBParser(QUIET=True)

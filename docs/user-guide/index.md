@@ -7,5 +7,6 @@ This section explains how to use QPocket for common workflows.
 - [Pocket Extraction](pocket-extraction.md) — details of the two-phase extraction strategy.
 - [Distance Analysis](distance-analysis.md) — spectral fingerprinting and clustering.
 - [Output Files](outputs.md) — description of every output artefact.
+- [Features](features.md) — the feature providers, and how to add one.
 - [Performance](performance.md) — what runs in parallel, and how to pick a worker count.
 - [Virtual Screening](virtual-screening.md) — docking a finished run, locally or on SLURM.

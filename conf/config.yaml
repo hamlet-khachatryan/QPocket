@@ -55,6 +55,12 @@ io:
   save_intermediate: false    # Save intermediate pocket point clouds (binding_site_initial.csv)
   compression: "gzip"         # HDF5 compression: "gzip" or "none"
 
+features:
+  # Which feature providers fill featurized.csv. Dropping a provider drops its
+  # columns; a set that needs no PQR skips pdb2pqr and APBS entirely.
+  enabled: ["apbs", "cp_lp", "hbond", "aromatic"]
+  options: {}                     # per-provider settings, keyed by provider name
+
 compute:
   # Local parallelism. Every per-structure step (align, clean, identify,
   # featurise, geodesic, fingerprint) runs on this many workers; collect and the

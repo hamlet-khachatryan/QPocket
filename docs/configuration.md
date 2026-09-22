@@ -136,6 +136,29 @@ io:
 
 ---
 
+## `features`
+
+Which providers produce the columns of `featurized.csv`.
+
+```yaml
+features:
+  enabled: ["apbs", "cp_lp", "hbond", "aromatic"]
+  options: {}
+```
+
+| provider | columns | needs |
+|---|---|---|
+| `apbs` | `apbs` | pdb2pqr + APBS |
+| `cp_lp` | `cp`, `lp` | pdb2pqr |
+| `hbond` | `h_donor`, `h_acceptor` | the cleaned structure |
+| `aromatic` | `aromatic` | the cleaned structure |
+
+Dropping a provider drops its columns, and a set that needs no PQR skips pdb2pqr
+and APBS altogether — the fastest way to a geometry-only run. `qpocket run
+--features hbond,aromatic` and `--no-apbs` set this from the command line. A run
+records what it used in `metadata/features.json`; fingerprints built from
+different sets are not comparable. See [Features](user-guide/features.md).
+
 ## `compute`
 
 How much of the machine a local run uses.

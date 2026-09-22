@@ -162,7 +162,25 @@ def cli():
 @click.option(
     "--parallel-jobs",
     type=int,
-    help="Number of parallel jobs (-1 for all cores)"
+    help="Deprecated alias of --workers for the distance stage only."
+)
+@click.option(
+    "--workers",
+    type=int,
+    default=None,
+    help="Parallel workers for per-structure work: 0 = half the cores, -1 = all."
+)
+@click.option(
+    "--features",
+    "features_list",
+    default=None,
+    help="Comma-separated feature providers, e.g. apbs,cp_lp,hbond,aromatic."
+)
+@click.option(
+    "--no-apbs",
+    is_flag=True,
+    default=False,
+    help="Drop the apbs provider (skips APBS, and pdb2pqr when nothing else needs it)."
 )
 @click.option(
     "--affinity-damping",
@@ -246,6 +264,9 @@ def run(
     allowed_cofactors: Optional[str],
     geo_graph_neighbor_radius: Optional[float],
     parallel_jobs: Optional[int],
+    workers: Optional[int],
+    features_list: Optional[str],
+    no_apbs: bool,
     affinity_damping: Optional[float],
     affinity_max_iter: Optional[int],
     global_k: Optional[int],
@@ -343,6 +364,16 @@ def run(
         overrides.append(f"distance.geo_graph_neighbor_radius={geo_graph_neighbor_radius}")
     if parallel_jobs is not None:
         overrides.append(f"distance.parallel_jobs={parallel_jobs}")
+    if workers is not None:
+        overrides.append(f"compute.workers={workers}")
+    if features_list or no_apbs:
+        from qpocket.core.features import DEFAULT_PROVIDERS
+
+        chosen = ([f.strip() for f in features_list.split(",") if f.strip()]
+                  if features_list else list(DEFAULT_PROVIDERS))
+        if no_apbs:
+            chosen = [f for f in chosen if f != "apbs"]
+        overrides.append(f"features.enabled=[{','.join(chosen)}]")
     if affinity_damping is not None:
         overrides.append(f"distance.clustering.single.damping={affinity_damping}")
     if affinity_max_iter is not None:

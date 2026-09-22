@@ -76,6 +76,7 @@ nav:
       - Pocket Extraction: user-guide/pocket-extraction.md
       - Distance Analysis: user-guide/distance-analysis.md
       - Running on a Cluster: user-guide/hpc.md
+      - Features: user-guide/features.md
       - Performance: user-guide/performance.md
       - Virtual Screening: user-guide/virtual-screening.md
       - Output Files: user-guide/outputs.md

@@ -246,6 +246,21 @@ def _plain(value):
 
 
 @dataclass
+class FeaturesConfig:
+    """Which feature providers run, and their options.
+
+    Attributes:
+        enabled: Provider names; each contributes its columns to featurized.csv.
+        options: Per-provider settings, keyed by provider name.
+    """
+
+    enabled: List[str] = field(
+        default_factory=lambda: ["apbs", "cp_lp", "hbond", "aromatic"]
+    )
+    options: Dict[str, Dict] = field(default_factory=dict)
+
+
+@dataclass
 class ComputeConfig:
     """How much of this machine a local run may use.
 
@@ -271,6 +286,7 @@ class QPocketConfig:
     io: IOConfig = field(default_factory=IOConfig)
     distance: DistanceConfig = field(default_factory=DistanceConfig)
     compute: ComputeConfig = field(default_factory=ComputeConfig)
+    features: FeaturesConfig = field(default_factory=FeaturesConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
 
     def __str__(self) -> str:
@@ -703,6 +719,16 @@ def validate_config(cfg: "QPocketConfig") -> None:
                     f"{prefix}.threshold must be > 0 with method 'hierarchical' when "
                     f"criterion is 'threshold', got method {stage.method!r}, threshold {threshold!r}"
                 )
+
+    # --- FeaturesConfig ---
+    from qpocket.core.providers import base as _providers
+
+    if not cfg.features.enabled:
+        raise ValueError("features.enabled must name at least one provider")
+    try:
+        _providers.resolve(list(cfg.features.enabled))
+    except ValueError as exc:
+        raise ValueError(f"features.enabled: {exc}") from exc
 
     # --- ComputeConfig ---
     if cfg.compute.workers < -1:

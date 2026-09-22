@@ -10,10 +10,11 @@ import numpy as np
 from qpocket.core import pocket as pk
 from qpocket.core import spectral as sp
 from qpocket.core import structure as st
-from qpocket.core.features import FEATURE_COLUMNS, pocket_features
+from qpocket.core.features import DEFAULT_PROVIDERS, pocket_features
+from qpocket.core.providers import base
 from qpocket.io import rcsb, tables, tools
 from qpocket.io import structures as sio
-from qpocket.types import ComparisonResult, PocketSpec, Scaler
+from qpocket.types import ComparisonResult, PocketSpec, Scaler, StructureData
 
 
 def _resolve(spec: PocketSpec, workdir: Path) -> Path:
@@ -27,15 +28,17 @@ def _resolve(spec: PocketSpec, workdir: Path) -> Path:
     return downloaded
 
 
-def featurize(spec: PocketSpec, workdir: Optional[Path] = None) -> Tuple[np.ndarray, np.ndarray]:
+def featurize(spec: PocketSpec, workdir: Optional[Path] = None,
+              features: Sequence[str] = DEFAULT_PROVIDERS) -> Tuple[np.ndarray, np.ndarray]:
     """Find one pocket and compute its per-point features.
 
     Args:
         spec: Structure and pocket definition.
         workdir: Scratch directory for downloads and tool files (a temporary one if None).
+        features: Feature providers to run.
 
     Returns:
-        (points (N, 3), features (N, 6) in FEATURE_COLUMNS order).
+        (points (N, 3), features (N, len(columns)) in provider order).
 
     Raises:
         ValueError: If no cavity matches the pocket definition.
@@ -65,10 +68,16 @@ def featurize(spec: PocketSpec, workdir: Optional[Path] = None) -> Tuple[np.ndar
     if points is None:
         raise ValueError(f"{spec.structure}: no cavity matches the pocket definition")
 
-    pqr_path = tools.protonate(clean_path, workdir / f"{name}.pqr")
-    data = tools.structure_data(clean_path, tables.read_pqr(pqr_path))
-    feats = pocket_features(points, data, tools.apbs_potential(pqr_path, points))
-    return points, np.column_stack([feats[c] for c in FEATURE_COLUMNS])
+    chosen = base.resolve(features)
+    data = StructureData.empty()
+    apbs = np.zeros(len(points))
+    if any("pqr" in provider.requires for provider in chosen):
+        pqr_path = tools.protonate(clean_path, workdir / f"{name}.pqr")
+        data = tools.structure_data(clean_path, tables.read_pqr(pqr_path))
+        if any(provider.name == "apbs" for provider in chosen):
+            apbs = tools.apbs_potential(pqr_path, points)
+    feats = pocket_features(points, data, apbs, features)
+    return points, np.column_stack(list(feats.values()))
 
 
 def compare_features(
@@ -119,11 +128,12 @@ def run(specs: Sequence[PocketSpec], workdir: Optional[Path] = None, scaler: Opt
         specs: Pockets to compare (two or more).
         workdir: Scratch directory (temporary if None).
         scaler: Reuse a run's scaler; fitted on these pockets when None.
-        **options: global_k, sigma, radius, shape_weight, chem_scale.
+        **options: features, global_k, sigma, radius, shape_weight, chem_scale.
 
     Returns:
         Pairwise distances.
     """
     labels = [f"{Path(s.structure).stem}:{s.ligand or ','.join(s.residues)}" for s in specs]
-    pockets = [featurize(s, workdir) for s in specs]
+    features = options.pop("features", DEFAULT_PROVIDERS)
+    pockets = [featurize(s, workdir, features) for s in specs]
     return compare_features(pockets, labels, scaler, **options)

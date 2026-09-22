@@ -55,20 +55,26 @@ def _report(result, output: Optional[str]) -> None:
 @click.option("--ligand", default=None, help="Ligand residue name marking the pocket.")
 @click.option("--residues", default=None, help="Comma-separated residues lining the pocket, e.g. TYR795,GLU756.")
 @click.option("--padding", default=5.0, show_default=True, help="Pocket radius around --residues (A).")
+@click.option("--features", "features_list", default=None,
+              help="Comma-separated feature providers; defaults to all four.")
 @click.option("-o", "--output", type=click.Path(), required=True, help="Output .npz (points, features).")
-def featurize_command(structure, chain, ligand, residues, padding, output):
+def featurize_command(structure, chain, ligand, residues, padding, features_list, output):
     """Find and featurise one pocket in STRUCTURE (a PDB ID or a file)."""
-    from qpocket.core.features import FEATURE_COLUMNS
+    from qpocket.core.features import DEFAULT_PROVIDERS
+    from qpocket.core.providers import base
     from qpocket.pipelines.compare import featurize
     from qpocket.types import PocketSpec
 
     spec = PocketSpec(structure, chain, ligand,
                       tuple(r.strip().upper() for r in (residues or "").split(",") if r.strip()), padding)
+    providers = ([f.strip() for f in features_list.split(",") if f.strip()]
+                 if features_list else list(DEFAULT_PROVIDERS))
     try:
-        points, features = featurize(spec.validate())
+        columns = base.columns_for(base.resolve(providers))
+        points, features = featurize(spec.validate(), features=providers)
     except (ValueError, FileNotFoundError) as exc:
         raise click.ClickException(str(exc))
-    np.savez(output, points=points, features=features, feature_names=np.array(FEATURE_COLUMNS),
+    np.savez(output, points=points, features=features, feature_names=np.array(columns),
              structure=spec.structure, pocket=spec.ligand or ",".join(spec.residues))
     click.echo(f"{len(points)} pocket points -> {output}")
 
@@ -82,11 +88,17 @@ def compare_command(pockets, scaler, global_k, sigma, radius, output):
 
     if len(pockets) < 2:
         raise click.UsageError("give at least two pockets")
-    loaded, ids = [], []
+    loaded, ids, column_sets = [], [], set()
     for path in pockets:
         with np.load(path) as data:
             loaded.append((data["points"], data["features"]))
+            column_sets.add(tuple(str(c) for c in data.get("feature_names", [])))
         ids.append(Path(path).stem)
+    if len(column_sets) > 1:
+        raise click.ClickException(
+            "these pockets were featurised with different providers: "
+            + "; ".join(", ".join(c) or "unknown" for c in sorted(column_sets))
+        )
     try:
         result = compare_features(loaded, ids, _load_scaler(scaler),
                                   global_k=global_k, sigma=sigma, radius=radius)

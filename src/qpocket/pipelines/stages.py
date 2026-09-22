@@ -18,6 +18,7 @@ from omegaconf import OmegaConf
 
 from qpocket.config import (
     ComputeConfig,
+    FeaturesConfig,
     QPocketConfig,
     SlurmConfig,
     fill_defaults,
@@ -123,6 +124,7 @@ def load_qpocket_config(
         # the dataclass default keeps a hand-written config that predates the
         # block loadable.
         compute=cfg.get("compute", ComputeConfig()),
+        features=cfg.get("features", FeaturesConfig()),
         slurm=cfg.get("slurm", SlurmConfig()),
     )
 
@@ -990,6 +992,7 @@ def process_one_structure(
                 interaction_padding=cfg.reference.interaction_padding,
                 ref_pocket_bbox=None if is_reference else context.ref_pocket_bbox,
                 save_intermediate=cfg.io.save_intermediate,
+                providers=cfg.features.enabled,
             )
 
         enriched = row.copy()
@@ -1019,6 +1022,7 @@ def process_one_structure(
                 ref_pocket_bbox=None if is_reference else context.ref_pocket_bbox,
                 save_intermediate=cfg.io.save_intermediate,
                 force_featurize=True,  # B-3: stale featurized.csv must be regenerated
+                providers=cfg.features.enabled,
             )
             if form2 not in ("FAILED",):
                 lf, form = lf2, form2
@@ -1060,6 +1064,25 @@ def featurize_structures(cfg: QPocketConfig, dirs: Dict[str, Path], df, context)
         log_dir=Path(dirs["root"]) / parallel.WORKER_LOG_DIR,
         label=lambda row: str(row["pdb_id"]),
     )
+
+
+def write_feature_record(meta_dir: Path, enabled: Sequence[str]) -> Path:
+    """Record the feature set a run used, for readers of its pockets.
+
+    Args:
+        meta_dir: The run's metadata directory.
+        enabled: Provider names, in config order.
+
+    Returns:
+        Path of features.json.
+    """
+    from qpocket.core.providers import base
+
+    payload = {"enabled": list(enabled),
+               "columns": list(base.columns_for(base.resolve(list(enabled))))}
+    path = Path(meta_dir) / "features.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def collect_structure_results(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
@@ -1121,6 +1144,8 @@ def collect_structure_results(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None
                 result = results.get(pid)
                 if result is not None and result.smiles:
                     f.write(f"{result.smiles[0]}\t{pid}\t{result.smiles[1]}\n")
+
+        write_feature_record(dirs["metadata"], cfg.features.enabled)
 
         # master.csv order, not sidecar-glob order: HDF5 preserves insertion
         # order, and the frequency tables break ties on it, so iterating the

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 from Bio.PDB import is_aa
@@ -16,8 +16,6 @@ from qpocket.constants import (
     AROMATIC_RESIDUES,
     DONOR_RESIDUES,
     FP_DTYPE,
-    SIGMA_AROM,
-    SIGMA_HBOND,
     SIGMA_HYDRO,
 )
 from qpocket.types import StructureData
@@ -340,24 +338,29 @@ def structure_sites(structure) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return safe_arr(geo_donors), safe_arr(geo_acceptors), safe_arr(geo_arom)
 
 
-def pocket_features(points: np.ndarray, data: StructureData, apbs: np.ndarray) -> Dict[str, np.ndarray]:
-    """The six per-point features of a pocket.
+#: Providers a run uses unless features.enabled says otherwise.
+DEFAULT_PROVIDERS = ("apbs", "cp_lp", "hbond", "aromatic")
+
+
+def pocket_features(points: np.ndarray, data: StructureData, apbs: np.ndarray,
+                    provider_names: Sequence[str] = DEFAULT_PROVIDERS) -> Dict[str, np.ndarray]:
+    """The per-point features of a pocket, from the enabled providers.
 
     Args:
         points: (N, 3) pocket points.
         data: Protein atoms, charges, hydrophobicity and pharmacophore sites.
-        apbs: (N,) electrostatic potential at the points.
+        apbs: (N,) electrostatic potential, used by the apbs provider.
+        provider_names: Providers to run.
 
     Returns:
-        Columns apbs, cp, lp, h_donor, h_acceptor, aromatic, in that order.
+        One column per provider column, in FEATURE_COLUMNS order.
     """
-    cp, lp = calculate_cp_lp(points, data.coords, data.charges, data.hydrophobicity)
-    return {
-        "apbs": apbs,
-        "cp": cp,
-        "lp": lp,
-        # Deliberately crossed: a donor field is felt where protein acceptors are.
-        "h_donor": calculate_geometric_potentials(points, data.acceptors, sigma=SIGMA_HBOND),
-        "h_acceptor": calculate_geometric_potentials(points, data.donors, sigma=SIGMA_HBOND),
-        "aromatic": calculate_geometric_potentials(points, data.aromatics, sigma=SIGMA_AROM),
-    }
+    from qpocket.core.providers.base import FeatureContext, columns_for, resolve
+
+    chosen = resolve(provider_names)
+    ctx = FeatureContext(points=points, pdb_path=None, pqr_path=None,
+                         structure_data=data, options={"apbs": apbs})
+    produced: Dict[str, np.ndarray] = {}
+    for provider in chosen:
+        produced.update(provider.compute(points, ctx))
+    return {column: produced[column] for column in columns_for(chosen)}

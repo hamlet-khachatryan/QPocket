@@ -48,6 +48,16 @@ class StructureData(NamedTuple):
     acceptors: np.ndarray
     aromatics: np.ndarray
 
+    @classmethod
+    def empty(cls) -> "StructureData":
+        """Atom-free inputs, for runs whose providers need no PQR.
+
+        Returns:
+            All arrays zero-length.
+        """
+        return cls(np.zeros((0, 3)), np.zeros(0), np.zeros(0),
+                   np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3)))
+
 
 class PocketSpec(NamedTuple):
     """Where a pocket is: a structure, an optional chain, and a ligand or residues.
