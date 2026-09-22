@@ -18,6 +18,21 @@ from qpocket.io import cache, tables
 from qpocket.types import Fingerprint
 
 
+def _workers(cfg: QPocketConfig) -> int:
+    """Worker count for the distance stage.
+
+    Args:
+        cfg: QPocket configuration.
+
+    Returns:
+        joblib n_jobs: the legacy distance.parallel_jobs when it was set, else compute.workers.
+    """
+    from qpocket.pipelines.parallel import resolve_workers
+
+    legacy = cfg.distance.parallel_jobs
+    return legacy if legacy != -1 else resolve_workers(cfg.compute.workers)
+
+
 def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path, None]:
     """Builds a geodesic distance matrix from a featurised pocket CSV.
 
@@ -185,7 +200,7 @@ def data_processing_spectral(
             return (pid, None, None) if fp is None else (pid, fp.eigenvalues, fp.spectrum)
 
         results = Parallel(
-            n_jobs=cfg.distance.parallel_jobs,
+            n_jobs=_workers(cfg),
             verbose=0,
         )(
             delayed(_process_item)(pid, D, F) for pid, (D, F) in raw_data.items()
@@ -465,7 +480,7 @@ def compute_spectral_distance_matrix(
         # ── Geodesic computation (parallel) ──────────────────────────────────
         with start_action(action_type="compute_geodesics_batch", n_pockets=len(pocket_files)):
             geo_results = Parallel(
-                n_jobs=cfg.distance.parallel_jobs,
+                n_jobs=_workers(cfg),
                 verbose=0,
             )(
                 delayed(compute_geodesic)(

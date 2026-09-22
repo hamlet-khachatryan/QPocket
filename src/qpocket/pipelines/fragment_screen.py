@@ -6,9 +6,8 @@ from qpocket.pipelines import stages
 
 STAGES = (
     stages.ingest_local_structures,
-    stages.align_structures,
-    stages.clean_structures,
-    stages.extract_pockets_and_interactions,
+    # One fan-out: each structure goes from file to geodesic on its own worker.
+    stages.prepare_and_featurize,
     stages.compute_spectral_distance_matrix,
 )
 

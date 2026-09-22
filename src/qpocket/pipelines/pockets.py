@@ -18,7 +18,6 @@ from qpocket.core.geometry import (
 )
 from qpocket.core.pocket import (
     extract_pdb_block,
-    get_smiles_from_pdb_block,
     pick_ligand,
     select_cavity_by_bbox,
     select_cavity_by_centroid,

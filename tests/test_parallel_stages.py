@@ -71,3 +71,22 @@ def test_reference_residues_are_loaded_once_per_process(tmp_path):
     first = stages.reference_residues(str(pdb), "A")
     assert stages.reference_residues(str(pdb), "A") is first
     assert stages.reference_residues.cache_info().hits == 1
+
+
+def test_chain_covers_the_same_units_as_the_stage_path():
+    """`qpocket task <stage>` still drives the stage-wise path; the chain reuses its units."""
+    src = (SRC / "pipelines/stages.py").read_text(encoding="utf-8")
+    chain = next(n for n in ast.walk(ast.parse(src))
+                 if isinstance(n, ast.FunctionDef) and n.name == "structure_chain")
+    body = ast.unparse(chain)
+    for unit in ("align_one", "clean_one", "process_one_structure", "compute_geodesic"):
+        assert unit in body
+
+
+def test_pipelines_run_the_chained_phase():
+    from qpocket.pipelines import fragment_screen, pdb_query, stages
+
+    for module, ingest in ((pdb_query, stages.download_structures),
+                           (fragment_screen, stages.ingest_local_structures)):
+        assert module.STAGES == (ingest, stages.prepare_and_featurize,
+                                 stages.compute_spectral_distance_matrix)

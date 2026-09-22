@@ -3,10 +3,10 @@ from pathlib import Path
 
 from qpocket.pipelines import fragment_screen, pdb_query, run, stages
 
+# Align, clean, identify and featurise are one chained fan-out per structure;
+# the stage-wise functions stay for `qpocket task <stage>` under SLURM.
 SHARED = (
-    stages.align_structures,
-    stages.clean_structures,
-    stages.extract_pockets_and_interactions,
+    stages.prepare_and_featurize,
     stages.compute_spectral_distance_matrix,
 )
 

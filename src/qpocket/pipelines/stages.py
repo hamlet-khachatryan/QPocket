@@ -27,6 +27,7 @@ from qpocket.config import (
 from qpocket.io import hdf5, workspace
 from qpocket.io import logging as qlog
 from qpocket.pipelines import collect, parallel
+from qpocket.pipelines.distance import compute_geodesic
 from qpocket.pipelines.distance import compute_spectral_distance_matrix  # noqa: F401 (a stage)
 from qpocket.io import rcsb as pdb_query
 from qpocket.io import structures as sio
@@ -1147,6 +1148,96 @@ def collect_structure_results(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None
                 stage="frequency_analysis",
                 error=str(e),
             )
+
+
+def structure_chain(cfg: QPocketConfig, dirs: Dict[str, Path], align_context: AlignmentContext,
+                    extraction_context, pid_path: Path) -> Dict:
+    """Take one structure from input file to geodesic cache.
+
+    Args:
+        cfg: QPocket configuration.
+        dirs: Run directories.
+        align_context: Reference paths and sequences.
+        extraction_context: Reference pocket context.
+        pid_path: Input structure.
+
+    Returns:
+        Its master.csv row; incomplete when a step failed.
+    """
+    row = align_one(cfg, align_context, pid_path, dirs["aligned"])
+    if not row.get("aligned_file"):
+        return row
+    row["cleaned_file"] = clean_one(cfg, dirs, pd.Series(row))
+    if row["cleaned_file"] is None:
+        return row
+    process_one_structure(cfg, dirs, pd.Series(row), extraction_context)
+    # Build the geodesic here too: the worker already has the pocket warm, and the
+    # cache is keyed on featurized.csv, so the distance stage reuses it untouched.
+    featurized = dirs["pockets"] / str(row["pdb_id"]) / "featurized.csv"
+    if featurized.exists():
+        compute_geodesic(featurized, cfg.distance.geo_graph_neighbor_radius)
+    return row
+
+
+def prepare_and_featurize(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None:
+    """Align, clean, identify and featurise every structure, then collect the run.
+
+    Args:
+        cfg: QPocket configuration.
+        dirs: Directory path dictionary.
+    """
+    # The reference goes first: its pocket defines the box every other structure
+    # is matched against. The rest fan out across compute.workers.
+    with start_action(action_type="prepare_and_featurize"):
+        align_context, reference_row = alignment_context(cfg, dirs)
+        reference_row["cleaned_file"] = clean_one(cfg, dirs, pd.Series(reference_row))
+        if reference_row["cleaned_file"] is None:
+            log_message(message_type="error", stage="prepare_and_featurize",
+                        error="the reference structure could not be cleaned")
+            return
+
+        extraction_context = build_extraction_context(cfg, dirs, pd.DataFrame([reference_row]))
+        if extraction_context is None:
+            return
+        save_extraction_context(dirs, extraction_context)
+
+        targets = sorted(
+            path
+            for suffix in STRUCTURE_SUFFIXES
+            for path in dirs["original"].glob(f"*{suffix}")
+        )
+        others = [p for p in targets if p.stem != reference_row["pdb_id"]]
+        log_message(message_type="extraction_start", n_structures=len(targets))
+
+        process_one_structure(cfg, dirs, pd.Series(reference_row), extraction_context)
+        reference_featurized = dirs["pockets"] / str(reference_row["pdb_id"]) / "featurized.csv"
+        if reference_featurized.exists():
+            compute_geodesic(reference_featurized, cfg.distance.geo_graph_neighbor_radius)
+
+        rows = parallel.run_map(
+            lambda path: structure_chain(cfg, dirs, align_context, extraction_context, path),
+            others,
+            workers=cfg.compute.workers,
+            backend=cfg.compute.backend,
+            stage="structure",
+            log_dir=Path(dirs["root"]) / parallel.WORKER_LOG_DIR,
+            label=lambda path: path.stem,
+        )
+
+        # Sorted input order, reference in its own place: master.csv order decides
+        # HDF5 insertion order and the frequency tables' tie-breaks.
+        by_id = {path.stem: row for path, row in zip(others, rows)}
+        by_id[reference_row["pdb_id"]] = reference_row
+        complete = [by_id[p.stem] for p in targets
+                    if p.stem in by_id and by_id[p.stem].get("cleaned_file")]
+
+        master_csv = dirs["metadata"] / "master.csv"
+        pd.DataFrame(complete).to_csv(str(master_csv), index=False)
+        log_message(message_type="master_csv_saved", path=str(master_csv),
+                    n_structures=len(complete))
+
+        collect_structure_results(cfg, dirs)
+        log_message(message_type="stage_complete", stage="prepare_and_featurize")
 
 
 def extract_pockets_and_interactions(
