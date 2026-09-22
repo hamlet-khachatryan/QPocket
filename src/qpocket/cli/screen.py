@@ -137,9 +137,13 @@ def run_task(jobs_csv: str, index: int, cpus: int, engine: str | None) -> None:
     """Run one docking job; used by the SLURM array script."""
     from pathlib import Path
 
+    from qpocket.io.tools import ToolNotFoundError
     from qpocket.pipelines.screening import run_job
 
-    code = run_job(Path(jobs_csv), index, cpus, engine)
+    try:
+        code = run_job(Path(jobs_csv), index, cpus, engine)
+    except ToolNotFoundError as exc:
+        raise click.ClickException(str(exc))
     if code:
         raise SystemExit(code)
 
@@ -154,9 +158,13 @@ def run_local(jobs_csv: str, workers: int, cpus: int, engine: str | None) -> Non
     """Run every docking job on this machine (any OS)."""
     from pathlib import Path
 
+    from qpocket.io.tools import ToolNotFoundError
     from qpocket.pipelines.screening import run_local as run_all
 
-    failed = run_all(Path(jobs_csv), workers, cpus, engine)
+    try:
+        failed = run_all(Path(jobs_csv), workers, cpus, engine)
+    except ToolNotFoundError as exc:
+        raise click.ClickException(str(exc))
     click.echo(f"{failed} job(s) failed" if failed else "All docking jobs completed.")
     if failed:
         raise SystemExit(1)

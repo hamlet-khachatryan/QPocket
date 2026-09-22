@@ -22,7 +22,7 @@ def test_env_override_wins(monkeypatch, tmp_path):
 
 def test_bad_env_override_is_an_error(monkeypatch, tmp_path):
     monkeypatch.setenv("QPOCKET_APBS", str(tmp_path / "missing"))
-    with pytest.raises(tools.ToolNotFound, match="QPOCKET_APBS"):
+    with pytest.raises(tools.ToolNotFoundError, match="QPOCKET_APBS"):
         tools.apbs_command()
 
 
@@ -31,7 +31,7 @@ def test_path_lookup_and_a_helpful_miss(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(tmp_path))
     assert Path(tools.executable("vina")).resolve() == exe.resolve()
     monkeypatch.setenv("PATH", "")
-    with pytest.raises(tools.ToolNotFound, match="engine_path"):
+    with pytest.raises(tools.ToolNotFoundError, match="engine_path"):
         tools.executable("vina")
 
 

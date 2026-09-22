@@ -9,7 +9,6 @@ from qpocket.config import (
     FragmentScreenParams,
     IOConfig,
     QueryParams,
-    QPocketConfig,
     ReferenceParams,
     validate_config,
 )

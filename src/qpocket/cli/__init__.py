@@ -693,12 +693,12 @@ def doctor(config: Optional[str], smoke: bool):
             bad(f"import {module}", f"{type(e).__name__}: {e}")
 
     # --- APBS: the wheel, QPOCKET_APBS, or an apbs on PATH ---------------------
-    from qpocket.io.tools import ToolNotFound, apbs_command
+    from qpocket.io.tools import ToolNotFoundError, apbs_command
 
     try:
         source, detail = apbs_command()
         ok("apbs", f"{detail} ({source})")
-    except ToolNotFound as e:
+    except ToolNotFoundError as e:
         bad("apbs", str(e))
 
     # --- external tools ---------------------------------------------------
@@ -764,8 +764,8 @@ def _make_task_command(name: str):
     @click.option("--force", is_flag=True, default=False,
                   help="Recompute even if the output already exists.")
     def command(config, workdir, manifest, index, force):
+        from qpocket.io import logging as qlog
         from qpocket.pipelines import tasks
-        from qpocket.pipelines.stages import _configure_logging
 
         cfg, dirs = _load_run(config, workdir, [])
 
@@ -774,7 +774,7 @@ def _make_task_command(name: str):
         suffix = f"_{index}" if index is not None else ""
         log_dir = Path(dirs["root"]) / "slurm" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        _configure_logging(cfg, log_dir / f"{name}{suffix}.log")
+        qlog.configure(cfg, log_dir / f"{name}{suffix}.log")
 
         try:
             tasks.run_task(name, cfg, dirs,

@@ -183,7 +183,6 @@ def make_config(**overrides):
     """Returns a valid QPocketConfig, optionally overriding nested fields."""
     from qpocket.config import (
         AlignParams,
-        BoundingBoxParams,
         CleanParams,
         DistanceConfig,
         FragmentScreenParams,

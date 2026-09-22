@@ -4,11 +4,8 @@ All HTTP calls are mocked via pytest-mock / unittest.mock.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 import requests
 
 from qpocket.io.rcsb import (

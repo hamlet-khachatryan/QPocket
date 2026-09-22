@@ -248,3 +248,21 @@ def test_a_structure_result_survives_a_round_trip(dirs):
         json.loads((stages.parts_dir(dirs) / "1ABC.json").read_text())
     )
     assert back == original
+
+
+@pytest.mark.parametrize("stage", tasks.TASK_NAMES)
+def test_every_task_command_wires_up(stage, tmp_path, monkeypatch):
+    """`qpocket task <stage>` is the SLURM entry point: it must import and dispatch."""
+    from click.testing import CliRunner
+
+    from qpocket.cli import cli
+
+    called = {}
+    monkeypatch.setattr(tasks, "run_task",
+                        lambda name, cfg, dirs, **kw: called.update(name=name, kw=kw))
+    config = tmp_path / "cfg.yaml"
+    config.write_text("mode: pdb_query\nreference:\n  pdb_id: 1ABC\n  chain_id: A\n"
+                      f"paths:\n  workdir: {tmp_path}\n", encoding="utf-8")
+    result = CliRunner().invoke(cli, ["task", stage, "--config", str(config)])
+    assert result.exit_code == 0, result.output
+    assert called["name"] == stage

@@ -21,7 +21,7 @@ from qpocket.types import PQRAtoms, StructureData
 
 
 
-class ToolNotFound(RuntimeError):
+class ToolNotFoundError(RuntimeError):
     """An external program Q-Pocket needs is not installed."""
 
 
@@ -45,17 +45,17 @@ def executable(name: str, env_var: Optional[str] = None) -> str:
         Path to the program.
 
     Raises:
-        ToolNotFound: If it cannot be found.
+        ToolNotFoundError: If it cannot be found.
     """
     override = os.environ.get(env_var) if env_var else None
     if override:
         if Path(override).exists():
             return override
-        raise ToolNotFound(f"{env_var}={override} does not exist")
+        raise ToolNotFoundError(f"{env_var}={override} does not exist")
     found = shutil.which(name)
     if found:
         return found
-    raise ToolNotFound(f"{name} not found: {_HINTS.get(name, 'install it and put it on PATH')}")
+    raise ToolNotFoundError(f"{name} not found: {_HINTS.get(name, 'install it and put it on PATH')}")
 
 
 def apbs_command() -> Tuple[str, str]:
@@ -66,7 +66,7 @@ def apbs_command() -> Tuple[str, str]:
         version, or "path" and the apbs on PATH.
 
     Raises:
-        ToolNotFound: If there is no APBS at all.
+        ToolNotFoundError: If there is no APBS at all.
     """
     if os.environ.get("QPOCKET_APBS"):
         return "env", executable("apbs", "QPOCKET_APBS")
@@ -265,7 +265,7 @@ def apbs_potential(pqr_path: Path, point_cloud: np.ndarray) -> np.ndarray:
 
             try:
                 p = apbs_process([str(apbs_in)], stdout=PIPE, stderr=PIPE, cwd=str(temp_dir))
-            except ToolNotFound as e:
+            except ToolNotFoundError as e:
                 log_message(message_type="apbs_binary_fail", stderr=str(e))
                 return np.zeros(len(point_cloud), dtype=FP_DTYPE)
             out, err = p.communicate()

@@ -145,6 +145,23 @@ def _read_jobs(jobs_csv: Path) -> pd.DataFrame:
     return pd.read_csv(jobs_csv, dtype=str, keep_default_na=False)
 
 
+def docking_engine(engine: Optional[str] = None) -> str:
+    """Resolve the docking executable, with a message when it is missing.
+
+    Args:
+        engine: Executable name or path; None reads docking.engine_path.
+
+    Returns:
+        Path to the engine.
+
+    Raises:
+        ToolNotFoundError: If it is not installed.
+    """
+    from qpocket.io.tools import executable
+
+    return executable(engine or load_screen_config().docking.engine_path)
+
+
 def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None) -> int:
     """Run one row of the task list.
 
@@ -159,7 +176,7 @@ def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None)
     """
     job = _read_jobs(jobs_csv).iloc[index]
     Path(job["output_pdbqt"]).parent.mkdir(parents=True, exist_ok=True)
-    argv = scr.vina_argv(job, engine or load_screen_config().docking.engine_path, cpus)
+    argv = scr.vina_argv(job, docking_engine(engine), cpus)
     return subprocess.run(argv).returncode
 
 
@@ -176,7 +193,7 @@ def run_local(jobs_csv: Path, workers: int = 0, cpus: int = 1, engine: Optional[
         Number of failed jobs.
     """
     jobs = _read_jobs(jobs_csv)
-    engine = engine or load_screen_config().docking.engine_path
+    engine = docking_engine(engine)
 
     def one(i: int) -> int:
         job = jobs.iloc[i]

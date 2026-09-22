@@ -3,10 +3,8 @@ Tests for the UniProt helpers in processing/alignment.py.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from qpocket.core.sequence import generate_renumbering_map
 from qpocket.io.rcsb import fetch_uniprot_sequence

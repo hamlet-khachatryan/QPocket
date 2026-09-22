@@ -1,7 +1,6 @@
 """The split spectral functions reproduce the old monolithic ones exactly."""
 import numpy as np
 import pandas as pd
-import pytest
 from sklearn.preprocessing import StandardScaler
 
 from qpocket.core import spectral as sp

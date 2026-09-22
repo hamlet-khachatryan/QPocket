@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from qpocket.pipelines import slurm
 from qpocket.config import QPocketConfig
 from qpocket.pipelines.slurm import (
     STAGES_BY_NAME,

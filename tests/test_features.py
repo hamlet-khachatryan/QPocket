@@ -4,7 +4,6 @@ apbs_binary and pdb2pqr subprocess calls are mocked.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -16,7 +15,7 @@ from qpocket.core.features import (
     calculate_geometric_potentials,
 )
 from qpocket.io.tools import read_dx_grid
-from qpocket.constants import FP_DTYPE, SIGMA_HYDRO
+from qpocket.constants import FP_DTYPE
 
 
 # ---------------------------------------------------------------------------
