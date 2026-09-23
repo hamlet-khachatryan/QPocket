@@ -12,6 +12,7 @@ REQUIRED = [
     "cavitomix/cavfind.py",
     "qpocket/conf/config.yaml",
     "qpocket/viz/vendor/3Dmol-2.4.2.min.js",
+    "qpocket/data/ccd/ALA.cif",
 ]
 
 
