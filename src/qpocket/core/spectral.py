@@ -87,7 +87,10 @@ def spectral_fingerprint(
     w = np.exp(-(d_geo ** 2) / (sigma ** 2))
     np.fill_diagonal(w, 0)
     degrees = np.sum(w, axis=1)
-    d_inv_sqrt = np.where(degrees > 1e-12, np.power(degrees, -0.5, where=degrees > 1e-12), 0.0)
+    # out= is required alongside where=: without it the masked entries are left
+    # uninitialised, which numpy warns about even though np.where discards them.
+    connected = degrees > 1e-12
+    d_inv_sqrt = np.power(degrees, -0.5, where=connected, out=np.zeros_like(degrees))
     d_mat = np.diag(d_inv_sqrt)
     laplacian = np.eye(n) - (d_mat @ w @ d_mat)
 

@@ -124,7 +124,7 @@ def interactions_for(pdb_path: Path, ligand_id: Optional[str],
     Returns:
         Interaction strings, or one of no_ligand_found, file_not_found, analysis_error.
     """
-    import prolif as plf
+    plf = detect.load_prolif()
 
     if not ligand_id or not str(ligand_id).strip():
         return ["no_ligand_found"]

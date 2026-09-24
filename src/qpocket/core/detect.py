@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 #: Requested from ProLIF by default. PiStacking is deliberately absent: it is the
@@ -29,6 +30,31 @@ LABELS: Dict[str, str] = {
     "MetalDonor": "Metal Complex",
     "MetalAcceptor": "Metal Complex",
 }
+
+
+def load_prolif():
+    """Import ProLIF without its dependencies' deprecation notices.
+
+    Returns:
+        The prolif module.
+    """
+    # ProLIF imports MDAnalysis, which warns that one of its own modules moved.
+    # Nothing here can act on that, and it would otherwise print on every run.
+    # MDAnalysis reinstates its own warning filters as it imports, so an ignore
+    # filter does not survive; dropping the message as it is displayed does.
+    with warnings.catch_warnings():
+        shown = warnings.showwarning
+
+        def quiet(message, category, filename, lineno, file=None, line=None):
+            """Show every warning except the one MDAnalysis raises about itself."""
+            if "MDAnalysis.topology.tables" in str(message):
+                return
+            shown(message, category, filename, lineno, file, line)
+
+        warnings.showwarning = quiet
+        import prolif
+
+    return prolif
 
 
 def format_entry(res_name: str, res_seq: int, chain_id: str, prolif_name: str) -> str:
@@ -62,7 +88,7 @@ def interactions(ligand, protein,
     """
     # Imported here because prolif pulls in MDAnalysis, which is slow to import
     # and must not be paid by every qpocket import.
-    import prolif as plf
+    plf = load_prolif()
 
     names = list(enabled or INTERACTION_NAMES)
     fingerprint = plf.Fingerprint(names, parameters=dict(parameters or {}), count=True)

@@ -142,7 +142,28 @@ appears in the dropdown; you can also type a path into the **"…or open a path"
 box, either a single run directory or a folder of them.
 
 The notebook shows the distance matrices, the embedding, the clustering and the
-pocket point clouds. To change it rather than use it:
+pocket point clouds.
+
+### Three ways to cluster
+
+Pick a method at the top of the **Clustering** section; every view below follows
+the one you choose.
+
+| method | what it does | knobs |
+|---|---|---|
+| Affinity propagation | clusters the combined score, as the pipeline does | damping, preference percentile |
+| One hierarchical cut | cuts the combined score's tree at one height | cut height |
+| Two stages | groups by shape, then splits each group by chemistry | shape cut, chemistry cut, minimum group to split |
+
+The dendrogram draws the tree being cut, with a dashed line at the height, so
+moving a slider shows you what it does. Each result reports its cluster count,
+its silhouette, and how far it sits from the clustering stored with the run
+(ARI, and how many pockets moved).
+
+Only the two-stage result can be **saved** as the run's clustering, because that
+is the form a run stores.
+
+To change the notebook rather than use it:
 
 ```bash
 uv run marimo edit experiments/visualize_qpocket.py
