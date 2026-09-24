@@ -28,7 +28,7 @@ _HINTS = {
     "apbs": "install APBS (github.com/Electrostatics/apbs/releases) and put it on PATH or set QPOCKET_APBS; "
             "on Linux x86_64 and macOS `uv sync` installs it",
     "pdb2pqr": "`uv sync` installs it; activate the environment",
-    "obabel": "`uv sync` installs openbabel-wheel; activate the environment",
+    "obabel": "optional: install Open Babel separately for the SDF to PDBQT fallback",
     "vina": "set docking.engine_path or put vina on PATH",
 }
 

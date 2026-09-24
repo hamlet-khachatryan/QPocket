@@ -684,7 +684,7 @@ def doctor(config: Optional[str], smoke: bool):
         ("numpy", ""), ("scipy", ""), ("pandas", ""), ("sklearn", ""),
         ("h5py", ""), ("joblib", ""), ("hydra", ""), ("omegaconf", ""),
         ("eliot", ""), ("Bio", "biopython"), ("biopandas", ""), ("rdkit", ""),
-        ("openbabel", ""), ("pdb2pqr", ""),
+        ("prolif", ""), ("dimorphite_dl", ""), ("pdb2pqr", ""),
     ):
         try:
             importlib.import_module(module)
