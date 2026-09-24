@@ -71,6 +71,7 @@ nav:
   - Configuration Reference: configuration.md
   - User Guide:
       - Overview: user-guide/index.md
+      - Your First Runs: user-guide/first-run.md
       - PDB Query Mode: user-guide/pdb-query.md
       - Fragment Screening Mode: user-guide/fragment-screening.md
       - Pocket Extraction: user-guide/pocket-extraction.md

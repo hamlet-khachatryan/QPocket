@@ -1,5 +1,8 @@
 # Quick Start
 
+For a step-by-step walkthrough with verified commands and timings, see
+[Your First Runs](user-guide/first-run.md). This page is the short reference.
+
 ## PDB query mode
 
 Run a full analysis starting from a reference PDB entry:
@@ -84,6 +87,7 @@ results/
     │   ├── original/      ← downloaded CIF files
     │   ├── aligned/       ← structures superposed onto the reference
     │   ├── cleaned/       ← residue-cleaned PDB files
+    │   ├── protonated/    ← docking-ready: protein + ligand + hydrogens
     │   └── extracted_ligands/  ← per-structure ligand PDB files
     ├── pockets/
     │   └── <pdb_id>/
@@ -91,7 +95,7 @@ results/
     │       ├── binding_site_initial.csv  ← pre-crop cloud (if save_intermediate)
     │       └── featurized.csv            ← APBS / CP / LP / geometric features
     ├── metadata/
-    │   ├── master.csv
+    │   ├── master.csv                     ← one row per structure, with ligand_id
     │   ├── spectral_distance_matrix.csv
     │   ├── clustering_metadata.csv
     │   ├── selected_representatives.csv

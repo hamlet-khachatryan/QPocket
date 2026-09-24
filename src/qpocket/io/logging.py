@@ -25,5 +25,8 @@ def configure(cfg: QPocketConfig, log_path: Path) -> None:
     to_file(log_file)
 
     if cfg.io.log_format == "text":
-        from eliot.prettyprint import pretty_print
-        add_destinations(pretty_print)
+        # eliot 1.15 replaced pretty_print, which printed for us, with
+        # pretty_format, which returns the string and leaves printing to us.
+        from eliot.prettyprint import pretty_format
+
+        add_destinations(lambda message: print(pretty_format(message), end=""))
