@@ -2832,7 +2832,7 @@ requires-dist = [
     { name = "biopandas", specifier = ">=0.4" },
     { name = "biopython", specifier = ">=1.81" },
     { name = "click", specifier = ">=8.1" },
-    { name = "dimorphite-dl", specifier = ">=1.3" },
+    { name = "dimorphite-dl", specifier = ">=2.0" },
     { name = "eliot", specifier = ">=1.14" },
     { name = "gdown", specifier = ">=4.7" },
     { name = "gemmi", specifier = ">=0.6" },
