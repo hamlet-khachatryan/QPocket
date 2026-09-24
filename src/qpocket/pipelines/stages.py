@@ -1052,7 +1052,11 @@ def process_one_structure(
         # from it, and an apo structure still gets its protonated protein.
         enriched["protonated_file"] = protonate_one(cfg, dirs, enriched)
 
-        analysis = extraction.run_analysis_step(enriched, dirs)
+        analysis = extraction.run_analysis_step(
+            enriched, dirs,
+            enabled=cfg.interactions.enabled,
+            parameters=cfg.interactions.parameters,
+        )
 
         # Second pass: crop to the observed contacts and re-featurise, so
         # binding_site.csv and featurized.csv always describe the same cloud.

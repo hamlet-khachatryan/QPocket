@@ -159,6 +159,37 @@ and APBS altogether — the fastest way to a geometry-only run. `qpocket run
 records what it used in `metadata/features.json`; fingerprints built from
 different sets are not comparable. See [Features](user-guide/features.md).
 
+## `interactions`
+
+Which protein-ligand interactions ProLIF reports, and with what geometry.
+
+```yaml
+interactions:
+  enabled: ["Hydrophobic", "HBDonor", "HBAcceptor", "FaceToFace", "EdgeToFace",
+            "Cationic", "Anionic", "CationPi", "PiCation",
+            "XBDonor", "XBAcceptor", "MetalDonor", "MetalAcceptor"]
+  parameters: {}
+```
+
+ProLIF names an interaction from the ligand's side; the stored strings name it
+from the protein's, so `HBDonor` is recorded as `H-bond Acceptor` and `Cationic`
+as `Saltbridge (-)`. `PiStacking` is rejected: it is the union of `FaceToFace`
+and `EdgeToFace`, and enabling all three counts every stack twice.
+
+`parameters` overrides the geometry of any enabled interaction, keyed by its
+ProLIF name. Configuring one that is not enabled is an error, so a typo cannot
+sit in a config doing nothing. To reproduce the cutoffs PLIP published:
+
+```yaml
+interactions:
+  parameters:
+    HBDonor: {distance: 4.1, DHA_angle: [100, 180]}
+    HBAcceptor: {distance: 4.1, DHA_angle: [100, 180]}
+    Hydrophobic: {distance: 4.0}
+```
+
+See [Interactions](user-guide/interactions.md).
+
 ## `compute`
 
 How much of the machine a local run uses.

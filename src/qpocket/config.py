@@ -260,6 +260,30 @@ class FeaturesConfig:
     options: Dict[str, Dict] = field(default_factory=dict)
 
 
+def _default_interactions() -> List[str]:
+    """Interaction names requested from ProLIF by default.
+
+    Returns:
+        The detector's default list.
+    """
+    from qpocket.core.detect import INTERACTION_NAMES
+
+    return list(INTERACTION_NAMES)
+
+
+@dataclass
+class InteractionsConfig:
+    """Which interactions to detect, and with what geometry.
+
+    Attributes:
+        enabled: ProLIF interaction names.
+        parameters: Per-interaction geometry overrides, keyed by interaction name.
+    """
+
+    enabled: List[str] = field(default_factory=_default_interactions)
+    parameters: Dict[str, Dict] = field(default_factory=dict)
+
+
 @dataclass
 class ComputeConfig:
     """How much of this machine a local run may use.
@@ -287,6 +311,7 @@ class QPocketConfig:
     distance: DistanceConfig = field(default_factory=DistanceConfig)
     compute: ComputeConfig = field(default_factory=ComputeConfig)
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
+    interactions: InteractionsConfig = field(default_factory=InteractionsConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
 
     def __str__(self) -> str:
@@ -729,6 +754,29 @@ def validate_config(cfg: "QPocketConfig") -> None:
         _providers.resolve(list(cfg.features.enabled))
     except ValueError as exc:
         raise ValueError(f"features.enabled: {exc}") from exc
+
+    # --- InteractionsConfig ---
+    from qpocket.core.detect import LABELS as _interaction_labels
+
+    if not cfg.interactions.enabled:
+        raise ValueError("interactions.enabled must name at least one interaction")
+    for name in cfg.interactions.enabled:
+        if name == "PiStacking":
+            raise ValueError(
+                "interactions.enabled: use FaceToFace and EdgeToFace instead of "
+                "PiStacking, which is their union and would count each stack twice"
+            )
+        if name not in _interaction_labels:
+            raise ValueError(
+                f"interactions.enabled: unknown interaction {name!r}; "
+                f"choose from {', '.join(sorted(_interaction_labels))}"
+            )
+    for name in cfg.interactions.parameters:
+        if name not in cfg.interactions.enabled:
+            raise ValueError(
+                f"interactions.parameters: {name!r} is configured but not enabled; "
+                f"add it to interactions.enabled or drop its parameters"
+            )
 
     # --- ComputeConfig ---
     if cfg.compute.workers < -1:

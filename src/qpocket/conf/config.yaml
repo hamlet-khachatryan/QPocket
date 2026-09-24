@@ -61,6 +61,14 @@ features:
   enabled: ["apbs", "cp_lp", "hbond", "aromatic"]
   options: {}                     # per-provider settings, keyed by provider name
 
+interactions:
+  # Which protein-ligand interactions ProLIF reports. PiStacking is the union of
+  # FaceToFace and EdgeToFace, so it is rejected rather than counted twice.
+  enabled: ["Hydrophobic", "HBDonor", "HBAcceptor", "FaceToFace", "EdgeToFace",
+            "Cationic", "Anionic", "CationPi", "PiCation",
+            "XBDonor", "XBAcceptor", "MetalDonor", "MetalAcceptor"]
+  parameters: {}                  # geometry overrides, keyed by interaction name
+
 compute:
   # Local parallelism. Every per-structure step (align, clean, identify,
   # featurise, geodesic, fingerprint) runs on this many workers; collect and the

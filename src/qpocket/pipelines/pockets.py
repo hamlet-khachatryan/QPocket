@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -420,12 +420,16 @@ def extract_pocket_from_structure(
 def run_analysis_step(
     row: pd.Series,
     dirs: Dict[str, Path],
+    enabled: Optional[Sequence[str]] = None,
+    parameters: Optional[Mapping[str, Mapping]] = None,
 ) -> Dict[str, List[str]]:
     """Derives potential and observed interactions for a structure.
 
     Args:
         row: DataFrame row with structure metadata.
         dirs: Directory path dictionary.
+        enabled: ProLIF interaction names to request.
+        parameters: Per-interaction geometry overrides.
 
     Returns:
         ``{"potential": [...], "observed": [...]}``.
@@ -489,7 +493,8 @@ def run_analysis_step(
             protonated = row.get("protonated_file")
             source = Path(protonated) if protonated and pd.notna(protonated) \
                 else Path(row["aligned_file"])
-            res["observed"] = interactions_for(source, str(ligand_id))
+            res["observed"] = interactions_for(source, str(ligand_id),
+                                               enabled=enabled, parameters=parameters)
         else:
             res["observed"] = ["no_ligand_found"]
 
