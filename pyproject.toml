@@ -60,7 +60,6 @@ dependencies = [
   "meeko>=0.5",
   "gemmi>=0.6",   # imported by meeko >= 0.6 but not declared by it
   "gdown>=4.7",
-  "openbabel-wheel>=3.1",
   "prolif>=2.2",
   # Ligand protonation states at pH. It caps rdkit<2026, which is why RDKit
   # resolves to the 2025 series.
@@ -88,7 +87,7 @@ qpocket-screen = "qpocket.cli.screen:screen_cli"
 
 [tool.uv.build-backend]
 module-root = "src"
-module-name = ["qpocket", "cavitomix", "plip"]
+module-name = ["qpocket", "cavitomix"]
 
 [dependency-groups]
 dev = [
@@ -121,7 +120,6 @@ exclude = [
   ".ruff_cache", ".svn", ".tox", ".venv", ".vscode",
   "__pypackages__", "_build", "buck-out", "build",
   "dist", "node_modules", "site-packages", "venv",
-  "src/plip",
 ]
 
 [tool.ruff.lint]

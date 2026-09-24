@@ -299,7 +299,7 @@ def run_interaction_analysis(
     Returns:
         DataFrame with columns: job_id, pdb_id, ligand_id, interaction_type, count.
     """
-    from qpocket.io.tools import plip_interactions as get_plip_interactions
+    from qpocket.io.interactions import interactions_for
 
     df_jobs = pd.read_csv(jobs_csv)
     actives_jobs = df_jobs[df_jobs["molecule_type"] == "actives"]
@@ -310,7 +310,7 @@ def run_interaction_analysis(
         if not out_pdbqt.exists():
             continue
 
-        # Convert PDBQT to PDB for PLIP (write temp file)
+        # Convert PDBQT to PDB for the detector (write temp file)
         import tempfile
         _, mol = parse_vina_output(out_pdbqt)
         if mol is None:
@@ -324,7 +324,7 @@ def run_interaction_analysis(
                     tmp_path = Path(tmp.name)
 
             # Known issue (spec §6): the pose is analysed without its receptor.
-            interactions = get_plip_interactions(tmp_path, "LIG")
+            interactions = interactions_for(tmp_path, "LIG")
             tmp_path.unlink(missing_ok=True)
 
         except Exception as e:

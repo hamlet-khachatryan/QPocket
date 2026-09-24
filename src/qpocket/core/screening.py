@@ -7,7 +7,6 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 from molvs import Standardizer
-from openbabel import openbabel
 from rdkit import Chem
 from scipy.spatial import cKDTree
 
@@ -51,19 +50,19 @@ def pdbqt_lines_to_mol(lines: List[str]) -> Optional[Chem.Mol]:
         return None
 
 
-def charges_ph(molecule_smi: str) -> str:
-    """Corrects pH using OpenBabel."""
-    if openbabel is None:
-        return molecule_smi
+def charges_ph(molecule_smi: str, ph: float = 7.4) -> str:
+    """Protonation state of a molecule at a pH.
 
-    obConversion = openbabel.OBConversion()
-    obConversion.SetInAndOutFormats("smi", "smi")
-    mol = openbabel.OBMol()
-    obConversion.ReadString(mol, molecule_smi)
-    mol.AddHydrogens()
-    mol.CorrectForPH(7.4)
-    mol.AddHydrogens()
-    return obConversion.WriteString(mol).strip()
+    Args:
+        molecule_smi: SMILES of the molecule.
+        ph: pH at which to protonate.
+
+    Returns:
+        SMILES of the dominant state, or the input when none could be assigned.
+    """
+    from qpocket.core.protonation import dominant_state
+
+    return dominant_state(molecule_smi, ph) or molecule_smi
 
 
 def smile_obabel_corrector(smiles_ionized: str) -> str:

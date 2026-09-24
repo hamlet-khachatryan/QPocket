@@ -8,7 +8,6 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 REQUIRED = [
-    "plip/structure/preparation.py",
     "cavitomix/cavfind.py",
     "qpocket/conf/config.yaml",
     "qpocket/viz/vendor/3Dmol-2.4.2.min.js",
@@ -22,5 +21,4 @@ def test_wheel_contents(tmp_path):
     names = zipfile.ZipFile(next(tmp_path.glob("*.whl"))).namelist()
     for required in REQUIRED:
         assert required in names, required
-    assert not any(n.startswith("plip/plip/") for n in names)
     assert not any("__pycache__" in n for n in names)

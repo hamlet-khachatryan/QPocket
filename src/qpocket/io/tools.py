@@ -11,7 +11,6 @@ from subprocess import PIPE, Popen
 import numpy as np
 from Bio.PDB import PDBParser
 from eliot import log_message, start_action
-from plip.structure.preparation import PDBComplex
 
 from cavitomix.cavfind import CavFind
 
@@ -353,71 +352,3 @@ def run_cavfind(pdb_path: Path, name: str) -> List[np.ndarray]:
         # CavFind keeps the points on a private attribute; read it in one place.
         return [cavity.__dict__["coords"] for cavity in cf.run().cavities]
 
-
-def plip_interactions(pdb_path: Path, ligand_name: str) -> List[str]:
-    """Analyses protein–ligand interactions with PLIP.
-
-    Args:
-        pdb_path: Path to a PDB structure file.
-        ligand_name: Residue name of the ligand to analyse (case-insensitive).
-
-    Returns:
-        List of interaction strings formatted as ``"RESNAME_RESNUM|InteractionType"``.
-    """
-    interactions: List[str] = []
-
-    try:
-        protlig = PDBComplex()
-        protlig.load_pdb(str(pdb_path))
-        protlig.analyze()
-
-        for k, binding_site in protlig.interaction_sets.items():
-            # PLIP key format: "RESNAME:CHAIN:RESNUM:" — match on residue name only
-            # to capture all chains that carry the same ligand.
-            if ligand_name.upper() != k.upper().split(":")[0]:
-                continue
-
-            bind_site_interactions = [
-                i for i in binding_site.all_itypes if "waterbridge" not in str(i)
-            ]
-
-            for inter in bind_site_interactions:
-                inter_type = str(inter).split("(")[0]
-
-                # Interaction strings include the chain ID so that residues on
-                # different chains are unambiguously distinguished (critical for
-                # interface pockets with two chains carrying the same residue numbers).
-                res_key = (
-                    f"{inter.restype.upper()}_{inter.resnr}_{inter.reschain}"
-                )
-
-                if inter_type == "pistack":
-                    interactions.append(
-                        f"{res_key}|Pi-stacking ({inter.type})"
-                    )
-                elif inter_type == "hbond":
-                    itype = "H-bond Donor" if inter.protisdon else "H-bond Acceptor"
-                    interactions.append(f"{res_key}|{itype}")
-                elif inter_type == "pication":
-                    itype = "Pi-Cation (Cat)" if inter.protcharged else "Pi-Cation (Pi)"
-                    interactions.append(f"{res_key}|{itype}")
-                elif inter_type == "saltbridge":
-                    itype = "Saltbridge (+)" if inter.protispos else "Saltbridge (-)"
-                    interactions.append(f"{res_key}|{itype}")
-                elif inter_type == "metal_complex":
-                    interactions.append(f"{res_key}|Metal Complex")
-                elif inter_type == "halogenbond":
-                    interactions.append(f"{res_key}|Halogen Bond")
-                elif inter_type == "hydroph_interaction":
-                    interactions.append(f"{res_key}|Hydrophobic")
-
-    except Exception as e:
-        log_message(
-            message_type="error",
-            stage="plip_analysis",
-            pdb_path=str(pdb_path),
-            error=str(e),
-        )
-        return ["analysis_error"]
-
-    return interactions if interactions else ["no_ligand_found"]
