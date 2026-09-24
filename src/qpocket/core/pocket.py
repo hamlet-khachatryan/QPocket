@@ -5,28 +5,9 @@ from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-from rdkit import Chem
 
 from qpocket.constants import HET_TO_REMOVE
 from qpocket.core.geometry import check_overlap, compute_volumetric_overlap, crop_pocket_by_interactions
-
-
-def get_smiles_from_pdb_block(pdb_block: str) -> str:
-    """Converts a PDB block to a SMILES string using RDKit.
-
-    Args:
-        pdb_block: PDB-formatted text block.
-
-    Returns:
-        SMILES string, or empty string if conversion fails.
-    """
-    try:
-        mol = Chem.MolFromPDBBlock(pdb_block, sanitize=True, removeHs=True)
-        if mol is not None:
-            return Chem.MolToSmiles(mol)
-    except Exception:
-        pass
-    return ""
 
 
 def is_residue_ligand(residue, allowed_cofactors: List[str]) -> bool:

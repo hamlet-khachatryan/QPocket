@@ -985,14 +985,14 @@ def _extract_reference_ligand(
     cfg: QPocketConfig,
     dirs: Dict[str, Path],
     row: pd.Series,
-) -> Tuple[Optional[str], str, Optional[Tuple[str, str]], Optional[str]]:
+) -> Tuple[Optional[str], str, Optional[str]]:
     """Pull the reference structure's own ligand out of its aligned model."""
     pdb_id = row["pdb_id"]
     ref_pocket_dir = dirs["pockets"] / pdb_id
     ref_aligned = Path(row["aligned_file"])
 
     if not cfg.reference.ligand_id:
-        return None, "REFERENCE", None, None
+        return None, "REFERENCE", None
 
     try:
         parser = PDBParser(QUIET=True)
@@ -1010,8 +1010,7 @@ def _extract_reference_ligand(
             lig_out = dirs["extracted_ligands"] / f"{pdb_id}_{res_name}.pdb"
             with open(lig_out, "w", encoding="utf-8") as f:
                 f.write(block)
-            smi = pocket.get_smiles_from_pdb_block(block)
-            return str(lig_out), "BOUND_STATE", ((smi, res_name) if smi else None), res_name
+            return str(lig_out), "BOUND_STATE", res_name
     except Exception as e:
         log_message(
             message_type="warning",
@@ -1019,7 +1018,7 @@ def _extract_reference_ligand(
             warning=f"reference ligand extraction failed: {e}",
         )
 
-    return None, "REFERENCE", None, None
+    return None, "REFERENCE", None
 
 
 def process_one_structure(
@@ -1047,7 +1046,7 @@ def process_one_structure(
 
     with start_action(action_type="process_structure", pdb_id=pdb_id):
         if is_reference and context.ref_pocket_bbox is not None:
-            lf, form, smiles, lig_id = _extract_reference_ligand(cfg, dirs, row)
+            lf, form, lig_id = _extract_reference_ligand(cfg, dirs, row)
             _featurize_reference(cfg, dirs, row)
         else:
             lf, form, lig_id = extraction.extract_pocket_from_structure(
@@ -1104,6 +1103,14 @@ def process_one_structure(
             )
             if form2 not in ("FAILED",):
                 lf, form, lig_id = lf2, form2, lig_id2
+
+        # Every extracted ligand contributes to actives.smi, not just the
+        # reference, and its bond orders come from the component definition.
+        if lf and lig_id and Path(lf).exists():
+            from qpocket.io.interactions import ligand_smiles
+
+            _smi = ligand_smiles(Path(lf))
+            smiles = (_smi, str(lig_id)) if _smi else None
 
         result = StructureResult(
             pdb_id=pdb_id,

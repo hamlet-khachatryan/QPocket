@@ -78,6 +78,35 @@ def protonated_ligand(pdb_path: Path, ph: float = 7.4) -> Chem.Mol:
     return mol
 
 
+def ligand_smiles(pdb_path: Path) -> str:
+    """SMILES of a ligand, with the bond orders its component definition gives.
+
+    Args:
+        pdb_path: Path to a PDB file holding one ligand.
+
+    Returns:
+        Canonical SMILES of the neutral parent, or "" when it cannot be read.
+    """
+    # Chem.MolFromPDBBlock bonds by proximity and makes every bond single, which
+    # turns a xanthine into an alcohol. The component definition has the orders.
+    try:
+        mol = Chem.RWMol(load_molecule(pdb_path, no_implicit=False))
+    except Exception:
+        return ""
+    if not mol.GetNumAtoms():
+        return ""
+    # Screening protonates for itself, so the list carries the neutral parent.
+    for atom in mol.GetAtoms():
+        atom.SetFormalCharge(0)
+        atom.SetNoImplicit(False)
+    out = mol.GetMol()
+    try:
+        Chem.SanitizeMol(out)
+    except Exception:
+        return ""
+    return Chem.MolToSmiles(Chem.RemoveHs(out))
+
+
 def split_complex(mol: Chem.Mol, ligand_id: str) -> Tuple[Chem.Mol, Chem.Mol]:
     """Separate a perceived complex into its ligand and its protein.
 
