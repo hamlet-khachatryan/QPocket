@@ -1,6 +1,6 @@
 """The notebook's default clustering must reproduce what a run actually stored.
 
-The banner in ``experiments/visualize_qpocket.py`` claims that affinity
+The banner in ``src/qpocket/viz/explorer.py`` claims that affinity
 propagation at the pipeline's damping and preference reproduces the labels in
 ``clustering_metadata.csv``. That claim is only worth making if it is checked
 against real runs, so this module checks it against whichever runs are present.

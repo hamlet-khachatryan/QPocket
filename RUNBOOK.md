@@ -42,7 +42,7 @@ for f in src/qpocket/conf/config.yaml \
          src/qpocket/pipelines/slurm.py src/qpocket/pipelines/tasks.py \
          src/qpocket/doctor.py src/qpocket/viz/runs.py \
          src/qpocket/core/structure.py \
-         scripts/qpocket_doctor.py experiments/visualize_qpocket.py; do
+         scripts/qpocket_doctor.py src/qpocket/viz/explorer.py; do
   [ -f "$f" ] && echo "ok       $f" || echo "MISSING  $f"
 done
 ```
@@ -269,8 +269,7 @@ On the **login node**, serve the notebook on localhost only:
 ```bash
 cd "$QP_HOME"
 . .venv/bin/activate
-marimo run experiments/visualize_qpocket.py --headless --port 2718 \
-  -- --runs "$QP_RUNS"
+qpocket explore "$QP_RUNS" --headless --port 2718
 ```
 
 On the **laptop**, forward the port and open it:
@@ -294,8 +293,7 @@ and tunnel through the login node instead:
 # cluster
 srun -p "$QP_PART" -t 02:00:00 --pty bash
 hostname                                          # note the node name
-marimo run experiments/visualize_qpocket.py --headless --host 0.0.0.0 \
-  --port 2718 --token-password "<pick-one>" -- --runs "$QP_RUNS"
+qpocket explore "$QP_RUNS" --headless --port 2718
 
 # laptop
 ssh -N -L 2718:<node-name>:2718 <user>@<login-node>
@@ -311,7 +309,7 @@ the SLURM logs. Copy those folders to the laptop with your usual transfer method
 then:
 
 ```bash
-marimo run experiments/visualize_qpocket.py -- --runs <folder with the copied runs>
+qpocket explore -- --runs <folder with the copied runs>
 ```
 
 Do this before scratch is purged.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from qpocket.viz.assets import (
     THREEDMOL_CDN,
     THREEDMOL_SHA256,
@@ -180,3 +182,11 @@ __all__ = [
 
 from qpocket.viz import two_stage  # noqa: E402,F401  (qviz.two_stage in the notebook)
 from qpocket.viz import clusterings  # noqa: E402,F401  (qviz.clusterings in the notebook)
+
+def explorer_path() -> Path:
+    """Where the explorer notebook is installed.
+
+    Returns:
+        Path to the marimo notebook that ships with the package.
+    """
+    return Path(__file__).resolve().parent / "explorer.py"

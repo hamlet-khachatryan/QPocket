@@ -134,12 +134,15 @@ feature sets are **not comparable**, and each run records the set it used in
 ## 3. Look at the results
 
 ```bash
-uv run marimo run experiments/visualize_qpocket.py -- --runs ./runs
+uv run qpocket explore ./runs
 ```
 
-It opens in your browser. `--runs` points at a folder of runs and every one
-appears in the dropdown; you can also type a path into the **"…or open a path"**
-box, either a single run directory or a folder of them.
+It opens in your browser. The path may be one run or a folder of runs; every run
+found appears in the dropdown, and you can type another path into the
+**"…or open a path"** box.
+
+The notebook ships inside the package, so this works from an installed wheel
+with no checkout present.
 
 The notebook shows the distance matrices, the embedding, the clustering and the
 pocket point clouds.
@@ -166,7 +169,7 @@ is the form a run stores.
 To change the notebook rather than use it:
 
 ```bash
-uv run marimo edit experiments/visualize_qpocket.py
+uv run qpocket explore ./runs --edit
 ```
 
 To reconsider the clustering without recomputing anything, adjust the two-stage
@@ -243,8 +246,13 @@ Start it fresh and open the URL it prints, rather than reusing an old tab:
 
 ```bash
 pkill -f "marimo run"                    # stop anything still holding the port
-uv run marimo run experiments/visualize_qpocket.py --headless -- --runs ./runs
+uv run qpocket explore ./runs --headless
 ```
+
+One cause is now gone: the notebook used to carry inline dependency metadata,
+which made marimo offer to run it in a sandboxed venv — the prompt defaults to
+yes, and that venv cannot see `qpocket`, so the kernel died on import and the
+page reported exactly this.
 
 Check the server is actually up before blaming the page:
 

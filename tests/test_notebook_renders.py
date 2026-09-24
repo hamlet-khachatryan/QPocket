@@ -17,7 +17,9 @@ import pandas as pd
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-NOTEBOOK = REPO / "experiments/visualize_qpocket.py"
+from qpocket.viz import explorer_path
+
+NOTEBOOK = explorer_path()
 websockets = pytest.importorskip("websockets", reason="needs the websockets client")
 
 

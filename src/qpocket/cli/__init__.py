@@ -857,6 +857,34 @@ def recluster_command(run_dir, mode, min_cluster_size, shape_method, shape_linka
     click.echo(f"{labels['cluster_id'].nunique()} clusters "
                f"({labels['shape_cluster_id'].nunique()} shape groups) -> {out}")
 
+@cli.command("explore")
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False), required=False)
+@click.option("--port", type=int, default=None, help="Port to serve on.")
+@click.option("--headless", is_flag=True, help="Do not open a browser; just print the URL.")
+@click.option("--edit", is_flag=True, help="Open the notebook for editing rather than running it.")
+def explore_command(run_dir, port, headless, edit):
+    """Open the explorer notebook on a run directory, or on a folder of runs."""
+    import subprocess
+
+    from qpocket.viz import explorer_path
+
+    command = [sys.executable, "-m", "marimo", "edit" if edit else "run",
+               str(explorer_path())]
+    if port is not None:
+        command += ["-p", str(port)]
+    if headless:
+        command.append("--headless")
+    if run_dir:
+        command += ["--", "--runs", str(Path(run_dir).resolve())]
+
+    try:
+        raise SystemExit(subprocess.call(command))
+    except FileNotFoundError:
+        raise click.ClickException(
+            "marimo is not installed; install the viz extra with `uv sync --extra viz`"
+        )
+
+
 for _command in (featurize_command, compare_command, compare_structures_command):
     cli.add_command(_command)
 cli.add_command(screen_cli, name="screen")
