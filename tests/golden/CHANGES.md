@@ -108,3 +108,54 @@ longer reuse a cache from an older featurized.csv or a different neighbour radiu
 
 Only clustering_params.json changes: each stage now records criterion and threshold.
 Defaults (count criterion) reproduce the stored clustering exactly.
+
+## 2026-09-24 — ProLIF replaces PLIP as the interaction detector
+
+- `spectral_distance_matrix`: max |delta| 220 (max value 767)
+- `shape_distance_matrix`: max |delta| 0.0136 (max value 0.035)
+- `feature_distance_matrix`: max |delta| 117 (max value 409)
+- 4A0D featurized: identical
+- 4B1H featurized: identical
+- 4B1J featurized: 215 -> 214 points
+- 6HMM featurized: identical
+- 6O9Y featurized: 180 -> 145 points
+- 7KFP featurized: 427 -> 302 points
+- 7KG6 featurized: 481 -> 463 points
+- clusters: ARI 0.314, 2 structure(s) moved
+
+**Why the geometry moved, not just the interaction tables.** PARG.yaml sets
+`reference.pocket_definition: Interactions`, so the second pass crops each pocket
+to its observed contacts and re-featurises. The interaction detector therefore
+feeds pocket geometry, and changing it necessarily moves `featurized.csv`, all
+three distance matrices and the clustering. The plan for this change expected
+only the interaction tables to move; that was wrong for this configuration.
+
+**Interaction counts, pooled over the seven structures:**
+
+| type | PLIP | ProLIF |
+|---|---|---|
+| H-bond Donor | 28 | 17 |
+| H-bond Acceptor | 11 | 2 |
+| Pi-stacking (P) | 11 | 5 |
+| Hydrophobic | 1 | 6 |
+
+`observed_interactions_freq.csv` goes from 18 rows to 11;
+`potential_interactions_freq.csv` and `binding_pocket_utilization.csv` keep their
+32 and 7 rows, since those come from geometry rather than from detection.
+
+ProLIF's defaults are stricter than PLIP's published cutoffs: hydrogen bonds at
+3.5 A and 130-180 degrees against PLIP's 4.1 A and 100 degrees, and pi-stacking
+with tighter angular criteria. Fewer contacts pass, so the interaction-cropped
+pockets shrink and every downstream number follows. Setting
+`interactions.parameters` to the PLIP-compatible preset documented in
+`docs/configuration.md` moves the thresholds back; it is not the default.
+
+Two caveats on the previous baseline, both measured:
+
+- PLIP's `LigandFinder` strips every hydrogen from the ligand it extracts
+  (`preparation.py:373`), so under `NOHYDRO` it reported **no** ligand-donor
+  hydrogen bonds at all. The old counts came from PLIP protonating the ligand
+  itself with OpenBabel, whose hydrogen placement is not reproducible: 290 of
+  4350 hydrogens moved between two identical calls.
+- The new path is deterministic. Three consecutive runs produce byte-identical
+  interaction strings for every benchmark structure.
