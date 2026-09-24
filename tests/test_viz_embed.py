@@ -187,9 +187,11 @@ def test_only_pca_reports_an_mds_result(two_groups):
     assert embed_distances(d, TSNE, perplexity=4.0).mds is None
 
 
-def test_tsne_needs_a_few_structures():
-    with pytest.raises(ValueError, match="at least 4"):
-        embed_distances(np.zeros((3, 3)), TSNE)
+def test_tsne_falls_back_below_four_structures():
+    """It used to raise; a three-structure run is ordinary, so it degrades instead."""
+    result = embed_distances(np.zeros((3, 3)), TSNE)
+    assert result.method == PCA_MDS
+    assert "too few" in result.note
 
 
 def test_tsne_perplexity_is_capped_below_the_sample_count(two_groups):
@@ -262,3 +264,30 @@ def test_offline_script_inlines_the_source():
 def test_online_script_points_at_the_pinned_cdn_build():
     tag = threedmol_script(offline=False)
     assert tag == f'<script src="{THREEDMOL_CDN}"></script>'
+
+
+def test_a_tiny_run_falls_back_instead_of_crashing():
+    """Three structures broke UMAP's spectral start deep inside scipy."""
+    import numpy as np
+
+    from qpocket.viz.embed import PCA_MDS, TSNE, UMAP, embed_distances
+
+    points = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    d = np.linalg.norm(points[:, None] - points[None], axis=2)
+    for method in (UMAP, TSNE):
+        result = embed_distances(d, method=method)
+        assert result.coords.shape == (3, 2)
+        assert result.method == PCA_MDS
+        assert "too few" in result.note
+
+
+def test_four_structures_still_use_the_method_asked_for():
+    import numpy as np
+
+    from qpocket.viz.embed import UMAP, embed_distances
+
+    rng = np.random.default_rng(0)
+    points = rng.random((4, 3))
+    d = np.linalg.norm(points[:, None] - points[None], axis=2)
+    np.fill_diagonal(d, 0.0)
+    assert embed_distances(d, method=UMAP).method == UMAP

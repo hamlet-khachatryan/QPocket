@@ -129,6 +129,16 @@ def embed_distances(
     d = symmetrise(distances)
     n = len(d)
 
+    # Below four structures the neighbour methods have nothing to work with:
+    # t-SNE refuses, and UMAP's spectral start fails inside scipy. A run this
+    # small is ordinary — a first fragment screen is often three structures —
+    # so it falls back to the exact layout instead of failing.
+    if n < 4 and method != PCA_MDS:
+        small = classical_mds(d)
+        reason = (f"Only {n} structures: too few for {method}, so this is the "
+                  "classical MDS layout, which is exact at this size.")
+        return Embedding(small.coords, ("PC1", "PC2"), reason, PCA_MDS, small)
+
     if method == PCA_MDS:
         mds = classical_mds(d)
         share = mds.variance_share
