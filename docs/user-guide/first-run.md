@@ -229,6 +229,29 @@ under `logs/`, so a failure in one does not bury the others.
 | APBS or pdb2pqr errors | run `uv run qpocket doctor` first; it runs both for real |
 | a component will not download | set `QPOCKET_CCD_CACHE` to a directory you populated on a connected machine |
 
+### The notebook says "kernel not found"
+
+The page is talking to a marimo server that is no longer running, or to a
+different one than it was opened against. The headings still show, because they
+rendered before the connection was lost, but nothing else does.
+
+`marimo run` stops when the shell that started it stops, so closing the terminal
+or pressing Ctrl-C leaves the tab stranded. Each server also issues its own
+token, so a tab opened against one instance cannot attach to the next.
+
+Start it fresh and open the URL it prints, rather than reusing an old tab:
+
+```bash
+pkill -f "marimo run"                    # stop anything still holding the port
+uv run marimo run experiments/visualize_qpocket.py --headless -- --runs ./runs
+```
+
+Check the server is actually up before blaming the page:
+
+```bash
+curl -sI http://localhost:2718 | head -1     # expect: HTTP/1.1 200 OK
+```
+
 For a human-readable console log instead of JSON:
 
 ```bash
