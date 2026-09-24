@@ -201,6 +201,36 @@ def protonate(pdb_path: Path, out_pqr: Path) -> Path:
         return out_pqr
 
 
+def protonate_for_interactions(pdb_path: Path, out_pqr: Path) -> Path:
+    """Protonate a protein with the hydrogen-bond network optimised.
+
+    Args:
+        pdb_path: Cleaned protein PDB.
+        out_pqr: Where to write the PQR.
+
+    Returns:
+        out_pqr.
+
+    Raises:
+        RuntimeError: If pdb2pqr writes nothing.
+    """
+    # Unlike protonate(), this omits --noopt: without the optimiser pdb2pqr leaves
+    # Ser, Thr and Tyr hydroxyl hydrogens in an arbitrary rotamer, which makes
+    # those donors unreliable. The feature PQR keeps --noopt so its numbers stand.
+    with start_action(action_type="run_pdb2pqr_optimised", pdb=str(pdb_path)):
+        out_pqr = Path(out_pqr).resolve()
+        cmd = [executable("pdb2pqr"), "--ff=PARSE", "--ffout=AMBER", "--whitespace",
+               str(Path(pdb_path).resolve()), str(out_pqr)]
+        with tempfile.TemporaryDirectory() as scratch:
+            p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=scratch)
+            out, err = p.communicate()
+        if not out_pqr.exists() or out_pqr.stat().st_size == 0:
+            log_message(message_type="error", error=err.decode(), stdout=out.decode())
+            raise RuntimeError("PDB2PQR failed or produced empty file.")
+        repair_pqr_with_missing_ions(Path(pdb_path), out_pqr)
+        return out_pqr
+
+
 def read_dx_grid(dx_path: Path):
     """Read an APBS OpenDX file.
 

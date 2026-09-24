@@ -8,3 +8,4 @@ tests/golden/expected/
 build/
 __pycache__/
 *.py[cod]
+tests/fixtures/complexes/

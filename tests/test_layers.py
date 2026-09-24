@@ -13,7 +13,8 @@ FORBIDDEN_PARAMS = {"cfg", "dirs"}
 # Each Phase-B task appends the modules it has made pure.
 CORE_MODULES_DONE = ["clustering.py", "spectral.py", "features.py", "structure.py", "sequence.py",
                      "geometry.py", "pocket.py", "interactions.py", "screening.py",
-                     "perception.py", "detect.py"]
+                     "perception.py", "detect.py",
+                     "protonation.py", "hydroxyl.py"]
 
 
 def _tree(name):

@@ -182,15 +182,17 @@ def _assign_charges(mol) -> None:
 
 
 def perceive(atoms: Sequence[AtomRecord],
-             templates: Mapping[str, Dict[FrozenSet[str], str]]) -> Chem.Mol:
+             templates: Mapping[str, Dict[FrozenSet[str], str]],
+             no_implicit: bool = True) -> Chem.Mol:
     """Build a sanitised molecule from atoms and their component definitions.
 
     Args:
         atoms: Parsed PDB atoms.
         templates: Bond tables keyed by canonical component ID.
+        no_implicit: Forbid implicit hydrogens; pass False before adding them.
 
     Returns:
-        Molecule with one conformer, explicit hydrogens and no implicit ones.
+        Molecule with one conformer and, when no_implicit, no implicit hydrogens.
 
     Raises:
         ValueError: If the molecule cannot be sanitised.
@@ -222,9 +224,12 @@ def perceive(atoms: Sequence[AtomRecord],
     _attach_hydrogens(mol, xyz)
     _link_residues(mol, residues, xyz)
     _assign_charges(mol)
-    # Hydrogens are all explicit; RDKit must not add implicit ones on top.
-    for atom in mol.GetAtoms():
-        atom.SetNoImplicit(True)
+    # Hydrogens are all explicit; RDKit must not add implicit ones on top. The
+    # flag is sticky once sanitised, so a molecule still needing hydrogens is
+    # built without it and flagged after Chem.AddHs.
+    if no_implicit:
+        for atom in mol.GetAtoms():
+            atom.SetNoImplicit(True)
 
     out = mol.GetMol()
     try:
