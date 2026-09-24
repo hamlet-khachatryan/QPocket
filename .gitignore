@@ -10,3 +10,4 @@ __pycache__/
 *.py[cod]
 tests/fixtures/complexes/
 site/
+experiments/__marimo__/

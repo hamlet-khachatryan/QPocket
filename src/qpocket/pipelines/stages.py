@@ -961,6 +961,26 @@ def protonate_one(cfg: QPocketConfig, dirs: Dict[str, Path], row) -> Optional[st
     return str(destination)
 
 
+def _featurize_reference(cfg: QPocketConfig, dirs: Dict[str, Path], row) -> None:
+    """Featurise the reference's own pocket, which its branch does not.
+
+    Args:
+        cfg: QPocket configuration.
+        dirs: Directory path dictionary.
+        row: The reference's master row.
+    """
+    # Every other structure is featurised inside extract_pocket_from_structure.
+    # The reference takes a shorter branch that only lifts its ligand out, so
+    # without this it is missing from its own distance matrix and clustering.
+    pdb_id = str(row["pdb_id"])
+    cloud = dirs["pockets"] / pdb_id / "binding_site.csv"
+    featurized = dirs["pockets"] / pdb_id / "featurized.csv"
+    cleaned = row.get("cleaned_file")
+    if featurized.exists() or not cloud.exists() or not cleaned:
+        return
+    extraction.featurize(cloud, Path(cleaned), cfg.features.enabled)
+
+
 def _extract_reference_ligand(
     cfg: QPocketConfig,
     dirs: Dict[str, Path],
@@ -1028,6 +1048,7 @@ def process_one_structure(
     with start_action(action_type="process_structure", pdb_id=pdb_id):
         if is_reference and context.ref_pocket_bbox is not None:
             lf, form, smiles, lig_id = _extract_reference_ligand(cfg, dirs, row)
+            _featurize_reference(cfg, dirs, row)
         else:
             lf, form, lig_id = extraction.extract_pocket_from_structure(
                 row,
