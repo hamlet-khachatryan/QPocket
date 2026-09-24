@@ -66,6 +66,7 @@ def write_part(dirs, pdb_id, **kw):
     result = StructureResult(
         pdb_id=pdb_id,
         ligand_file=kw.get("ligand_file"),
+        ligand_id=kw.get("ligand_id"),
         protein_state=kw.get("protein_state", "BOUND_STATE"),
         potential=kw.get("potential", [f"ARG_1_A"]),
         observed=kw.get("observed", [f"ARG_1_A|Hydrophobic"]),

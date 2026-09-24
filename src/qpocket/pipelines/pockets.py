@@ -28,7 +28,7 @@ from qpocket.core.providers import base
 from qpocket.io import tables, tools
 from qpocket.types import StructureData
 from qpocket.io.tables import write_points as _write_coords_csv
-from qpocket.io.tools import plip_interactions as get_plip_interactions  # noqa: F401 (re-exported)
+from qpocket.io.interactions import interactions_for
 from qpocket.io.tools import run_cavfind
 
 warnings.simplefilter("ignore", PDBConstructionWarning)
@@ -272,7 +272,7 @@ def extract_pocket_from_structure(
         providers: Feature providers to run.
 
     Returns:
-        ``(ligand_file_path_or_None, status_string)`` where status is one of ``BOUND_STATE``, ``UNBOUND_STATE``, ``CAVITY_CLOSED``, ``NO_ANY_CAVITY_FOUND``, or ``FAILED``.
+        ``(ligand_file_path_or_None, status_string, ligand_component_id_or_None)`` where status is one of ``BOUND_STATE``, ``UNBOUND_STATE``, ``CAVITY_CLOSED``, ``NO_ANY_CAVITY_FOUND``, or ``FAILED``.
     """
     pdb_id = row["pdb_id"]
     cleaned_file = row["cleaned_file"]
@@ -281,13 +281,13 @@ def extract_pocket_from_structure(
     allowed_cofactors_list = allowed_cofactors.split("|") if allowed_cofactors else []
 
     if pd.isna(cleaned_file) or pd.isna(aligned_file):
-        return None, "FAILED"
+        return None, "FAILED", None
 
     cleaned_path = Path(cleaned_file)
     aligned_path = Path(aligned_file)
 
     if not cleaned_path.exists():
-        return None, "FAILED"
+        return None, "FAILED", None
 
     with start_action(action_type="extract_pocket", pdb_id=pdb_id, pocket_mode=pocket_mode):
 
@@ -303,7 +303,7 @@ def extract_pocket_from_structure(
                     pdb_id=pdb_id,
                     error="bounding_box parameters not provided",
                 )
-                return None, "FAILED"
+                return None, "FAILED", None
 
             target_coords = create_bounding_box_pocket(
                 bounding_box_center,
@@ -321,10 +321,10 @@ def extract_pocket_from_structure(
                     pdb_id=pdb_id,
                     warning=f"cavity detection failed: {e}",
                 )
-                return None, "FAILED"
+                return None, "FAILED", None
 
             if not found_cavities:
-                return None, "NO_ANY_CAVITY_FOUND"
+                return None, "NO_ANY_CAVITY_FOUND", None
 
             if ref_pocket_bbox is not None:
                 bbox_min, bbox_max = ref_pocket_bbox
@@ -332,11 +332,11 @@ def extract_pocket_from_structure(
                     found_cavities, bbox_min, bbox_max, pdb_id
                 )
                 if target_coords is None:
-                    return None, "CAVITY_CLOSED"
+                    return None, "CAVITY_CLOSED", None
             else:
                 target_coords = select_cavity_by_centroid(found_cavities, ref_centroid)
                 if target_coords is None:
-                    return None, "CAVITY_CLOSED"
+                    return None, "CAVITY_CLOSED", None
 
         # ── Save initial pocket (optional) ────────────────────────────────────
         if save_intermediate:
@@ -388,11 +388,11 @@ def extract_pocket_from_structure(
         try:
             structure = parser.get_structure(pdb_id, str(aligned_path))
         except Exception:
-            return None, "FAILED"
+            return None, "FAILED", None
 
         choice = pick_ligand(structure, final_pocket_coords, allowed_cofactors_list)
         if choice is None:
-            return None, "UNBOUND_STATE"
+            return None, "UNBOUND_STATE", None
 
         best_res, best_chain_id, n_atoms = choice.residue, choice.chain_id, choice.n_atoms
         res_name = best_res.get_resname().strip()
@@ -410,7 +410,7 @@ def extract_pocket_from_structure(
             n_atoms=n_atoms,
             n_candidates=choice.n_candidates,
         )
-        return str(lig_out), "BOUND_STATE"
+        return str(lig_out), "BOUND_STATE", res_name
 
 
 # ---------------------------------------------------------------------------
@@ -481,14 +481,15 @@ def run_analysis_step(
                         error=str(e),
                     )
 
-        if row.get("protein_state") == "BOUND_STATE" and pd.notna(row.get("ligand_file")):
-            aligned_path = Path(row["aligned_file"])
-            lig_name = Path(row["ligand_file"]).stem.split("_")[-1].upper()
-
-            if aligned_path.exists():
-                res["observed"] = get_plip_interactions(aligned_path, lig_name)
-            else:
-                res["observed"] = ["file_not_found"]
+        ligand_id = row.get("ligand_id")
+        has_ligand = ligand_id is not None and pd.notna(ligand_id) and str(ligand_id).strip()
+        if row.get("protein_state") == "BOUND_STATE" and has_ligand:
+            # The protonated complex, not the aligned model: interactions are read
+            # from the structure whose hydrogens the pipeline placed.
+            protonated = row.get("protonated_file")
+            source = Path(protonated) if protonated and pd.notna(protonated) \
+                else Path(row["aligned_file"])
+            res["observed"] = interactions_for(source, str(ligand_id))
         else:
             res["observed"] = ["no_ligand_found"]
 

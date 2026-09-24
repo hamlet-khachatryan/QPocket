@@ -757,14 +757,16 @@ class StructureResult(NamedTuple):
     Attributes:
         pdb_id: The structure.
         ligand_file: Path to the extracted ligand, or ``None``.
+        ligand_id: Chemical-component ID of that ligand, or ``None``.
         protein_state: ``BOUND_STATE``, ``UNBOUND_STATE``, ``REFERENCE``, ``FAILED`` or ``NO_ANY_CAVITY_FOUND``.
         potential: Residues within reach of the pocket cloud.
-        observed: ``RESIDUE|InteractionType`` entries from PLIP.
+        observed: ``RESIDUE|InteractionType`` entries from ProLIF.
         smiles: ``(smiles, ligand_name)`` when a ligand was extracted.
     """
 
     pdb_id: str
     ligand_file: Optional[str]
+    ligand_id: Optional[str]
     protein_state: str
     potential: List[str]
     observed: List[str]
@@ -779,6 +781,7 @@ class StructureResult(NamedTuple):
         return {
             "pdb_id": self.pdb_id,
             "ligand_file": self.ligand_file,
+            "ligand_id": self.ligand_id,
             "protein_state": self.protein_state,
             "potential": list(self.potential),
             "observed": list(self.observed),
@@ -799,6 +802,7 @@ class StructureResult(NamedTuple):
         return cls(
             pdb_id=payload["pdb_id"],
             ligand_file=payload.get("ligand_file"),
+            ligand_id=payload.get("ligand_id"),
             protein_state=payload.get("protein_state", "FAILED"),
             potential=list(payload.get("potential") or []),
             observed=list(payload.get("observed") or []),
@@ -912,18 +916,63 @@ def load_extraction_context(dirs: Dict[str, Path]) -> ExtractionContext:
     return ExtractionContext.from_json(json.loads(path.read_text(encoding="utf-8")))
 
 
+def protonate_one(cfg: QPocketConfig, dirs: Dict[str, Path], row) -> Optional[str]:
+    """Write one docking-ready structure: protonated protein, protonated ligand.
+
+    Args:
+        cfg: QPocket configuration.
+        dirs: Directory path dictionary.
+        row: The structure's master row, carrying ligand_file and ligand_id.
+
+    Returns:
+        Path to the protonated PDB, or None when protonation failed.
+    """
+    from qpocket.core.hydroxyl import optimise_hydroxyls
+    from qpocket.io.interactions import (load_molecule, protonated_ligand,
+                                         write_complex, write_molecule)
+    from qpocket.io.tools import protonate_for_interactions
+
+    pdb_id = row["pdb_id"]
+    cleaned = row.get("cleaned_file")
+    if not cleaned or not Path(cleaned).exists():
+        return None
+
+    out_dir = Path(dirs["cleaned"]).parent / "protonated"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    destination = out_dir / f"{pdb_id}.pdb"
+    if destination.exists():
+        return str(destination)
+
+    try:
+        pqr = protonate_for_interactions(Path(cleaned), out_dir / f"{pdb_id}.pqr")
+        ligand_mol = None
+        ligand_id = row.get("ligand_id")
+        ligand_file = row.get("ligand_file")
+        if ligand_id and ligand_file and Path(ligand_file).exists():
+            ligand_mol = protonated_ligand(Path(ligand_file))
+        write_complex(destination, pqr, ligand_mol, ligand_id)
+        # pdb2pqr placed the hydroxyl hydrogens before the ligand existed, so
+        # their rotamers are re-chosen now that it is present.
+        write_molecule(destination, optimise_hydroxyls(load_molecule(destination)))
+    except Exception as error:
+        log_message(message_type="error", stage="protonation",
+                    pdb_id=pdb_id, error=str(error))
+        return None
+    return str(destination)
+
+
 def _extract_reference_ligand(
     cfg: QPocketConfig,
     dirs: Dict[str, Path],
     row: pd.Series,
-) -> Tuple[Optional[str], str, Optional[Tuple[str, str]]]:
+) -> Tuple[Optional[str], str, Optional[Tuple[str, str]], Optional[str]]:
     """Pull the reference structure's own ligand out of its aligned model."""
     pdb_id = row["pdb_id"]
     ref_pocket_dir = dirs["pockets"] / pdb_id
     ref_aligned = Path(row["aligned_file"])
 
     if not cfg.reference.ligand_id:
-        return None, "REFERENCE", None
+        return None, "REFERENCE", None, None
 
     try:
         parser = PDBParser(QUIET=True)
@@ -942,7 +991,7 @@ def _extract_reference_ligand(
             with open(lig_out, "w", encoding="utf-8") as f:
                 f.write(block)
             smi = pocket.get_smiles_from_pdb_block(block)
-            return str(lig_out), "BOUND_STATE", ((smi, res_name) if smi else None)
+            return str(lig_out), "BOUND_STATE", ((smi, res_name) if smi else None), res_name
     except Exception as e:
         log_message(
             message_type="warning",
@@ -950,7 +999,7 @@ def _extract_reference_ligand(
             warning=f"reference ligand extraction failed: {e}",
         )
 
-    return None, "REFERENCE", None
+    return None, "REFERENCE", None, None
 
 
 def process_one_structure(
@@ -978,9 +1027,9 @@ def process_one_structure(
 
     with start_action(action_type="process_structure", pdb_id=pdb_id):
         if is_reference and context.ref_pocket_bbox is not None:
-            lf, form, smiles = _extract_reference_ligand(cfg, dirs, row)
+            lf, form, smiles, lig_id = _extract_reference_ligand(cfg, dirs, row)
         else:
-            lf, form = extraction.extract_pocket_from_structure(
+            lf, form, lig_id = extraction.extract_pocket_from_structure(
                 row,
                 dirs,
                 ref_centroid=context.ref_centroid if is_reference else None,
@@ -997,7 +1046,11 @@ def process_one_structure(
 
         enriched = row.copy()
         enriched["ligand_file"] = lf
+        enriched["ligand_id"] = lig_id
         enriched["protein_state"] = form
+        # The docking-ready structure is written before interactions are read
+        # from it, and an apo structure still gets its protonated protein.
+        enriched["protonated_file"] = protonate_one(cfg, dirs, enriched)
 
         analysis = extraction.run_analysis_step(enriched, dirs)
 
@@ -1008,7 +1061,7 @@ def process_one_structure(
             and analysis["observed"]
             and form not in ("FAILED", "NO_ANY_CAVITY_FOUND")
         ):
-            lf2, form2 = extraction.extract_pocket_from_structure(
+            lf2, form2, lig_id2 = extraction.extract_pocket_from_structure(
                 enriched,
                 dirs,
                 ref_centroid=context.ref_centroid if is_reference else None,
@@ -1025,11 +1078,12 @@ def process_one_structure(
                 providers=cfg.features.enabled,
             )
             if form2 not in ("FAILED",):
-                lf, form = lf2, form2
+                lf, form, lig_id = lf2, form2, lig_id2
 
         result = StructureResult(
             pdb_id=pdb_id,
             ligand_file=lf,
+            ligand_id=lig_id,
             protein_state=form,
             potential=analysis["potential"],
             observed=analysis["observed"],
@@ -1128,6 +1182,9 @@ def collect_structure_results(cfg: QPocketConfig, dirs: Dict[str, Path]) -> None
 
         df["ligand_file"] = [
             results[pid].ligand_file if pid in results else None for pid in df["pdb_id"]
+        ]
+        df["ligand_id"] = [
+            results[pid].ligand_id if pid in results else None for pid in df["pdb_id"]
         ]
         df["protein_state"] = [
             results[pid].protein_state if pid in results else "FAILED"
