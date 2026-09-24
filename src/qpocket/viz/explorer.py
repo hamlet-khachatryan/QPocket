@@ -191,8 +191,8 @@ def _(mo, qviz, run_dir):
     cluster_settings = _recluster.load_settings(run_dir)
 
     cluster_method = mo.ui.dropdown(
-        options={label: key for key, label in qviz.clusterings.METHODS.items()},
-        value=qviz.clusterings.METHODS["affinity"],
+        options={label: key for key, label in qviz.two_stage.METHODS.items()},
+        value=qviz.two_stage.METHODS["two_stage"],
         label="**Method**",
         full_width=True,
     )
@@ -210,38 +210,33 @@ def _(cluster_matrices, cluster_settings, info, mo, qviz):
         return mo.ui.slider(start=lo, stop=hi, step=max((hi - lo) / 200, 1e-9),
                             value=min(max(value, lo), hi), label=label, show_value=True)
 
-    # Every widget is defined even when the run carries no matrices, because a
-    # cell that stops leaves an error box on each of its descendants.
     if cluster_matrices is None:
         _combined_lo, _combined_hi, _shape_lo, _shape_hi, _shape_start = 0.0, 1.0, 0.0, 1.0, 0.5
     else:
         _combined_lo, _combined_hi = qviz.two_stage.height_range(cluster_matrices.combined)
         _shape_link = cluster_settings.shape.linkage
         _shape_lo, _shape_hi = qviz.two_stage.height_range(cluster_matrices.shape, _shape_link)
-        _stored_shape = (int(info["shape_cluster_id"].nunique())
-                         if "shape_cluster_id" in info.columns else 2)
+        _stored = (int(info["shape_cluster_id"].nunique())
+                   if "shape_cluster_id" in info.columns else 2)
         _shape_start = (float(cluster_settings.shape.threshold)
                         if cluster_settings.shape.criterion == "threshold"
                         and cluster_settings.shape.threshold
                         else qviz.two_stage.height_for_count(cluster_matrices.shape,
-                                                             max(_stored_shape, 1), _shape_link))
+                                                             max(_stored, 1), _shape_link))
 
     damping = mo.ui.slider(start=0.5, stop=0.98, step=0.01, value=0.9,
                            label="Damping", show_value=True)
-    preference = mo.ui.slider(start=5, stop=95, step=5, value=50,
-                              label="Preference percentile", show_value=True)
     combined_cut = _slider(_combined_lo, _combined_hi,
                            (_combined_lo + _combined_hi) / 2, "Cut height")
     shape_cut = _slider(_shape_lo, _shape_hi, _shape_start, "Shape cut")
     min_split = mo.ui.number(start=2, stop=100, value=int(cluster_settings.min_cluster_size),
                              label="Split groups of at least")
-    return combined_cut, damping, min_split, preference, shape_cut
+    return combined_cut, damping, min_split, shape_cut
 
 
 @app.cell
 def _(cluster_matrices, cluster_settings, mo, qviz, shape_cut):
-    # The chemistry range depends on where the shape cut fell, so it is built
-    # in its own cell and follows that slider.
+    # The chemistry range depends on where the shape cut fell, so it follows it.
     if cluster_matrices is None:
         _chem_lo, _chem_hi = 0.0, 1.0
     else:
@@ -258,10 +253,10 @@ def _(cluster_matrices, cluster_settings, mo, qviz, shape_cut):
 
 @app.cell
 def _(chem_cut, cluster_matrices, cluster_method, combined_cut, damping, min_split, mo,
-      preference, shape_cut):
+      shape_cut):
     # Only the knobs the chosen method uses are on screen.
     (mo.md("") if cluster_matrices is None else {
-        "affinity": mo.hstack([damping, preference], justify="start", gap=2),
+        "affinity": mo.hstack([damping], justify="start", gap=2),
         "hierarchical": mo.hstack([combined_cut], justify="start", gap=2),
         "two_stage": mo.hstack([shape_cut, chem_cut, min_split], justify="start", gap=2),
     }[cluster_method.value])
@@ -270,89 +265,101 @@ def _(chem_cut, cluster_matrices, cluster_method, combined_cut, damping, min_spl
 
 @app.cell
 def _(chem_cut, cluster_matrices, cluster_method, cluster_settings, combined_cut,
-      damping, info, min_split, mo, preference, qviz, shape_cut):
-    adjusted_clusters, adjusted_settings, grouping = None, None, None
-    _method = None if cluster_matrices is None else cluster_method.value
-    if _method is None:
-        _summary = mo.md("_Clustering as stored with the run._")
-    elif _method == "affinity":
-        grouping = qviz.clusterings.affinity(cluster_matrices, float(damping.value),
-                                             float(preference.value))
-    elif _method == "hierarchical":
-        grouping = qviz.clusterings.hierarchical(cluster_matrices, float(combined_cut.value))
+      damping, min_split, qviz, shape_cut):
+    # The preview runs the pipeline's own clustering, so what is shown here and
+    # what Apply writes cannot disagree.
+    pending_settings, pending = None, None
+    if cluster_matrices is not None:
+        pending_settings = qviz.two_stage.settings_for(
+            cluster_settings, cluster_method.value,
+            combined_cut=combined_cut.value, shape_cut=shape_cut.value,
+            chem_cut=chem_cut.value, damping=damping.value,
+            min_cluster_size=int(min_split.value))
+        pending = qviz.two_stage.preview(cluster_matrices, pending_settings)
+    return pending, pending_settings
+
+
+@app.cell
+def _(cluster_matrices, cluster_method, mo, pending, qviz, shape_cut, chem_cut,
+      cluster_settings):
+    # The mirrored pair only means something for the two-stage cut.
+    if cluster_matrices is None or pending is None:
+        _view = mo.md("")
+    elif cluster_method.value == "two_stage":
+        _view = qviz.two_stage.mirrored_figure(
+            cluster_matrices, pending, shape_cut.value, chem_cut.value,
+            cluster_settings.shape.linkage)
+    elif cluster_method.value == "hierarchical":
+        _view = qviz.two_stage.dendrogram_figure(
+            cluster_matrices.combined, cluster_matrices.ids, None, "Combined")
     else:
-        adjusted_settings = qviz.two_stage.threshold_settings(
-            cluster_settings, shape_cut.value, chem_cut.value, int(min_split.value))
-        grouping = qviz.clusterings.two_stage(cluster_matrices, adjusted_settings)
-
-    if grouping is not None:
-        adjusted_clusters = grouping.frame
-        _stored = dict(zip(info["pdb_id"].astype(str), info["cluster_id"]))
-        _cmp = qviz.clusterings.agreement(grouping.frame, _stored)
-        _facts = [f"**{grouping.n_clusters} clusters**"]
-        if grouping.silhouette is not None:
-            _facts.append(f"silhouette {grouping.silhouette:.2f}")
-        if _cmp is not None:
-            _facts.append(f"ARI {_cmp.ari:.2f} vs the stored clustering ({_cmp.n_moved} moved)")
-        _summary = mo.md(" · ".join(_facts) + f"\n\n_{grouping.caption}_")
-    _summary
-    return adjusted_clusters, adjusted_settings, grouping
-
-
-@app.cell
-def _(cluster_matrices, cluster_method, cluster_settings, combined_cut, mo, qviz, shape_cut):
-    # The tree only means something for the methods that cut one.
-    _method = None if cluster_matrices is None else cluster_method.value
-    _cut, _matrix, _link, _title = (None, None, None, None) if _method in (None, "affinity") else (
-        (combined_cut.value, cluster_matrices.combined, "average", "Combined")
-        if _method == "hierarchical"
-        else (shape_cut.value, cluster_matrices.shape, cluster_settings.shape.linkage, "Shape")
-    )
-    (mo.md("_Affinity propagation builds no tree; see the heatmap below._")
-     if _method == "affinity" else mo.md("") if _matrix is None
-     else qviz.two_stage.dendrogram_figure(_matrix, cluster_matrices.ids, _cut, _title, _link))
+        _view = mo.md("_Affinity propagation builds no tree; see the heatmap below._")
+    _view
     return
 
 
 @app.cell
-def _(adjusted_settings, mo):
-    save_clustering = mo.ui.run_button(
-        label="Save as this run's clustering", disabled=adjusted_settings is None)
+def _(mo, pending):
+    _facts = []
+    if pending is not None:
+        _facts.append(f"**{pending.n_clusters} clusters**")
+        if pending.silhouette is not None:
+            _facts.append(f"silhouette {pending.silhouette:.2f}")
+    mo.md(" · ".join(_facts) + "  \n_Preview only; press Apply to make it the run's clustering._"
+          if _facts else "")
+    return
+
+
+@app.cell
+def _(mo, pending_settings):
+    apply_clustering = mo.ui.run_button(
+        label="Apply to this run", disabled=pending_settings is None)
     mo.vstack([
-        save_clustering,
-        mo.md("_Only the two-stage result can be saved; it is the form a run stores._")
-        if adjusted_settings is None else mo.md(""),
+        apply_clustering,
+        mo.md("_Writes `metadata/clustering_metadata.csv` and `clustering_params.json`; "
+              "the previous pair moves to `metadata/clustering_history/`._"),
     ])
-    return (save_clustering,)
+    return (apply_clustering,)
 
 
 @app.cell
-def _(adjusted_settings, mo, run_dir, save_clustering):
-    mo.stop(not save_clustering.value or adjusted_settings is None)
-    from qpocket.pipelines import recluster as _recluster_save
+def _(apply_clustering, mo, pending_settings, run_dir):
+    # Every section below reads the file this writes, so the button is what makes
+    # them refresh.
+    applied_at = None
+    if apply_clustering.value and pending_settings is not None:
+        from qpocket.pipelines import recluster as _recluster_apply
 
-    _saved = _recluster_save.run(run_dir, adjusted_settings)
-    mo.md(f"Saved `{_saved}`; the previous clustering is in `metadata/clustering_history/`.")
-    return
+        _saved = _recluster_apply.run(run_dir, pending_settings)
+        applied_at = str(_saved)
+    mo.md(f"Applied; `{applied_at}` is now this run's clustering."
+          if applied_at else "")
+    return (applied_at,)
 
 
 @app.cell
-def _(adjusted_clusters, dist_df, info, mo, np, qviz):
+def _(applied_at, dist_df, info, mo, np, pd, qviz, run_dir):
     # ---- The grouping every view below follows -------------------------------
-    # A run ships one clustering of its pockets, and this notebook shows it as
-    # stored: the cluster labels and the exemplar the pipeline nominated for each.
+    # The clustering section is the decision point: it writes
+    # metadata/clustering_metadata.csv, and this reads that file back. Depending
+    # on applied_at is what makes these views refresh after Apply.
     #
-    # Silhouette is the one thing added here, since the stored metadata does not
-    # carry it. It is measured on the spectral distances themselves, so a structure
-    # with a negative value sits closer to a cluster other than its own and is
-    # worth opening in the viewer.
+    # Silhouette is added here, since the stored metadata does not carry it. It is
+    # measured on the spectral distances themselves, so a structure with a
+    # negative value sits closer to a cluster other than its own.
+    _ = applied_at
     active_info = info.copy()
-    if adjusted_clusters is not None:
-        _cols = ["cluster_id", "shape_cluster_id", "chem_cluster_id", "is_representative", "dist_to_exemplar"]
+    _stored_path = run_dir / "metadata" / "clustering_metadata.csv"
+    if _stored_path.exists():
+        _saved = pd.read_csv(_stored_path)
+        _cols = [c for c in ["cluster_id", "shape_cluster_id", "chem_cluster_id",
+                             "is_representative", "dist_to_exemplar"]
+                 if c in _saved.columns]
         active_info = (
             active_info.drop(columns=[c for c in _cols if c in active_info.columns])
             .assign(pdb_id=lambda d: d["pdb_id"].astype(str))
-            .merge(adjusted_clusters, on="pdb_id", how="left")
+            .merge(_saved[["pdb_id", *_cols]].assign(
+                pdb_id=lambda d: d["pdb_id"].astype(str)), on="pdb_id", how="left")
             .sort_values(["cluster_id", "pdb_id"])
             .reset_index(drop=True)
         )
@@ -491,7 +498,7 @@ def _(
 
 
 @app.cell
-def _(color_by, emb_df, layout, mo, px):
+def _(color_by, emb_df, layout, mo, px, qviz):
     _cb = color_by.value
     _hover = [
         c
@@ -503,12 +510,17 @@ def _(color_by, emb_df, layout, mo, px):
         emb_df,
         x="X",
         y="Y",
-        color=_cb,
+        color=_cb if _cb != "cluster_id" else emb_df["cluster_id"].astype(str),
         text="pdb_id",
         hover_name="pdb_id",
         hover_data=_hover,
         custom_data=["pdb_id"],
-        color_continuous_scale="Viridis" if emb_df[_cb].dtype.kind in "fi" else None,
+        # Cluster ids are categories: a continuous ramp would imply an order
+        # between them, and would not match the colours in the dendrograms.
+        color_discrete_map=(qviz.ramps.cluster_colours(emb_df["cluster_id"])
+                            if _cb == "cluster_id" else None),
+        color_continuous_scale=("Viridis" if _cb != "cluster_id"
+                                and emb_df[_cb].dtype.kind in "fi" else None),
         template="plotly_white",
         height=560,
         labels={"X": layout.axis_labels[0], "Y": layout.axis_labels[1]},

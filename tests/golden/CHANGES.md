@@ -159,3 +159,30 @@ Two caveats on the previous baseline, both measured:
   4350 hydrogens moved between two identical calls.
 - The new path is deterministic. Three consecutive runs produce byte-identical
   interaction strings for every benchmark structure.
+
+## 2026-09-24 — actives.smi lists every ligand, with real bond orders
+
+Only `screening/actives.smi` changes. `featurized.csv`, the three distance
+matrices and the clustering are untouched.
+
+```
+before   SMILES	PDB_ID	Ligand_Name
+         CN1C(O)C2NC(SCCN3CCC(C(O)O)CC3)NC2N(C)C1O	7KG6	WDG
+
+after    SMILES	PDB_ID	Ligand_Name
+         Nc1ncnc2c1ncn2C1OC(COP(=O)(O)OP(=O)(O)OCC2OC(O)C(O)C2O)C(O)C1O	4B1H	AR6
+         Nc1ncnc2c1ncn2C1OC(COP(=O)(O)OP(=O)(O)OCC2NCC(O)C2O)C(O)C1O	4B1J	A1R
+         Cn1c(=O)c2c(ncn2CC(O)CN2CCOCC2)n(C)c1=O	6O9Y	M0V
+         Cn1c(=S)c2c(ncn2CCNC(=O)NS(C)(=O)=O)n(C)c1=O	7KFP	WD7
+         Cn1c(=O)c2[nH]c(SCCN3CCC(C(=O)O)CC3)nc2n(C)c1=O	7KG6	WDG
+```
+
+One row becomes five, one per bound structure. The previous file held only the
+reference, because SMILES were derived inside the reference branch alone.
+
+The chemistry was also wrong. `Chem.MolFromPDBBlock` bonds by proximity and
+makes every bond single, so WDG's xanthine was recorded as an alcohol and the
+adenines of AR6 and A1R lost their aromatic rings. The SMILES now come from each
+ligand's chemical-component definition, which is where the bond orders live.
+
+4A0D and 6HMM contribute no row: they are unbound.

@@ -295,3 +295,40 @@ def legend_gradient(stops: Sequence[str], n: int = 48) -> Tuple[str, ...]:
         Hex colours, low value first.
     """
     return tuple(linear_hex(v, stops) for v in np.linspace(0.0, 100.0, n))
+
+
+#: A colour per cluster. Cluster ids are categories, so a continuous ramp would
+#: imply an order between them that does not exist.
+CLUSTER_COLOURS: Tuple[str, ...] = (
+    "#4c72b0", "#dd8452", "#55a868", "#c44e52", "#8172b3",
+    "#937860", "#da8bc3", "#8c8c8c", "#ccb974", "#64b5cd",
+)
+
+#: Drawn for anything the clustering left out.
+UNASSIGNED_COLOUR = "#bdbdbd"
+
+
+def cluster_colour(cluster_id: int) -> str:
+    """Colour for one cluster.
+
+    Args:
+        cluster_id: Cluster index; negatives mean unassigned.
+
+    Returns:
+        A hex colour, reused cyclically beyond the palette's length.
+    """
+    if cluster_id is None or int(cluster_id) < 0:
+        return UNASSIGNED_COLOUR
+    return CLUSTER_COLOURS[int(cluster_id) % len(CLUSTER_COLOURS)]
+
+
+def cluster_colours(cluster_ids: Sequence[int]) -> Dict[str, str]:
+    """Colour map for a set of clusters, for a categorical plotly axis.
+
+    Args:
+        cluster_ids: The cluster ids present.
+
+    Returns:
+        Mapping from the id as a string to its colour.
+    """
+    return {str(int(c)): cluster_colour(int(c)) for c in sorted(set(cluster_ids))}
