@@ -28,7 +28,8 @@ def _():
 
     # This notebook ships inside the package, so the import always resolves.
     import qpocket.viz as qviz
-    return Path, go, json, lru_cache, mo, np, pd, px, qviz
+    from qpocket.viz import controls as qcontrols
+    return Path, go, json, lru_cache, mo, np, pd, px, qcontrols, qviz
 
 
 @app.cell
@@ -435,7 +436,7 @@ def _(mo):
 
 
 @app.cell
-def _(active_info, dist_df, embed_method, mo, qviz):
+def _(active_info, dist_df, embed_method, mo, qcontrols, qviz):
     _color_opts = [
         c
         for c in ["cluster_id", "silhouette", "utilization", "protein_state", "rmsd_to_ref", "is_representative"]
@@ -459,8 +460,13 @@ def _(active_info, dist_df, embed_method, mo, qviz):
         value=round(min(15.0, _pmax), 1), label="perplexity",
     )
 
-    _knobs = {"UMAP": [n_neighbors, min_dist], "t-SNE": [perplexity]}.get(embed_method.value, [])
-    mo.hstack([embed_method, color_by, *_knobs], justify="start", gap=2)
+    # The method and what it is coloured by stay out; its knobs fold away.
+    qcontrols.panel(
+        primary=[embed_method, color_by],
+        groups={embed_method.value: {"UMAP": [n_neighbors, min_dist],
+                                     "t-SNE": [perplexity]}.get(embed_method.value, [])},
+        label="Layout options",
+    )
     return color_by, min_dist, n_neighbors, perplexity
 
 
@@ -594,7 +600,7 @@ def _(mo):
 
 
 @app.cell
-def _(FEATURE_COLS, active_info, mo, panel_mode, umap_selection):
+def _(FEATURE_COLS, active_info, mo, panel_mode, qcontrols, umap_selection):
     # ---- Viewer controls ----------------------------------------------------
     _clusters = [str(c) for c in sorted(active_info["cluster_id"].dropna().unique())]
 
@@ -669,20 +675,18 @@ def _(FEATURE_COLS, active_info, mo, panel_mode, umap_selection):
     # but needs no network, which matters on a locked-down machine.
     offline_viewer = mo.ui.checkbox(value=True, label="Offline viewer")
 
-    mo.vstack(
-        [
-            mo.hstack(
-                [panel_mode]
-                + ([cluster_sel] if panel_mode.value == "one cluster" else [])
-                + [feature, colour_mode, color_scheme, clip_pct, sphere_radius],
-                justify="start", gap=1.5, wrap=True,
-            ),
-            mo.hstack(
-                [protein_style, cartoon_opacity, context_radius, n_cols, panel_px,
-                 show_ligand, ligand_color, show_pocket, hover_values, offline_viewer],
-                justify="start", gap=1.5, wrap=True,
-            ),
-        ]
+    # What you are looking at stays on screen; how it is drawn folds away.
+    qcontrols.panel(
+        primary=[panel_mode]
+        + ([cluster_sel] if panel_mode.value == "one cluster" else [])
+        + [feature],
+        groups={
+            "Colour": [colour_mode, color_scheme, clip_pct],
+            "Layout": [n_cols, panel_px, sphere_radius],
+            "Protein": [protein_style, cartoon_opacity, context_radius],
+            "Include": [show_ligand, ligand_color, show_pocket, hover_values,
+                        offline_viewer],
+        },
     )
     return (
         cartoon_opacity,
@@ -1113,7 +1117,7 @@ def _(actives_df, mo, pd):
 
 
 @app.cell
-def _(active_info, mo):
+def _(active_info, mo, qcontrols):
     _clusters = [str(c) for c in sorted(active_info["cluster_id"].dropna().unique())]
     ligand_cluster = mo.ui.dropdown(
         options=["all clusters", *_clusters], value="all clusters", label="Cluster"
@@ -1123,9 +1127,10 @@ def _(active_info, mo):
     # SVG paths, so the cap is what keeps a large run from rendering megabytes.
     max_ligands = mo.ui.slider(start=4, stop=120, step=4, value=24, label="Max molecules")
     show_ligand_props = mo.ui.checkbox(value=True, label="Properties table")
-    mo.hstack(
-        [ligand_cluster, ligand_cols, max_ligands, show_ligand_props],
-        justify="start", gap=2,
+    qcontrols.panel(
+        primary=[ligand_cluster],
+        groups={"Layout": [ligand_cols, max_ligands],
+                "Include": [show_ligand_props]},
     )
     return ligand_cluster, ligand_cols, max_ligands, show_ligand_props
 
