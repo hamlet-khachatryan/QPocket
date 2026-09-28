@@ -591,3 +591,122 @@ def describe(verdict: PairVerdict) -> str:
         more = len(verdict.conflicts) - 3
         sentence += f", but contradict each other at {named}" + (f" +{more}" if more > 0 else "")
     return f"{sentence} — {_ENDINGS[verdict.verdict]}."
+
+
+def exclusivity_figure(verdicts: Sequence[PairVerdict], cluster_ids: Sequence[int]):
+    """Heatmap of how far every pair of clusters could share one ligand.
+
+    Args:
+        verdicts: Verdicts from :func:`pair_verdicts`.
+        cluster_ids: Clusters to show, in the order wanted.
+
+    Returns:
+        A Plotly figure.
+    """
+    import plotly.graph_objects as go
+
+    labels = [str(c) for c in cluster_ids]
+    position = {c: i for i, c in enumerate(cluster_ids)}
+    size = len(cluster_ids)
+    # None rather than 0.0 for an unmeasurable cell: a number there would read as
+    # evidence of disjointness, which is the opposite of what it means.
+    grid: List[List[Optional[float]]] = [[None] * size for _ in range(size)]
+    text = [["" for _ in range(size)] for _ in range(size)]
+    hover = [["" for _ in range(size)] for _ in range(size)]
+
+    for i in range(size):
+        text[i][i] = "—"
+
+    for verdict in verdicts:
+        i, j = position[verdict.a], position[verdict.b]
+        value = None if verdict.underpowered else verdict.residue_jaccard
+        shape = ("unknown" if math.isnan(verdict.shape_jaccard)
+                 else f"{verdict.shape_jaccard:.2f}")
+        detail = (f"clusters {verdict.a} vs {verdict.b}<br>"
+                  f"residues {verdict.residue_jaccard:.2f} · shape {shape}<br>"
+                  f"{len(verdict.conflicts)} type conflicts<br>"
+                  f"{verdict.n_a} and {verdict.n_b} ligand-bound structures")
+        for row, col in ((i, j), (j, i)):
+            grid[row][col] = value
+            text[row][col] = verdict.verdict
+            hover[row][col] = detail
+
+    figure = go.Figure(
+        go.Heatmap(
+            z=grid,
+            x=labels,
+            y=labels,
+            text=text,
+            customdata=hover,
+            texttemplate="%{text}",
+            textfont=dict(size=10),
+            colorscale="Blues",
+            zmin=0.0,
+            zmax=1.0,
+            hovertemplate="%{customdata}<extra></extra>",
+            colorbar=dict(title="shared residues"),
+        )
+    )
+    figure.update_layout(
+        template="plotly_white",
+        height=max(360, 90 * len(labels) + 120),
+        title="Can two pocket states be targeted at once?",
+        xaxis=dict(title="cluster", side="top"),
+        yaxis=dict(title="cluster", autorange="reversed"),
+        margin=dict(l=10, r=20, t=90, b=10),
+    )
+    return figure
+
+
+def pair_figure(tests: Sequence, verdict: PairVerdict, top: int = 25):
+    """Per-residue engagement in one cluster against the other, most telling first.
+
+    Args:
+        tests: ResidueTest results from qpocket.core.interactions.residue_enrichment.
+        verdict: The pair's verdict, for the cluster names and the title.
+        top: Most residues to draw.
+
+    Returns:
+        A Plotly figure.
+    """
+    import plotly.graph_objects as go
+
+    shown = list(tests)[:top]
+    # residue_enrichment returns most significant first; reversing puts that row at
+    # the top of a horizontal chart.
+    order = [t.residue for t in reversed(shown)]
+    conflicts = set(verdict.conflicts)
+    labels = [f"{r} ⚠" if r in conflicts else r for r in order]
+    by_residue = {t.residue: t for t in shown}
+
+    figure = go.Figure()
+    for name, sign, colour in ((f"cluster {verdict.a}", -1.0, "#2a78d6"),
+                               (f"cluster {verdict.b}", 1.0, "#eb6834")):
+        attribute = "freq_a" if sign < 0 else "freq_b"
+        values = [sign * getattr(by_residue[r], attribute) * 100.0 for r in order]
+        figure.add_bar(
+            y=labels,
+            x=values,
+            name=name,
+            orientation="h",
+            marker=dict(color=colour),
+            customdata=[[r, abs(v)] for r, v in zip(order, values)],
+            hovertemplate="%{customdata[0]}<br>" + name + ": %{customdata[1]:.0f}%<extra></extra>",
+        )
+
+    significant = [t.residue for t in shown if t.significant]
+    figure.update_layout(
+        barmode="relative",
+        template="plotly_white",
+        height=max(360, ROW_PX * len(order) + CHROME_PX),
+        title=(f"Cluster {verdict.a} against cluster {verdict.b} · {verdict.verdict}"
+               f" · {len(significant)} residues differ significantly"),
+        xaxis=dict(title="structures engaging the residue (%)", gridcolor="#e6e6e3",
+                   range=[-100, 100],
+                   tickvals=[-100, -50, 0, 50, 100], ticktext=["100", "50", "0", "50", "100"]),
+        yaxis=dict(title="", categoryorder="array", categoryarray=labels, showgrid=False),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title="",
+                    traceorder="normal"),
+        margin=dict(l=10, r=20, t=90, b=10),
+    )
+    return figure

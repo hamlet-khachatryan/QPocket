@@ -11,6 +11,8 @@ import h5py
 import numpy as np
 import pytest
 
+from qpocket.core.interactions import residue_enrichment
+
 from qpocket.viz.interactions import (
     CO_TARGETABLE,
     EXCLUSIVE,
@@ -23,10 +25,12 @@ from qpocket.viz.interactions import (
     classify_residues,
     cluster_frequencies,
     describe,
+    exclusivity_figure,
     filter_residues,
     load_run_interactions,
     observed_figure,
     observed_profile,
+    pair_figure,
     pair_verdicts,
     potential_figure,
     residue_axis,
@@ -432,3 +436,60 @@ def test_describe_mentions_the_conflicting_residue(tmp_path):
 
 def test_the_thresholds_are_ordered():
     assert 0.0 < EXCLUSIVE < CO_TARGETABLE < 1.0
+
+
+def test_exclusivity_figure_is_square_over_the_clusters(tmp_path):
+    _, prof, clusters = shared_and_split(tmp_path)
+    fig = exclusivity_figure(pair_verdicts(prof, clusters), sorted(clusters))
+    heatmap = fig.data[0]
+    assert list(heatmap.x) == ["0", "1", "2"]
+    assert list(heatmap.y) == ["0", "1", "2"]
+    assert len(heatmap.z) == 3 and all(len(row) == 3 for row in heatmap.z)
+
+
+def test_the_heatmap_is_symmetric_and_blank_on_the_diagonal(tmp_path):
+    _, prof, clusters = shared_and_split(tmp_path)
+    z = exclusivity_figure(pair_verdicts(prof, clusters), sorted(clusters)).data[0].z
+    assert z[0][1] == z[1][0]
+    assert z[0][0] is None
+
+
+def test_an_underpowered_cell_carries_no_number(tmp_path):
+    # A blank cell is the point: a value there would read as evidence.
+    _, prof, clusters = shared_and_split(tmp_path)
+    clusters = {**clusters, 2: ["C1", "C2"]}
+    fig = exclusivity_figure(pair_verdicts(prof, clusters), sorted(clusters))
+    assert fig.data[0].z[0][2] is None
+    assert "too few" in fig.data[0].text[0][2]
+
+
+def test_each_cell_is_labelled_with_its_verdict(tmp_path):
+    _, prof, clusters = shared_and_split(tmp_path)
+    fig = exclusivity_figure(pair_verdicts(prof, clusters), sorted(clusters))
+    assert fig.data[0].text[0][1] == "co-targetable"
+    assert fig.data[0].text[0][2] == "exclusive"
+
+
+def test_pair_figure_puts_one_cluster_on_each_side(tmp_path):
+    _, prof, clusters = shared_and_split(tmp_path)
+    verdict = verdict_for(pair_verdicts(prof, clusters), 0, 1)
+    tests = residue_enrichment(prof, clusters[0], clusters[1])
+    fig = pair_figure(tests, verdict)
+    assert [trace.name for trace in fig.data] == ["cluster 0", "cluster 1"]
+    # Cluster A is drawn leftward, so its bars are negative.
+    assert all(value <= 0 for value in fig.data[0].x)
+    assert all(value >= 0 for value in fig.data[1].x)
+
+
+def test_pair_figure_caps_the_rows(tmp_path):
+    _, prof, clusters = shared_and_split(tmp_path)
+    verdict = verdict_for(pair_verdicts(prof, clusters), 0, 1)
+    tests = residue_enrichment(prof, clusters[0], clusters[1])
+    fig = pair_figure(tests, verdict, top=2)
+    assert len(fig.data[0].y) == 2
+
+
+def test_pair_figure_survives_having_nothing_to_show(tmp_path):
+    _, prof, clusters = shared_and_split(tmp_path)
+    verdict = verdict_for(pair_verdicts(prof, clusters), 0, 1)
+    assert pair_figure([], verdict) is not None
