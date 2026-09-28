@@ -9,7 +9,7 @@ Its landscape, distance, cluster and ligand logic lives in ``qpocket.viz``.
 
 import marimo
 
-__generated_with = "0.23.16"
+__generated_with = "0.24.2"
 app = marimo.App(width="full")
 
 
@@ -23,28 +23,25 @@ def _():
     import numpy as np
     import pandas as pd
 
-    import plotly.graph_objects as go
     import plotly.express as px
 
-    # This notebook ships inside the package, so the import always resolves.
     import qpocket.viz as qviz
     from qpocket.viz import controls as qcontrols
-    return Path, go, json, lru_cache, mo, np, pd, px, qcontrols, qviz
+
+    return Path, json, lru_cache, mo, np, pd, px, qcontrols, qviz
 
 
 @app.cell
 def _(mo):
     mo.md(r"""
     # Q-Pocket
-    One finished run: pocket landscape, distances, clusters, ligands and interactions.
+    Interface for Interactive Exploration of the Target’s Experimentally Evidenced Conformational Landscape
     """)
     return
 
 
 @app.cell
 def _(mo):
-    # A path typed here (or passed as `marimo run ... -- --runs <dir>`) is searched
-    # in addition to the default locations. It may be one run, or a folder of runs.
     try:
         _cli_runs = mo.cli_args().get("runs")
     except Exception:
@@ -67,14 +64,13 @@ def _(Path, mo, qviz, run_location):
 
     _typed = qviz.resolve_location(run_location.value)
     _found = qviz.find_runs(qviz.default_roots(_nb_dir))
-    run_dirs = list(dict.fromkeys([*_typed.runs, *_found]))  # typed runs first
+    run_dirs = list(dict.fromkeys([*_typed.runs, *_found]))  
 
     run_options = {}
     for _p in run_dirs:
         _label = qviz.run_label(_p)
         run_options[str(_p) if _label in run_options else _label] = str(_p)
 
-    # A typed location decides the default; otherwise the first complete run.
     _pool = _typed.runs or run_dirs
     _complete = [p for p in _pool if qviz.is_complete(p)]
     _default = _complete[0] if _complete else (_pool[0] if _pool else None)
@@ -90,7 +86,6 @@ def _(Path, mo, qviz, run_location):
 
 @app.cell
 def _(Path, mo, pd, run_selector):
-    # ---- Load everything for the selected run -------------------------------
     mo.stop(run_selector.value is None, mo.md("No run selected / none found."))
 
     run_dir = Path(run_selector.value)
@@ -103,17 +98,14 @@ def _(Path, mo, pd, run_selector):
     master_df = _read_csv(meta / "master.csv")
     clustering_df = _read_csv(meta / "clustering_metadata.csv")
     util_df = _read_csv(meta / "binding_pocket_utilization.csv")
-    obs_freq = _read_csv(meta / "observed_interactions_freq.csv", index_col=0)
-    pot_freq = _read_csv(meta / "potential_interactions_freq.csv")
 
-    # The ligand chemistry of the run: one tab-separated row per crystallised pose,
-    # so the same compound recurs both within and across PDB entries.
+
     actives_df = _read_csv(run_dir / "screening" / "actives.smi", sep="\t")
 
     dist_path = meta / "spectral_distance_matrix.csv"
     dist_df = pd.read_csv(dist_path, index_col=0) if dist_path.exists() else None
 
-    # ---- Build a per-structure metadata table -------------------------------
+    #per-structure metadata
     info = clustering_df.copy() if clustering_df is not None else pd.DataFrame()
     if master_df is not None:
         keep = [
@@ -129,11 +121,10 @@ def _(Path, mo, pd, run_selector):
     info["cluster_id"] = info.get("cluster_id", -1)
     info = info.sort_values(["cluster_id", "pdb_id"]).reset_index(drop=True)
 
-    # ---- Discover per-pocket featurized point clouds ------------------------
     def featurized_path(pdb_id: str) -> Path:
         return pockets_dir / str(pdb_id) / "featurized.csv"
 
-    # Determine available feature columns from the first available pocket.
+    #available features
     FEATURE_COLS = []
     for _pid in info["pdb_id"]:
         _fp = featurized_path(_pid)
@@ -156,15 +147,12 @@ def _(Path, mo, pd, run_selector):
         dist_df,
         featurized_path,
         info,
-        obs_freq,
-        pot_freq,
         run_dir,
     )
 
 
 @app.cell
 def _(lru_cache, pd):
-    # ---- Cached loaders (keep re-renders cheap) ------------------------------
     @lru_cache(maxsize=512)
     def load_pocket(path: str) -> pd.DataFrame:
         return pd.read_csv(path)
@@ -173,11 +161,19 @@ def _(lru_cache, pd):
 
 
 @app.cell
+def _(qviz, run_dir):
+    # Read once, in a cell of its own: both the 3D panels and the fingerprint
+    # section below depend on this, and marimo resolves cells by dataflow, so a
+    # shared upstream cell is what keeps them from forming a cycle.
+    run_interactions = qviz.interactions.load_run_interactions(run_dir)
+    return (run_interactions,)
+
+
+@app.cell
 def _(mo):
     mo.md("""
     ## Clustering
-    Pick a method and move its controls; every view below follows. **Save** makes the
-    result the run's clustering, keeping the old one in `metadata/clustering_history/`.
+    Pick a clustering method and adjust the controls to select the best parametrization. **Save** updates the run's clustering while keeping the old one in `metadata/clustering_history/`.
     """)
     return
 
@@ -186,8 +182,6 @@ def _(mo):
 def _(mo, qviz, run_dir):
     from qpocket.pipelines import recluster as _recluster
 
-    # Runs made before the shape and feature matrices were written still open:
-    # they keep the clustering they shipped with, and the picker steps aside.
     cluster_matrices = qviz.two_stage.load_matrices(run_dir)
     cluster_settings = _recluster.load_settings(run_dir)
 
@@ -205,8 +199,6 @@ def _(mo, qviz, run_dir):
 
 @app.cell
 def _(cluster_matrices, cluster_settings, info, mo, qviz):
-    # Controls are built here and read elsewhere: marimo forbids a cell from
-    # reading the value of a widget it just created.
     def _slider(lo, hi, value, label):
         return mo.ui.slider(start=lo, stop=hi, step=max((hi - lo) / 200, 1e-9),
                             value=min(max(value, lo), hi), label=label, show_value=True)
@@ -253,8 +245,16 @@ def _(cluster_matrices, cluster_settings, mo, qviz, shape_cut):
 
 
 @app.cell
-def _(chem_cut, cluster_matrices, cluster_method, combined_cut, damping, min_split, mo,
-      shape_cut):
+def _(
+    chem_cut,
+    cluster_matrices,
+    cluster_method,
+    combined_cut,
+    damping,
+    min_split,
+    mo,
+    shape_cut,
+):
     # Only the knobs the chosen method uses are on screen.
     (mo.md("") if cluster_matrices is None else {
         "affinity": mo.hstack([damping], justify="start", gap=2),
@@ -265,8 +265,17 @@ def _(chem_cut, cluster_matrices, cluster_method, combined_cut, damping, min_spl
 
 
 @app.cell
-def _(chem_cut, cluster_matrices, cluster_method, cluster_settings, combined_cut,
-      damping, min_split, qviz, shape_cut):
+def _(
+    chem_cut,
+    cluster_matrices,
+    cluster_method,
+    cluster_settings,
+    combined_cut,
+    damping,
+    min_split,
+    qviz,
+    shape_cut,
+):
     # The preview runs the pipeline's own clustering, so what is shown here and
     # what Apply writes cannot disagree.
     pending_settings, pending = None, None
@@ -281,8 +290,16 @@ def _(chem_cut, cluster_matrices, cluster_method, cluster_settings, combined_cut
 
 
 @app.cell
-def _(cluster_matrices, cluster_method, mo, pending, qviz, shape_cut, chem_cut,
-      cluster_settings):
+def _(
+    chem_cut,
+    cluster_matrices,
+    cluster_method,
+    cluster_settings,
+    mo,
+    pending,
+    qviz,
+    shape_cut,
+):
     # The mirrored pair only means something for the two-stage cut.
     if cluster_matrices is None or pending is None:
         _view = mo.md("")
@@ -1359,101 +1376,93 @@ def _(active_info, dist_df, dist_order, mo, np, pd, px):
 @app.cell
 def _(mo):
     mo.md("""
-    ## Observed interactions
-    Percent of structures in which each residue makes each contact type.
+    ## Interaction fingerprint
+    What the ligands touch, and what merely lines the pocket. Percentages on the
+    left are over the ligand-bound structures; on the right, the pale bar is over
+    every structure, since an apo pocket still has a lining. Rows are the same in
+    both panels, and in every cluster.
     """)
     return
 
 
 @app.cell
-def _(obs_freq):
-    # Residues with any observed interaction. Defined outside the plotting cell so
-    # the "potential-only" panel still works when a run has no observed data at all
-    # (then nothing is excluded, which is the correct answer).
-    obs_residues = (
-        set()
-        if obs_freq is None or obs_freq.empty
-        else set(obs_freq.index[obs_freq.sum(axis=1) > 0].astype(str))
+def _(active_info, mo, qcontrols, run_interactions):
+    mo.stop(run_interactions is None,
+            mo.md("No `observed_interactions.h5` or `potential_interactions.h5` in this run."))
+
+    _clusters = [str(c) for c in sorted(active_info["cluster_id"].dropna().unique())]
+    fingerprint_scope = mo.ui.dropdown(
+        options=["all clusters", *_clusters], value="all clusters", label="**Show**")
+    potential_mode = mo.ui.dropdown(
+        options=["every pocket residue", "never contacted"],
+        value="every pocket residue", label="Right panel")
+    min_frequency = mo.ui.slider(start=0, stop=100, step=5, value=0,
+                                 label="Hide below (%)", show_value=True)
+    row_px = mo.ui.slider(start=12, stop=40, step=2, value=24, label="Row height (px)")
+
+    qcontrols.panel(
+        primary=[fingerprint_scope],
+        groups={"Rows": [potential_mode, min_frequency, row_px]},
     )
-    return (obs_residues,)
+    return fingerprint_scope, min_frequency, potential_mode, row_px
 
 
 @app.cell
-def _(go, mo, obs_freq):
-    mo.stop(obs_freq is None or obs_freq.empty, mo.md("No observed-interaction data."))
+def _(
+    active_info,
+    fingerprint_scope,
+    min_frequency,
+    mo,
+    potential_mode,
+    qviz,
+    row_px,
+    run_interactions,
+):
+    mo.stop(run_interactions is None, mo.md(""))
 
-    # Fixed hue per interaction type, so a type keeps its colour across runs and
-    # is never recoloured by how many types happen to be present.
-    ITYPE_COLORS = {
-        "H-bond Donor": "#2a78d6",
-        "H-bond Acceptor": "#eb6834",
-        "Hydrophobic": "#1baf7a",
-        "Pi-stacking (P)": "#eda100",
-        "Pi-stacking (T)": "#e87ba4",
-        "Saltbridge (+)": "#008300",
-        "Saltbridge (-)": "#4a3aa7",
-        "Halogen Bond": "#e34948",
-    }
-    OTHER_COLOR = "#6b6b66"
-
-    _df = obs_freq.loc[obs_freq.sum(axis=1) > 0].copy()
-
-    # Types without a reserved hue (Pi-Cation, Metal Complex, …) fold into "Other"
-    # rather than inventing a colour that would clash with the reserved ones.
-    _known = [c for c in ITYPE_COLORS if c in _df.columns]
-    _extra = [c for c in _df.columns if c not in ITYPE_COLORS]
-    if _extra:
-        _df["Other"] = _df[_extra].sum(axis=1)
-        _df = _df.drop(columns=_extra)
-    _types = _known + (["Other"] if _extra else [])
-    _types = [t for t in _types if _df[t].sum() > 0]
-
-    # Largest total at the top of the chart.
-    _resid = _df[_types].sum(axis=1).sort_values(ascending=True).index.tolist()
-
-    _fig = go.Figure()
-    for _t in _types:
-        _fig.add_bar(
-            y=_resid,
-            x=_df.loc[_resid, _t],
-            name=_t,
-            orientation="h",
-            marker=dict(
-                color=ITYPE_COLORS.get(_t, OTHER_COLOR),
-                line=dict(color="white", width=1),  # 2px-ish gap between segments
-            ),
-            customdata=[[_r] for _r in _resid],
-            hovertemplate=f"%{{y}}<br>{_t}: %{{x:.1f}}%<extra></extra>",
+    if fingerprint_scope.value == "all clusters":
+        _members = list(active_info["pdb_id"].astype(str))
+        _label = "all clusters"
+    else:
+        _members = list(
+            active_info[active_info["cluster_id"].astype(str) == str(fingerprint_scope.value)]
+            ["pdb_id"].astype(str)
         )
+        _label = f"cluster {fingerprint_scope.value}"
 
-    _fig.update_layout(
-        barmode="stack",
-        bargap=0.25,
-        template="plotly_white",
-        height=max(420, 24 * len(_resid) + 120),
-        title="Observed interactions per residue",
-        xaxis=dict(title="structures forming the interaction (%)", gridcolor="#e6e6e3"),
-        yaxis=dict(title="", categoryorder="array", categoryarray=_resid, showgrid=False),
-        # traceorder="normal": Plotly reverses the legend for horizontal stacks,
-        # which would leave legend order disagreeing with the stacking order.
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title="", traceorder="normal"),
-        margin=dict(l=10, r=20, t=90, b=10),
+    _freqs = qviz.interactions.filter_residues(
+        qviz.interactions.cluster_frequencies(run_interactions, _members, label=_label),
+        min_percent=float(min_frequency.value),
+        only_unused=potential_mode.value == "never contacted",
     )
 
-    if _extra:
-        mo.output.append(mo.md(f"_Folded into “Other”: {', '.join(_extra)}_"))
+    mo.stop(not _freqs.residues,
+            mo.md(f"_Nothing left to plot for {_label} at this cutoff._"))
 
-    interaction_plot = mo.ui.plotly(_fig)
-    interaction_plot
-    return (interaction_plot,)
+    fingerprint_plot = mo.ui.plotly(
+        qviz.interactions.observed_figure(_freqs, height_per_row=int(row_px.value)))
+    _right = mo.ui.plotly(
+        qviz.interactions.potential_figure(_freqs, height_per_row=int(row_px.value)))
+
+    _notes = [f"{len(_freqs.residues)} residues",
+              f"{_freqs.n_holo} of {_freqs.n_members} structures carry a ligand"]
+    if run_interactions.folded:
+        _notes.append(f"folded into \u201cOther\u201d: {', '.join(run_interactions.folded)}")
+
+    mo.vstack([
+        mo.hstack([fingerprint_plot, _right], widths=[1, 1], gap=0.5),
+        mo.md("_" + " \u00b7 ".join(_notes) + "_"),
+    ])
+    return (fingerprint_plot,)
 
 
 @app.cell
-def _(interaction_plot, mo, obs_residues):
-    # Residues picked out in the chart above, drawn as highlighted sticks in every
-    # panel of the viewer. Box-select the bars, or pick from the list.
+def _(fingerprint_plot, mo, run_interactions):
+    # Residues picked out here are drawn as highlighted sticks in every panel of
+    # the viewer above, coloured by whether they are contacted or only line the
+    # pocket. Box-select the bars, or pick from the list.
     _selected = []
-    for _pt in interaction_plot.value or []:
+    for _pt in fingerprint_plot.value or []:
         _cd = _pt.get("customdata")
         if isinstance(_cd, (list, tuple)) and _cd:
             _selected.append(str(_cd[0]))
@@ -1461,50 +1470,12 @@ def _(interaction_plot, mo, obs_residues):
             _selected.append(str(_pt["y"]))
 
     residue_picker = mo.ui.multiselect(
-        options=sorted(obs_residues),
+        options=list(run_interactions.residues) if run_interactions else [],
         value=sorted(dict.fromkeys(_selected)),
         label="Highlight residues",
     )
     mo.hstack([residue_picker], justify="start")
     return (residue_picker,)
-
-
-@app.cell
-def _(mo):
-    mo.md("""
-    ## Unused pocket residues
-    Line the pocket but were never contacted in any bound structure.
-    """)
-    return
-
-
-@app.cell
-def _(mo, obs_residues, pot_freq, px):
-    mo.stop(pot_freq is None or pot_freq.empty, mo.md("No potential-interaction data."))
-
-    _col = "Frequency (%)" if "Frequency (%)" in pot_freq.columns else pot_freq.columns[1]
-    _res = "Residue" if "Residue" in pot_freq.columns else pot_freq.columns[0]
-
-    _df = pot_freq[~pot_freq[_res].isin(obs_residues)].sort_values(_col, ascending=True)
-    mo.stop(
-        _df.empty,
-        mo.md("_Every potential residue also shows an observed interaction — nothing left to plot._"),
-    )
-
-    _fig = px.bar(
-        _df, x=_col, y=_res, orientation="h",
-        height=max(400, 24 * len(_df) + 100),
-        template="plotly_white",
-    )
-    _fig.update_traces(marker=dict(color="#2a78d6"), hovertemplate="%{y}<br>%{x:.1f}% of structures<extra></extra>")
-    _fig.update_layout(
-        title=f"{len(_df)} of {len(pot_freq)} potential residues have no observed interaction",
-        xaxis=dict(title="structures where the residue lines the pocket (%)", gridcolor="#e6e6e3"),
-        yaxis=dict(title="", showgrid=False),
-        margin=dict(l=10, r=20, t=70, b=10),
-    )
-    _fig
-    return
 
 
 if __name__ == "__main__":
