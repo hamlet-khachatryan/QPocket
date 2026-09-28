@@ -668,6 +668,16 @@ def _(FEATURE_COLS, active_info, mo, panel_mode, qcontrols, umap_selection):
     context_radius = mo.ui.slider(
         start=6, stop=30, step=2, value=12, label="Protein context (Å)"
     )
+    # Carbons take the class colour; 3Dmol applies the rest of the map by element,
+    # so N stays blue, O red and S yellow in both classes.
+    _swatches = {"orange": "#eb6834", "violet": "#7b5cd6", "cyan": "#22a7b8",
+                 "magenta": "#d13f9a", "lime": "#7ab317"}
+    observed_colour = mo.ui.dropdown(options=_swatches, value="orange",
+                                     label="Contacted carbons")
+    potential_colour = mo.ui.dropdown(options=_swatches, value="violet",
+                                      label="Pocket-only carbons")
+    show_all_sidechains = mo.ui.checkbox(
+        value=True, label="Side chains for every interacting residue")
     show_ligand = mo.ui.checkbox(value=True, label="Ligand")
     # 3Dmol's *Carbon schemes recolour carbon only and leave CPK heteroatoms
     # alone, so N stays blue, O red and S yellow whichever hue you pick. Switch
@@ -700,7 +710,8 @@ def _(FEATURE_COLS, active_info, mo, panel_mode, qcontrols, umap_selection):
         groups={
             "Colour": [colour_mode, color_scheme, clip_pct],
             "Layout": [n_cols, panel_px, sphere_radius],
-            "Protein": [protein_style, cartoon_opacity, context_radius],
+            "Protein": [protein_style, cartoon_opacity, context_radius,
+                        show_all_sidechains, observed_colour, potential_colour],
             "Include": [show_ligand, ligand_color, show_pocket, hover_values,
                         offline_viewer],
         },
@@ -716,10 +727,13 @@ def _(FEATURE_COLS, active_info, mo, panel_mode, qcontrols, umap_selection):
         hover_values,
         ligand_color,
         n_cols,
+        observed_colour,
         offline_viewer,
         panel_px,
+        potential_colour,
         protein_style,
         show_ligand,
+        show_all_sidechains,
         show_pocket,
         sphere_radius,
     )
@@ -745,13 +759,17 @@ def _(
     mo,
     n_cols,
     np,
+    observed_colour,
     offline_viewer,
     panel_mode,
     panel_px,
     pd,
+    potential_colour,
     protein_style,
     qviz,
     residue_picker,
+    run_interactions,
+    show_all_sidechains,
     show_ligand,
     show_pocket,
     sphere_radius,
@@ -880,18 +898,31 @@ def _(
         if show_pocket.value and len(_xyz):
             _cloud = qviz.pseudo_atom_pdb(_xyz, b=qviz.scale_to_percent(_vals, domain))
 
-        _models = qviz.ProteinModels("", "", 0, 0)
-        _highlight = ""
-        if isinstance(row.get("aligned_file"), str) and Path(row["aligned_file"]).exists() and residue_picker.value:
-            # Picked residues are drawn whatever the context radius is, so a
-            # highlight never silently goes missing from a panel.
-            _highlight = qviz.residue_model(row["aligned_file"], residue_picker.value)
-        if protein_style.value != "none" and isinstance(row.get("aligned_file"), str) and Path(row["aligned_file"]).exists():
+        _models = qviz.ProteinModels("", "", 0, 0, 0)
+        _highlights = {}
+        _aligned = row.get("aligned_file")
+        _has_structure = isinstance(_aligned, str) and Path(_aligned).exists()
+
+        if _has_structure and residue_picker.value:
+            # Picked residues are drawn whatever the context radius is, each class
+            # in its own model so it can carry its own colour scheme.
+            _groups = (qviz.interactions.classify_residues(run_interactions, residue_picker.value)
+                       if run_interactions is not None
+                       else {"observed": tuple(residue_picker.value)})
+            _highlights = qviz.residue_models(_aligned, _groups)
+
+        if protein_style.value != "none" and _has_structure:
+            # Every residue that interacts anywhere in the run, in every panel: an
+            # absence then means the conformation moved it, not that a radius
+            # filtered it out.
+            _always = (sorted(run_interactions.engaged)
+                       if run_interactions is not None and show_all_sidechains.value else ())
             _models = qviz.pocket_context_models(
-                row["aligned_file"],
+                _aligned,
                 pocket[["x", "y", "z"]].to_numpy(dtype=float),
                 float(context_radius.value),
                 CONTACT_R,
+                always=_always,
             )
             if protein_style.value == "cartoon only":
                 _models = _models._replace(sidechains="")
@@ -919,7 +950,8 @@ def _(
                 "cloud": _cloud,
                 "cartoon": _models.cartoon,
                 "side": _models.sidechains,
-                "highlight": _highlight,
+                "highlights": _highlights,
+                "n_forced": int(_models.n_forced),
                 "ligand": _lig,
                 "vals": [round(float(v), 3) for v in _vals],
                 "n_points": int(len(_xyz)),
@@ -944,6 +976,10 @@ def _(
         # wherever adjacent residues disagree on opacity, so keep it uniform.
         "cartoonOpacity": float(cartoon_opacity.value),
         "ligandScheme": ligand_color.value,
+        "highlightSchemes": {
+            "observed": qviz.interactions.carbon_scheme(observed_colour.value),
+            "potential": qviz.interactions.carbon_scheme(potential_colour.value),
+        },
     }
 
     # ---- One canvas, one WebGL context, one viewer per cell -----------------
@@ -1012,11 +1048,12 @@ def _(
           const m = v.addModel(p.side, "pdb");
           v.setStyle({{ model: m }}, {{ stick: {{ radius: 0.11 }} }});
         }}
-        if (p.highlight) {{
-          const m = v.addModel(p.highlight, "pdb");
-          v.setStyle({{ model: m }}, {{ stick: {{ radius: 0.22, color: "#eb6834" }} }});
-          v.addStyle({{ model: m }}, {{ sphere: {{ radius: 0.28, color: "#eb6834" }} }});
-        }}
+        Object.entries(p.highlights || {{}}).forEach(([cls, pdb]) => {{
+          const m = v.addModel(pdb, "pdb");
+          const scheme = D.highlightSchemes[cls];
+          v.setStyle({{ model: m }}, {{ stick: {{ radius: 0.22, colorscheme: scheme }} }});
+          v.addStyle({{ model: m }}, {{ sphere: {{ radius: 0.28, colorscheme: scheme }} }});
+        }});
         if (p.ligand) {{
           const m = v.addModel(p.ligand, "pdb");
           v.setStyle({{ model: m }}, {{
@@ -1067,16 +1104,24 @@ def _(
     if missing:
         _notes.append(f"No `featurized.csv` for: {', '.join(missing)}")
     if protein_style.value != "none":
-        _notes.append(
-            f"protein: residues within {context_radius.value} Å of the cloud "
-            f"(median {int(np.median([p['n_ctx'] for p in panels]))} per panel); "
-            f"side chains within {CONTACT_R:.0f} Å"
-        )
+        _note = (f"protein: residues within {context_radius.value} Å of the cloud "
+                 f"(median {int(np.median([p['n_ctx'] for p in panels]))} per panel); "
+                 f"side chains within {CONTACT_R:.0f} Å")
+        _forced = [p["n_forced"] for p in panels]
+        if any(_forced):
+            _note += (f", plus every interacting residue "
+                      f"({min(_forced)}–{max(_forced)} of "
+                      f"{len(run_interactions.engaged)} found per panel)")
+        _notes.append(_note)
     _notes.append(f"{sum(p['n_points'] for p in panels)} spheres across {len(panels)} panels")
     if mode != "feature value":
         _notes.append(f"spheres show {value_label}")
     if residue_picker.value:
-        _notes.append(f"highlighted: {', '.join(residue_picker.value)}")
+        _classes = (", ".join(
+            f"{len(v)} {k}" for k, v in qviz.interactions.classify_residues(
+                run_interactions, residue_picker.value).items())
+            if run_interactions is not None else str(len(residue_picker.value)))
+        _notes.append(f"highlighted: {_classes}")
 
     mo.vstack(
         [
