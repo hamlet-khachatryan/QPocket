@@ -11,11 +11,14 @@ import h5py
 import pytest
 
 from qpocket.viz.interactions import (
+    ITYPE_COLORS,
     OTHER,
     SENTINELS,
     cluster_frequencies,
     filter_residues,
     load_run_interactions,
+    observed_figure,
+    potential_figure,
     residue_axis,
     strip_sentinels,
 )
@@ -188,3 +191,60 @@ def test_filtering_preserves_the_axis_order(tmp_path):
     assert list(trimmed.residues) == [r for r in freqs.residues if r in set(trimmed.residues)]
     assert list(trimmed.observed.index) == list(trimmed.residues)
     assert trimmed.n_holo == freqs.n_holo
+
+
+def test_observed_figure_stacks_one_trace_per_type(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    fig = observed_figure(cluster_frequencies(run, list(run.potential)))
+    assert fig.layout.barmode == "stack"
+    names = {trace.name for trace in fig.data}
+    assert names == {"Hydrophobic", "H-bond Donor"}
+
+
+def test_observed_figure_uses_the_reserved_hue(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    fig = observed_figure(cluster_frequencies(run, list(run.potential)))
+    for trace in fig.data:
+        assert trace.marker.color == ITYPE_COLORS[trace.name]
+
+
+def test_both_figures_share_one_category_order(tmp_path):
+    # Rows must line up across the pair, so a residue reads straight across.
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, list(run.potential))
+    left, right = observed_figure(freqs), potential_figure(freqs)
+    assert left.layout.yaxis.categoryarray == right.layout.yaxis.categoryarray
+    # Plotly draws the first category at the bottom, so the axis is reversed to
+    # put the most contacted residue at the top.
+    assert left.layout.yaxis.categoryarray == tuple(reversed(freqs.residues))
+
+
+def test_a_type_absent_from_the_selection_gets_no_trace(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    fig = observed_figure(cluster_frequencies(run, ["1AAA", "2BBB"], label="cluster 0"))
+    assert {trace.name for trace in fig.data} == {"Hydrophobic"}
+
+
+def test_potential_figure_marks_the_contacted_share(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    fig = potential_figure(cluster_frequencies(run, list(run.potential)))
+    assert fig.layout.barmode == "group"
+    assert [trace.name for trace in fig.data] == ["lines the pocket", "contacted"]
+    lining = dict(zip(fig.data[0].y, fig.data[0].x))
+    assert lining["LEU_30_A"] == pytest.approx(100.0)
+
+
+def test_both_denominators_appear_in_the_title(tmp_path):
+    # The two panels divide by different things; the chart has to say so.
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, list(run.potential))
+    assert "3" in observed_figure(freqs).layout.title.text
+    assert "5" in potential_figure(freqs).layout.title.text
+
+
+def test_an_empty_axis_still_makes_a_figure(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    empty = filter_residues(cluster_frequencies(run, list(run.potential)), min_percent=1e6)
+    assert empty.residues == ()
+    assert observed_figure(empty).data == ()
+    assert potential_figure(empty) is not None

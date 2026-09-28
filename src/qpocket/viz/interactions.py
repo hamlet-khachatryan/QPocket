@@ -224,3 +224,117 @@ def filter_residues(
         potential=freqs.potential.loc[keep],
         contacted=freqs.contacted.loc[keep],
     )
+
+
+#: Tones for the potential panel: the pocket lining behind, the contacted share in front.
+LINING_COLOR = "#c9d3de"
+CONTACTED_COLOR = "#2a78d6"
+
+#: Chart height per residue row, and the room a title and legend need.
+ROW_PX = 24
+CHROME_PX = 120
+
+
+def _figure_height(n_rows: int, height_per_row: int) -> int:
+    """Chart height that fits the rows without collapsing on a short axis."""
+    return max(420, height_per_row * n_rows + CHROME_PX)
+
+
+def observed_figure(freqs: ClusterFrequencies, height_per_row: int = ROW_PX):
+    """Stacked bars of how often each residue makes each kind of contact.
+
+    Args:
+        freqs: A fingerprint from :func:`cluster_frequencies`.
+        height_per_row: Pixels of chart height per residue.
+
+    Returns:
+        A Plotly figure.
+    """
+    import plotly.graph_objects as go
+
+    order = list(reversed(freqs.residues))
+    figure = go.Figure()
+    for itype in freqs.observed.columns:
+        column = freqs.observed[itype].reindex(order).fillna(0.0)
+        if column.sum() <= 0:
+            continue
+        figure.add_bar(
+            y=order,
+            x=column,
+            name=itype,
+            orientation="h",
+            marker=dict(color=ITYPE_COLORS.get(itype, OTHER_COLOR),
+                        line=dict(color="white", width=1)),
+            customdata=[[r] for r in order],
+            hovertemplate=f"%{{y}}<br>{itype}: %{{x:.1f}}%<extra></extra>",
+        )
+
+    figure.update_layout(
+        barmode="stack",
+        bargap=0.25,
+        template="plotly_white",
+        height=_figure_height(len(order), height_per_row),
+        title=f"Observed interactions · {freqs.label} · {freqs.n_holo} ligand-bound structures",
+        xaxis=dict(title="ligand-bound structures forming the interaction (%)",
+                   gridcolor="#e6e6e3", range=[0, 100]),
+        yaxis=dict(title="", categoryorder="array", categoryarray=order, showgrid=False),
+        # traceorder="normal": Plotly reverses the legend for horizontal stacks,
+        # which would leave legend order disagreeing with the stacking order.
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title="",
+                    traceorder="normal"),
+        margin=dict(l=10, r=20, t=90, b=10),
+    )
+    return figure
+
+
+def potential_figure(
+    freqs: ClusterFrequencies,
+    height_per_row: int = ROW_PX,
+    show_ticklabels: bool = False,
+):
+    """Grouped bars of what lines the pocket against what is actually contacted.
+
+    Args:
+        freqs: A fingerprint from :func:`cluster_frequencies`.
+        height_per_row: Pixels of chart height per residue.
+        show_ticklabels: Draw the residue names; off when this panel sits beside the observed one.
+
+    Returns:
+        A Plotly figure.
+    """
+    import plotly.graph_objects as go
+
+    order = list(reversed(freqs.residues))
+    figure = go.Figure()
+    # The two bars divide by different things on purpose: an apo structure has no
+    # interactions but its pocket still has a lining, and dropping it would blank
+    # the panel for an all-apo cluster. Both counts are named in the hover.
+    for name, series, colour, denominator in (
+        ("lines the pocket", freqs.potential, LINING_COLOR, f"{freqs.n_members} structures"),
+        ("contacted", freqs.contacted, CONTACTED_COLOR, f"{freqs.n_holo} ligand-bound"),
+    ):
+        figure.add_bar(
+            y=order,
+            x=series.reindex(order).fillna(0.0),
+            name=name,
+            orientation="h",
+            marker=dict(color=colour),
+            customdata=[[r] for r in order],
+            hovertemplate=f"%{{y}}<br>{name}: %{{x:.1f}}% of {denominator}<extra></extra>",
+        )
+
+    figure.update_layout(
+        barmode="group",
+        bargap=0.25,
+        template="plotly_white",
+        height=_figure_height(len(order), height_per_row),
+        title=(f"Pocket lining · {freqs.label} · {freqs.n_members} structures, "
+               f"{freqs.n_holo} ligand-bound"),
+        xaxis=dict(title="structures (%)", gridcolor="#e6e6e3", range=[0, 100]),
+        yaxis=dict(title="", categoryorder="array", categoryarray=order, showgrid=False,
+                   showticklabels=show_ticklabels),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title="",
+                    traceorder="normal"),
+        margin=dict(l=10, r=20, t=90, b=10),
+    )
+    return figure
