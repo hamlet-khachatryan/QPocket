@@ -6,6 +6,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, Mapping, NamedTuple, Optional, Sequence, Tuple
 
+import pandas as pd
+
+from qpocket.core.interactions import observed_frequencies, potential_frequencies
+
 #: Entries the detector writes in place of a residue when it could not run.
 SENTINELS = frozenset({"no_ligand_found", "file_not_found", "analysis_error"})
 
@@ -123,4 +127,100 @@ def load_run_interactions(run_dir: Path) -> Optional[RunInteractions]:
         engaged=frozenset(e.split("|", 1)[0] for rows in observed.values() for e in rows),
         types=reserved + ((OTHER,) if folded else ()),
         folded=folded,
+    )
+
+
+class ClusterFrequencies(NamedTuple):
+    """One selection's interaction fingerprint, on the run's shared residue axis.
+
+    Attributes:
+        label: What the selection is, for the chart title.
+        residues: Residue axis, most contacted first.
+        observed: Residue by type percentages, over the ligand-bound members.
+        potential: Percentage of all members whose pocket the residue lines.
+        contacted: Percentage of ligand-bound members contacting the residue.
+        n_members: Structures in the selection.
+        n_holo: Those of them carrying a ligand.
+    """
+
+    label: str
+    residues: Tuple[str, ...]
+    observed: pd.DataFrame
+    potential: pd.Series
+    contacted: pd.Series
+    n_members: int
+    n_holo: int
+
+
+def cluster_frequencies(
+    run: RunInteractions, members: Sequence[str], label: str = "all clusters"
+) -> ClusterFrequencies:
+    """Interaction frequencies for one selection of structures.
+
+    Args:
+        run: The run's archives.
+        members: PDB IDs in the selection; unknown IDs are ignored.
+        label: What the selection is, for the chart title.
+
+    Returns:
+        The fingerprint, on the run's full residue axis with absent residues at zero.
+    """
+    axis = list(run.residues)
+    known = [m for m in members if m in run.observed or m in run.potential]
+    holo = [m for m in known if run.observed.get(m)]
+
+    observed = pd.DataFrame(0.0, index=axis, columns=list(run.types))
+    if holo:
+        table = observed_frequencies({m: list(run.observed[m]) for m in holo})
+        if table is not None and not table.empty:
+            table = table.set_index("amino")
+            for column in table.columns:
+                # A type with no reserved hue joins Other rather than inventing one.
+                target = column if column in observed.columns else OTHER
+                observed[target] = observed[target] + table[column].reindex(axis).fillna(0.0)
+
+    potential = pd.Series(0.0, index=axis)
+    lining = {m: list(run.potential.get(m, ())) for m in known}
+    # potential_frequencies sorts a frame it builds from the residues it saw, so an
+    # all-empty input would leave it sorting columns that do not exist.
+    if any(lining.values()):
+        table = potential_frequencies(lining)
+        if table is not None and not table.empty:
+            potential = table.set_index("Residue")["Frequency (%)"].reindex(axis).fillna(0.0)
+
+    return ClusterFrequencies(
+        label=label,
+        residues=tuple(axis),
+        observed=observed,
+        potential=potential,
+        contacted=observed.sum(axis=1),
+        n_members=len(known),
+        n_holo=len(holo),
+    )
+
+
+def filter_residues(
+    freqs: ClusterFrequencies, min_percent: float = 0.0, only_unused: bool = False
+) -> ClusterFrequencies:
+    """Trim the residue axis without disturbing its order.
+
+    Args:
+        freqs: A fingerprint from :func:`cluster_frequencies`.
+        min_percent: Drop residues below this in both contacted and lining percentage.
+        only_unused: Keep only residues this selection never contacts.
+
+    Returns:
+        The same fingerprint over fewer residues, counts unchanged.
+    """
+    keep = [
+        r
+        for r in freqs.residues
+        if (not only_unused or freqs.contacted[r] <= 0.0)
+        and max(float(freqs.contacted[r]), float(freqs.potential[r])) >= min_percent
+    ]
+    return freqs._replace(
+        residues=tuple(keep),
+        observed=freqs.observed.loc[keep],
+        potential=freqs.potential.loc[keep],
+        contacted=freqs.contacted.loc[keep],
     )

@@ -13,6 +13,8 @@ import pytest
 from qpocket.viz.interactions import (
     OTHER,
     SENTINELS,
+    cluster_frequencies,
+    filter_residues,
     load_run_interactions,
     residue_axis,
     strip_sentinels,
@@ -96,3 +98,93 @@ def test_an_unreserved_type_folds_into_other(tmp_path):
 def test_a_run_without_archives_loads_as_none(tmp_path):
     (tmp_path / "metadata").mkdir()
     assert load_run_interactions(tmp_path) is None
+
+
+def five_member_run(tmp_path):
+    """Five structures, three of them ligand-bound, with one shared residue."""
+    return make_run(
+        tmp_path,
+        observed={
+            "1AAA": ["TYR_10_A|Hydrophobic"],
+            "2BBB": ["TYR_10_A|Hydrophobic"],
+            "3CCC": ["ASN_20_A|H-bond Donor"],
+            "4DDD": ["no_ligand_found"],
+            "5EEE": ["no_ligand_found"],
+        },
+        potential={pid: ["TYR_10_A", "ASN_20_A", "LEU_30_A"]
+                   for pid in ["1AAA", "2BBB", "3CCC", "4DDD", "5EEE"]},
+    )
+
+
+def test_observed_percent_divides_by_the_ligand_bound_members(tmp_path):
+    # TYR is contacted in 2 of the 3 holo structures. Counting the two apo ones
+    # would give 40%, which no structure in the run supports.
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, list(run.potential))
+    assert freqs.n_members == 5
+    assert freqs.n_holo == 3
+    assert freqs.contacted["TYR_10_A"] == pytest.approx(200 / 3)
+    assert freqs.contacted["ASN_20_A"] == pytest.approx(100 / 3)
+
+
+def test_lines_the_pocket_divides_by_every_member(tmp_path):
+    # An apo structure has no interactions but its pocket still has a lining.
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, list(run.potential))
+    assert freqs.potential["LEU_30_A"] == pytest.approx(100.0)
+    assert freqs.contacted["LEU_30_A"] == pytest.approx(0.0)
+
+
+def test_a_cluster_sees_only_its_own_members(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, ["1AAA", "2BBB"], label="cluster 0")
+    assert freqs.label == "cluster 0"
+    assert freqs.n_holo == 2
+    assert freqs.contacted["TYR_10_A"] == pytest.approx(100.0)
+    assert freqs.contacted["ASN_20_A"] == pytest.approx(0.0)
+
+
+def test_the_axis_survives_a_cluster_that_touches_nothing(tmp_path):
+    # Rows must not vanish when a cluster is all apo: an empty row is the signal.
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, ["4DDD", "5EEE"])
+    assert freqs.residues == run.residues
+    assert freqs.n_holo == 0
+    assert freqs.contacted.sum() == pytest.approx(0.0)
+
+
+def test_switching_cluster_never_reorders_the_axis(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    for members in (["1AAA", "2BBB"], ["3CCC"], list(run.potential)):
+        assert cluster_frequencies(run, members).residues == run.residues
+
+
+def test_observed_columns_are_exactly_the_runs_types(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, list(run.potential))
+    assert tuple(freqs.observed.columns) == run.types
+
+
+def test_an_unreserved_type_lands_in_the_other_column(tmp_path):
+    run = load_run_interactions(make_run(
+        tmp_path,
+        observed={"1AAA": ["TYR_10_A|Metal Complex"]},
+        potential={"1AAA": ["TYR_10_A"]},
+    ))
+    freqs = cluster_frequencies(run, ["1AAA"])
+    assert freqs.observed.loc["TYR_10_A", OTHER] == pytest.approx(100.0)
+
+
+def test_only_unused_keeps_the_residues_never_contacted(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    trimmed = filter_residues(cluster_frequencies(run, list(run.potential)), only_unused=True)
+    assert trimmed.residues == ("LEU_30_A",)
+
+
+def test_filtering_preserves_the_axis_order(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, list(run.potential))
+    trimmed = filter_residues(freqs, min_percent=1.0)
+    assert list(trimmed.residues) == [r for r in freqs.residues if r in set(trimmed.residues)]
+    assert list(trimmed.observed.index) == list(trimmed.residues)
+    assert trimmed.n_holo == freqs.n_holo
