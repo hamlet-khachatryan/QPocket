@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -329,3 +329,29 @@ def residue_model(pdb_path: str, residues: Sequence[str]) -> str:
         if (atom["chain"], atom["resseq"]) in wanted:
             lines.append(atom_line(len(lines) + 1, atom))
     return blocks_to_text(lines)
+
+
+def residue_models(pdb_path: str, groups: Mapping[str, Sequence[str]]) -> Dict[str, str]:
+    """One PDB block per named group, so each can carry its own colour scheme.
+
+    Args:
+        pdb_path: Path to the aligned structure.
+        groups: Group name to the residue keys it claims, earlier groups winning.
+
+    Returns:
+        Group name to PDB text, leaving out groups that matched no atom.
+    """
+    atoms = read_protein_atoms(pdb_path)
+    out: Dict[str, str] = {}
+    claimed: set = set()
+    for name, residues in groups.items():
+        # Earlier groups win, so no atom is drawn twice in two colours.
+        wanted = _wanted_keys(residues) - claimed
+        claimed |= wanted
+        lines: List[str] = []
+        for atom in atoms:
+            if (atom["chain"], atom["resseq"]) in wanted:
+                lines.append(atom_line(len(lines) + 1, atom))
+        if lines:
+            out[name] = blocks_to_text(lines)
+    return out

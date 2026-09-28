@@ -21,6 +21,7 @@ from qpocket.viz.pdb_text import (
     pocket_context_models,
     pseudo_atom_pdb,
     read_protein_atoms,
+    residue_models,
 )
 
 # PDB fixed columns (1-indexed, inclusive) as 0-indexed slices.
@@ -402,3 +403,30 @@ def test_the_default_keeps_the_old_behaviour(tmp_path):
     models = pocket_context_models(pdb, np.zeros((1, 3)), context_radius=12.0, contact_radius=4.0)
     assert models.n_forced == 0
     assert models.n_contact == 1
+
+
+def test_residue_models_returns_one_block_per_class(tmp_path):
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    blocks = residue_models(pdb, {"observed": ["TYR_10_A"], "potential": ["TYR_99_A"]})
+    assert set(blocks) == {"observed", "potential"}
+    assert {int(field(line, "resseq")) for line in blocks["observed"].splitlines()} == {10}
+    assert {int(field(line, "resseq")) for line in blocks["potential"].splitlines()} == {99}
+
+
+def test_no_atom_lands_in_two_blocks(tmp_path):
+    # A residue named in both classes belongs to the first, so 3Dmol never draws
+    # one atom twice in two colours.
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    blocks = residue_models(pdb, {"observed": ["TYR_10_A"], "potential": ["TYR_10_A"]})
+    assert blocks["observed"]
+    assert "potential" not in blocks
+
+
+def test_an_empty_class_is_left_out(tmp_path):
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    assert set(residue_models(pdb, {"observed": [], "potential": ["TYR_99_A"]})) == {"potential"}
+
+
+def test_a_class_naming_no_present_residue_is_left_out(tmp_path):
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    assert residue_models(pdb, {"observed": ["TRP_500_B"]}) == {}

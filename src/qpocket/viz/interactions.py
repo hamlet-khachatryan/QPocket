@@ -338,3 +338,56 @@ def potential_figure(
         margin=dict(l=10, r=20, t=90, b=10),
     )
     return figure
+
+
+#: Jmol colours for the elements a side chain can show, carbon excluded. 3Dmol
+#: applies this map by element, so a class colour never repaints a heteroatom.
+ELEMENT_COLORS: Dict[str, str] = {
+    "N": "#3050F8",
+    "O": "#FF0D0D",
+    "S": "#FFFF30",
+    "SE": "#FFA100",
+    "P": "#FF8000",
+    "F": "#90E050",
+    "CL": "#1FF01F",
+    "BR": "#A62929",
+    "I": "#940094",
+    "H": "#FFFFFF",
+}
+
+#: Carbon colour for a highlighted residue that is contacted in this run.
+OBSERVED_COLOR = "#eb6834"
+
+#: Carbon colour for a highlighted residue that only ever lines the pocket.
+POTENTIAL_COLOR = "#7b5cd6"
+
+
+def carbon_scheme(carbon: str) -> Dict[str, object]:
+    """A 3Dmol colour scheme that repaints carbon and leaves CPK heteroatoms alone.
+
+    Args:
+        carbon: Hex colour for carbon.
+
+    Returns:
+        A scheme 3Dmol applies by element.
+    """
+    return {"prop": "elem", "map": {**ELEMENT_COLORS, "C": carbon}}
+
+
+def classify_residues(
+    run: RunInteractions, picked: Sequence[str]
+) -> Dict[str, Tuple[str, ...]]:
+    """Split picked residues into those contacted in this run and those merely lining it.
+
+    Args:
+        run: The run's archives.
+        picked: Residue keys the user highlighted.
+
+    Returns:
+        Up to two groups, observed first, each in the run's axis order; empty groups are left out.
+    """
+    wanted = set(picked)
+    observed = tuple(r for r in run.residues if r in wanted and r in run.engaged)
+    potential = tuple(r for r in run.residues if r in wanted and r not in run.engaged)
+    return {name: group for name, group in
+            (("observed", observed), ("potential", potential)) if group}

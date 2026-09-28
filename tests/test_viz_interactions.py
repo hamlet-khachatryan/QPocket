@@ -12,8 +12,12 @@ import pytest
 
 from qpocket.viz.interactions import (
     ITYPE_COLORS,
+    OBSERVED_COLOR,
     OTHER,
+    POTENTIAL_COLOR,
     SENTINELS,
+    carbon_scheme,
+    classify_residues,
     cluster_frequencies,
     filter_residues,
     load_run_interactions,
@@ -248,3 +252,41 @@ def test_an_empty_axis_still_makes_a_figure(tmp_path):
     assert empty.residues == ()
     assert observed_figure(empty).data == ()
     assert potential_figure(empty) is not None
+
+
+def test_carbon_scheme_recolours_carbon_and_leaves_cpk_alone():
+    scheme = carbon_scheme("#eb6834")
+    assert scheme["prop"] == "elem"
+    assert scheme["map"]["C"] == "#eb6834"
+    assert scheme["map"]["N"] == "#3050F8"
+    assert scheme["map"]["O"] == "#FF0D0D"
+    assert scheme["map"]["S"] == "#FFFF30"
+
+
+def test_carbon_scheme_does_not_share_its_map_between_calls():
+    first = carbon_scheme("#eb6834")
+    carbon_scheme("#7b5cd6")
+    assert first["map"]["C"] == "#eb6834"
+
+
+def test_the_two_class_colours_differ_from_each_other_and_from_cpk():
+    cpk = {carbon_scheme("#000000")["map"][e] for e in ("N", "O", "S")}
+    assert OBSERVED_COLOR != POTENTIAL_COLOR
+    assert not {OBSERVED_COLOR, POTENTIAL_COLOR} & cpk
+
+
+def test_classify_splits_the_picked_residues_by_class(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    groups = classify_residues(run, ["TYR_10_A", "LEU_30_A"])
+    assert groups == {"observed": ("TYR_10_A",), "potential": ("LEU_30_A",)}
+
+
+def test_classify_ignores_a_residue_that_was_not_picked(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    assert classify_residues(run, []) == {}
+
+
+def test_classify_keeps_the_axis_order(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    groups = classify_residues(run, ["ASN_20_A", "TYR_10_A"])
+    assert groups["observed"] == ("TYR_10_A", "ASN_20_A")

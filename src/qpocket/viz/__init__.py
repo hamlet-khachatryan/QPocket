@@ -53,6 +53,7 @@ from qpocket.viz.pdb_text import (
     pseudo_atom_pdb,
     read_protein_atoms,
     residue_model,
+    residue_models,
 )
 from qpocket.viz.pockets import (
     LATTICE_TOLERANCE,
@@ -168,6 +169,7 @@ __all__ = [
     "ramp_stops",
     "read_protein_atoms",
     "residue_model",
+    "residue_models",
     "scale_to_percent",
     "shares_lattice",
     "silhouette",
