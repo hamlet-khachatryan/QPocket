@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+import math
 from collections import Counter
+from itertools import combinations
 from pathlib import Path
-from typing import Dict, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
 
-from qpocket.core.interactions import observed_frequencies, potential_frequencies
+from qpocket.core.interactions import (
+    ENGAGED_FRAC,
+    MIN_TESTABLE,
+    Profile,
+    exclusivity,
+    interaction_type_shift,
+    observed_frequencies,
+    potential_frequencies,
+    profile,
+)
+from qpocket.viz.pockets import overlap_matrix
 
 #: Entries the detector writes in place of a residue when it could not run.
 SENTINELS = frozenset({"no_ligand_found", "file_not_found", "analysis_error"})
@@ -391,3 +404,190 @@ def classify_residues(
     potential = tuple(r for r in run.residues if r in wanted and r not in run.engaged)
     return {name: group for name, group in
             (("observed", observed), ("potential", potential)) if group}
+
+
+#: At or above this on both axes, and with no type conflict, one ligand can aim
+#: at both states.
+CO_TARGETABLE = 0.5
+
+#: Below this on either axis, the two states have too little in common to share a
+#: ligand.
+EXCLUSIVE = 0.2
+
+
+class PairVerdict(NamedTuple):
+    """Whether one ligand could be aimed at two pocket states at once.
+
+    Attributes:
+        a: Lower cluster id.
+        b: Higher cluster id.
+        residue_jaccard: Overlap of the engaged residue sets.
+        shape_jaccard: Mean voxel overlap between the two clusters' clouds, nan when unknown.
+        conflicts: Shared residues whose interaction type shifts significantly.
+        shared: Residues both clusters engage.
+        a_only: Residues only cluster A engages.
+        b_only: Residues only cluster B engages.
+        n_a: Ligand-bound structures in cluster A.
+        n_b: Ligand-bound structures in cluster B.
+        underpowered: Either cluster has fewer than MIN_TESTABLE members.
+        verdict: One of co-targetable, partly exclusive, exclusive, no interactions, too few structures.
+    """
+
+    a: int
+    b: int
+    residue_jaccard: float
+    shape_jaccard: float
+    conflicts: Tuple[str, ...]
+    shared: Tuple[str, ...]
+    a_only: Tuple[str, ...]
+    b_only: Tuple[str, ...]
+    n_a: int
+    n_b: int
+    underpowered: bool
+    verdict: str
+
+
+def observed_profile(run: RunInteractions) -> Profile:
+    """Engagement profile over the run's ligand-bound structures.
+
+    Args:
+        run: The run's archives.
+
+    Returns:
+        A profile carrying interaction-type counts.
+    """
+    return profile({pid: list(run.observed[pid]) for pid in run.holo})
+
+
+def shape_overlaps(
+    clouds: Mapping[str, np.ndarray],
+    clusters: Mapping[int, Sequence[str]],
+    spacing: float,
+) -> Dict[Tuple[int, int], float]:
+    """Mean voxel overlap between the point clouds of every pair of clusters.
+
+    Args:
+        clouds: PDB ID to its pocket point cloud.
+        clusters: Cluster id to the PDB IDs it contains.
+        spacing: Lattice spacing shared by the clouds.
+
+    Returns:
+        Cluster pair to the mean overlap, nan when either side has no cloud.
+    """
+    ids = list(clouds)
+    matrix = overlap_matrix([clouds[i] for i in ids], spacing)
+    position = {pid: i for i, pid in enumerate(ids)}
+
+    out: Dict[Tuple[int, int], float] = {}
+    for a, b in combinations(sorted(clusters), 2):
+        rows = [position[p] for p in clusters[a] if p in position]
+        cols = [position[p] for p in clusters[b] if p in position]
+        # The off-diagonal block only: a member is never compared with itself, and
+        # a representative pair would hang the answer on one structure.
+        out[(a, b)] = (float(matrix[np.ix_(rows, cols)].mean())
+                       if rows and cols else float("nan"))
+    return out
+
+
+def _verdict(
+    residue_jaccard: float, shape_jaccard: float, conflicts: Sequence[str], underpowered: bool
+) -> str:
+    """The label a pair earns, with too little evidence checked before anything else."""
+    if underpowered:
+        return "too few structures"
+    if math.isnan(residue_jaccard):
+        return "no interactions"
+    known_shape = not math.isnan(shape_jaccard)
+    if residue_jaccard < EXCLUSIVE or (known_shape and shape_jaccard < EXCLUSIVE):
+        return "exclusive"
+    if (residue_jaccard >= CO_TARGETABLE
+            and (not known_shape or shape_jaccard >= CO_TARGETABLE)
+            and not conflicts):
+        return "co-targetable"
+    return "partly exclusive"
+
+
+def pair_verdicts(
+    prof: Profile,
+    clusters: Mapping[int, Sequence[str]],
+    shape: Optional[Mapping[Tuple[int, int], float]] = None,
+    engaged_frac: float = ENGAGED_FRAC,
+    alpha: float = 0.05,
+) -> List[PairVerdict]:
+    """Whether each pair of clusters could be targeted by one ligand.
+
+    Args:
+        prof: An engagement profile from :func:`observed_profile`.
+        clusters: Cluster id to the PDB IDs it contains.
+        shape: Cluster pair to voxel overlap from :func:`shape_overlaps`, omitted when the run has no lattice.
+        engaged_frac: Fraction of a cluster that must show a residue for it to count as engaged.
+        alpha: FDR threshold for calling a type shift a conflict.
+
+    Returns:
+        One verdict per unordered pair, in ascending cluster order.
+    """
+    overlaps = dict(shape or {})
+    out: List[PairVerdict] = []
+    for a, b in combinations(sorted(clusters), 2):
+        overlap = exclusivity(prof, clusters[a], clusters[b], engaged_frac)
+        conflicts = tuple(
+            test.residue
+            for test in interaction_type_shift(prof, clusters[a], clusters[b], alpha)
+            if test.significant
+        )
+        shape_jaccard = float(overlaps.get((a, b), float("nan")))
+        out.append(
+            PairVerdict(
+                a=a,
+                b=b,
+                residue_jaccard=overlap.jaccard,
+                shape_jaccard=shape_jaccard,
+                conflicts=conflicts,
+                shared=overlap.shared,
+                a_only=overlap.a_only,
+                b_only=overlap.b_only,
+                n_a=overlap.n_structures_a,
+                n_b=overlap.n_structures_b,
+                underpowered=overlap.underpowered,
+                verdict=_verdict(overlap.jaccard, shape_jaccard, conflicts,
+                                 overlap.underpowered),
+            )
+        )
+    return out
+
+
+#: How each verdict's sentence ends, once the counts have been stated.
+_ENDINGS = {
+    "co-targetable": "a ligand anchored on the shared core should bind both",
+    "partly exclusive": "a shared core exists, but each state keeps residues of its own",
+    "exclusive": "targeting one means giving up the other",
+}
+
+
+def describe(verdict: PairVerdict) -> str:
+    """One sentence saying whether a ligand could be aimed at both clusters.
+
+    Args:
+        verdict: A verdict from :func:`pair_verdicts`.
+
+    Returns:
+        A sentence naming both clusters, the counts behind the call, and the call itself.
+    """
+    pair = f"Clusters {verdict.a} and {verdict.b}"
+    if verdict.verdict == "too few structures":
+        return (f"{pair} cannot be compared: {verdict.n_a} and {verdict.n_b} ligand-bound"
+                f" structures, fewer than the {MIN_TESTABLE} a test needs.")
+    if verdict.verdict == "no interactions":
+        return (f"{pair} cannot be compared: neither engages a residue in at least half"
+                " its members.")
+
+    union = len(verdict.shared) + len(verdict.a_only) + len(verdict.b_only)
+    clauses = [f"share {len(verdict.shared)} of {union} engaged residues"]
+    if not math.isnan(verdict.shape_jaccard):
+        clauses.append(f"{verdict.shape_jaccard:.0%} of their pocket volume")
+    sentence = f"{pair} {' and '.join(clauses)}"
+    if verdict.conflicts:
+        named = ", ".join(verdict.conflicts[:3])
+        more = len(verdict.conflicts) - 3
+        sentence += f", but contradict each other at {named}" + (f" +{more}" if more > 0 else "")
+    return f"{sentence} — {_ENDINGS[verdict.verdict]}."
