@@ -181,6 +181,7 @@ __all__ = [
 ]
 
 from qpocket.viz import two_stage  # noqa: E402,F401  (qviz.two_stage in the notebook)
+from qpocket.viz import interactions  # noqa: E402,F401  (qviz.interactions in the notebook)
 
 def explorer_path() -> Path:
     """Where the explorer notebook is installed.
