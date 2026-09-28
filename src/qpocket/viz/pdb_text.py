@@ -25,12 +25,14 @@ class ProteinModels(NamedTuple):
         sidechains: Non-backbone atoms of the residues that line the pocket.
         n_context: Residue count in ``cartoon``.
         n_contact: Residue count contributing to ``sidechains``.
+        n_forced: Residues pulled in by ``always`` and found in the structure.
     """
 
     cartoon: str
     sidechains: str
     n_context: int
     n_contact: int
+    n_forced: int = 0
 
 
 def parse_atom(line: str) -> Optional[Dict]:
@@ -236,11 +238,25 @@ def bbox_corners(points: np.ndarray, pad: float = 2.0) -> np.ndarray:
     )
 
 
+def _wanted_keys(residues: Sequence[str]) -> set:
+    """Chain and sequence number of each residue key that can be parsed."""
+    wanted = set()
+    for key in residues:
+        parts = str(key).split("_")
+        if len(parts) >= 3:
+            try:
+                wanted.add((parts[-1], int(parts[-2])))
+            except ValueError:
+                continue
+    return wanted
+
+
 def pocket_context_models(
     pdb_path: str,
     cloud_xyz: np.ndarray,
     context_radius: float,
     contact_radius: float = 4.0,
+    always: Sequence[str] = (),
 ) -> ProteinModels:
     """Split a protein into a local cartoon plus the side chains lining a pocket.
 
@@ -249,6 +265,7 @@ def pocket_context_models(
         cloud_xyz: ``(n, 3)`` pocket point coordinates.
         context_radius: Residues within this distance appear as cartoon.
         contact_radius: Residues within this distance also get side-chain sticks.
+        always: Residue keys drawn whatever their distance, backbone included.
 
     Returns:
         The two PDB blocks and their residue counts.
@@ -256,7 +273,7 @@ def pocket_context_models(
     atoms = read_protein_atoms(pdb_path)
     cloud = np.asarray(cloud_xyz, dtype=float).reshape(-1, 3)
     if not atoms or not len(cloud):
-        return ProteinModels("", "", 0, 0)
+        return ProteinModels("", "", 0, 0, 0)
 
     xyz = np.array([[a["x"], a["y"], a["z"]] for a in atoms])
     distance, _ = cKDTree(cloud).query(xyz, k=1)
@@ -267,8 +284,13 @@ def pocket_context_models(
         if dist < nearest.get(key, np.inf):
             nearest[key] = dist
 
-    context = {k for k, v in nearest.items() if v <= context_radius}
-    contact = {k for k, v in nearest.items() if v <= contact_radius}
+    # Forced residues join both sets: the sticks are the point, and without the
+    # backbone a distant side chain floats unattached to any cartoon.
+    forced_keys = _wanted_keys(always)
+    forced = {k for k in nearest if (k[0], k[1]) in forced_keys}
+
+    context = {k for k, v in nearest.items() if v <= context_radius} | forced
+    contact = {k for k, v in nearest.items() if v <= contact_radius} | forced
 
     cartoon: List[str] = []
     sidechains: List[str] = []
@@ -285,6 +307,7 @@ def pocket_context_models(
         blocks_to_text(sidechains),
         len(context),
         len(contact),
+        len(forced),
     )
 
 
@@ -298,14 +321,7 @@ def residue_model(pdb_path: str, residues: Sequence[str]) -> str:
     Returns:
         PDB text for the matching atoms, or ``""`` when none match.
     """
-    wanted = set()
-    for key in residues:
-        parts = str(key).split("_")
-        if len(parts) >= 3:
-            try:
-                wanted.add((parts[-1], int(parts[-2])))
-            except ValueError:
-                continue
+    wanted = _wanted_keys(residues)
     if not wanted:
         return ""
     lines: List[str] = []

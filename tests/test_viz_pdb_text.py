@@ -340,4 +340,65 @@ def test_pocket_context_models_splits_cartoon_from_lining_side_chains(tmp_path):
 def test_pocket_context_models_handles_an_empty_cloud(tmp_path):
     path = write_protein(tmp_path, residue_block(1))
     models = pocket_context_models(path, np.empty((0, 3)), context_radius=12.0)
-    assert models == ("", "", 0, 0)
+    assert models == ("", "", 0, 0, 0)
+
+
+def write_two_residue_pdb(path):
+    """One residue on the cloud, one far away, each with backbone and a side chain."""
+    lines = []
+    for resseq, offset in ((10, 0.0), (99, 40.0)):
+        for name, element in (("N", "N"), ("CA", "C"), ("C", "C"), ("O", "O"), ("CB", "C")):
+            lines.append(atom_line(len(lines) + 1, make_atom(
+                name=name, element=element, resname="TYR", chain="A",
+                resseq=resseq, xyz=(offset, 0.0, 0.0))))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def test_a_forced_residue_gets_its_side_chain_however_far_it_is(tmp_path):
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    cloud = np.zeros((1, 3))
+
+    without = pocket_context_models(pdb, cloud, context_radius=12.0, contact_radius=4.0)
+    assert "  99 " not in without.sidechains
+
+    with_forced = pocket_context_models(pdb, cloud, context_radius=12.0,
+                                        contact_radius=4.0, always=["TYR_99_A"])
+    forced = [line for line in with_forced.sidechains.splitlines()
+              if int(field(line, "resseq")) == 99]
+    assert [field(line, "name").strip() for line in forced] == ["CB"]
+
+
+def test_a_forced_residue_brings_its_backbone_into_the_cartoon(tmp_path):
+    # Without this the stick floats unattached, 40 A from any cartoon.
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    models = pocket_context_models(pdb, np.zeros((1, 3)), context_radius=12.0,
+                                   contact_radius=4.0, always=["TYR_99_A"])
+    backbone = {field(line, "name").strip() for line in models.cartoon.splitlines()
+                if int(field(line, "resseq")) == 99}
+    assert backbone == set(BACKBONE)
+
+
+def test_n_forced_counts_only_the_residues_actually_present(tmp_path):
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    models = pocket_context_models(pdb, np.zeros((1, 3)), context_radius=12.0,
+                                   contact_radius=4.0,
+                                   always=["TYR_99_A", "TRP_500_B", "not a key"])
+    assert models.n_forced == 1
+
+
+def test_forcing_a_residue_already_in_contact_changes_nothing(tmp_path):
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    plain = pocket_context_models(pdb, np.zeros((1, 3)), context_radius=12.0, contact_radius=4.0)
+    forced = pocket_context_models(pdb, np.zeros((1, 3)), context_radius=12.0,
+                                   contact_radius=4.0, always=["TYR_10_A"])
+    assert forced.sidechains == plain.sidechains
+    assert forced.cartoon == plain.cartoon
+    assert forced.n_forced == 1
+
+
+def test_the_default_keeps_the_old_behaviour(tmp_path):
+    pdb = write_two_residue_pdb(tmp_path / "s.pdb")
+    models = pocket_context_models(pdb, np.zeros((1, 3)), context_radius=12.0, contact_radius=4.0)
+    assert models.n_forced == 0
+    assert models.n_contact == 1
