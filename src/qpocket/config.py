@@ -15,6 +15,8 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
+from qpocket.io.layout import STRUCTURE_SUFFIXES  # noqa: F401  (re-exported)
+
 
 @dataclass(frozen=True)
 class BoundingBoxParams:
@@ -934,8 +936,6 @@ def load_qpocket_config(
     return final_cfg
 
 
-#: Structures accepted as local input in fragment-screen mode.
-STRUCTURE_SUFFIXES = (".pdb", ".cif", ".ent")
 
 
 def sanitise_id(name: str) -> str:

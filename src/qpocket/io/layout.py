@@ -99,3 +99,94 @@ def read_run_record(root: Union[str, Path]) -> Optional[dict]:
     """
     path = workspace(root).metadata / RUN_RECORD
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+#: Structures accepted as input.
+STRUCTURE_SUFFIXES = (".pdb", ".cif", ".ent")
+
+REFERENCE_RECORD = "reference.json"
+
+
+def structure_files(ws: Workspace) -> list:
+    """Every ingested structure file, sorted by path.
+
+    Args:
+        ws: The run.
+
+    Returns:
+        Paths; this order decides master.csv order.
+    """
+    return sorted(p for sfx in STRUCTURE_SUFFIXES for p in ws.original.glob(f"*{sfx}"))
+
+
+def raw_structure(ws: Workspace, pdb_id: str):
+    """The ingested file of one structure.
+
+    Args:
+        ws: The run.
+        pdb_id: Its identifier.
+
+    Returns:
+        Its RawStructure.
+
+    Raises:
+        FileNotFoundError: If nothing was ingested under that name.
+    """
+    from qpocket.core.types import RawStructure
+
+    path = next((p for p in structure_files(ws) if p.stem == pdb_id), None)
+    if path is None:
+        raise FileNotFoundError(f"no ingested structure named {pdb_id!r} in {ws.original}")
+    return RawStructure(pdb_id, path)
+
+
+def parts_dir(ws: Workspace) -> Path:
+    """Directory of the per-structure sidecars, created if absent."""
+    path = ws.metadata / "parts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_part(ws: Workspace, pdb_id: str, payload: dict) -> Path:
+    """Write one structure's sidecar.
+
+    Args:
+        ws: The run.
+        pdb_id: The structure.
+        payload: Its JSON form.
+
+    Returns:
+        The sidecar path.
+    """
+    path = parts_dir(ws) / f"{pdb_id}.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def read_part(ws: Workspace, pdb_id: str) -> Optional[dict]:
+    """One structure's sidecar, or None when it has none.
+
+    Raises:
+        ValueError: If the sidecar is not valid JSON.
+    """
+    path = ws.metadata / "parts" / f"{pdb_id}.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def write_reference(ws: Workspace, payload: dict) -> Path:
+    """Persist the reference, so array tasks can reuse it."""
+    path = ws.metadata / REFERENCE_RECORD
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def read_reference(ws: Workspace) -> dict:
+    """The persisted reference.
+
+    Raises:
+        FileNotFoundError: If the prepare stage has not run.
+    """
+    path = ws.metadata / REFERENCE_RECORD
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} not found — run the prepare stage before per-structure tasks")
+    return json.loads(path.read_text(encoding="utf-8"))
