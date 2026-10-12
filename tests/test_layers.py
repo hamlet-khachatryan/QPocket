@@ -14,7 +14,7 @@ FORBIDDEN_PARAMS = {"cfg", "dirs"}
 CORE_MODULES_DONE = ["clustering.py", "spectral.py", "features.py", "structure.py", "sequence.py",
                      "geometry.py", "pocket.py", "interactions.py", "screening.py",
                      "perception.py", "detect.py",
-                     "protonation.py", "hydroxyl.py", "registry.py", "ports.py"]
+                     "protonation.py", "hydroxyl.py", "registry.py", "ports.py", "result.py"]
 
 
 def _tree(name):
