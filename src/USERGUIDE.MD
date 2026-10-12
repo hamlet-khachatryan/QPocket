@@ -30,7 +30,7 @@ from src import utils
 
 # 1. Setup Project Hierarchy
 ref_id = "5R7Y_A"
-dirs = utils.setup_directory_hierarchy(workdir=None, ref_pdb_chain=ref_id)
+dirs = layout.create(None, ref_id)  # from qpocket.io import layout
 
 # 2. Fetch Matching IDs
 pdb_ids = api.fetch_structure_ids(

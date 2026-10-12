@@ -32,9 +32,13 @@ class Location(NamedTuple):
 
 
 def is_run(path: Path) -> bool:
-    """Whether ``path`` is a Q-Pocket run directory."""
+    """Whether ``path`` is a Q-Pocket run directory in the current layout."""
+    from qpocket.io.layout import LAYOUT_VERSION, read_run_record
+
     p = Path(path)
-    return (p / "metadata" / "master.csv").is_file() and (p / "pockets").is_dir()
+    record = read_run_record(p)
+    return (record is not None and record.get("layout_version") == LAYOUT_VERSION
+            and (p / "metadata" / "master.csv").is_file() and (p / "pockets").is_dir())
 
 
 def is_complete(path: Path) -> bool:

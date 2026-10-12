@@ -257,7 +257,7 @@ def extract_pocket_from_structure(
 
     Args:
         row: DataFrame row with ``pdb_id``, ``cleaned_file``, ``aligned_file``.
-        dirs: Directory path dictionary from ``setup_directory_hierarchy()``.
+        dirs: Directory map from ``layout.create``.
         ref_centroid: Reference ligand centroid (used for reference structure processing when ``ref_pocket_bbox`` is ``None``).
         allowed_cofactors: ``"|"``-separated list of cofactor residue names to exclude from ligand selection.
         pocket_mode: ``"cavity_detection"`` or ``"bounding_box"``.

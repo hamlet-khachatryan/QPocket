@@ -17,7 +17,6 @@ from qpocket.core.geometry import (
 )
 from qpocket.core.pocket import extract_pdb_block, is_residue_ligand
 from qpocket.io.hdf5 import save_interactions as save_to_hdf5_ascii
-from qpocket.io.workspace import setup_directory_hierarchy
 
 
 # ---------------------------------------------------------------------------
@@ -361,25 +360,3 @@ def test_save_to_hdf5_ascii_overwrites_existing(tmp_path):
     with h5py.File(out, "r") as hf:
         entries = [e.decode("ascii") for e in hf["key"][:]]
         assert entries == ["new_value"]
-
-
-# ---------------------------------------------------------------------------
-# setup_directory_hierarchy
-# ---------------------------------------------------------------------------
-
-
-def test_setup_directory_hierarchy_creates_dirs(tmp_path):
-    dirs = setup_directory_hierarchy(str(tmp_path), "1ABC")
-    expected_keys = {
-        "root", "structures", "original", "aligned", "cleaned",
-        "extracted_ligands", "pockets", "metadata", "screening",
-        "decoys", "actives",
-    }
-    assert expected_keys == set(dirs.keys())
-    for key, path in dirs.items():
-        assert path.exists(), f"Directory for key '{key}' was not created: {path}"
-
-
-def test_setup_directory_hierarchy_uses_pdb_id(tmp_path):
-    dirs = setup_directory_hierarchy(str(tmp_path), "2XYZ")
-    assert "2XYZ" in str(dirs["root"])

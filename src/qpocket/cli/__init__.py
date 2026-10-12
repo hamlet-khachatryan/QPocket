@@ -514,12 +514,12 @@ def init(output: str):
 def _load_run(config: Optional[str], workdir: Optional[str], overrides: List[str]):
     """Load a config and its directory map, the way every slurm command needs."""
     from qpocket.config import load_qpocket_config, run_id as api_run_id
-    from qpocket.io import workspace
+    from qpocket.io import layout
 
     if workdir:
         overrides = list(overrides) + [f"paths.workdir={Path(workdir).resolve()}"]
     cfg = load_qpocket_config(config_path=config, overrides=overrides or None)
-    dirs = workspace.setup_directory_hierarchy(cfg.paths.workdir, api_run_id(cfg))
+    dirs = layout.create(cfg.paths.workdir, api_run_id(cfg))
     return cfg, dirs
 
 

@@ -13,7 +13,7 @@ from eliot import log_message, start_action
 
 from qpocket.config import (STRUCTURE_SUFFIXES, QPocketConfig, run_id, sanitise_id,
                             should_renumber)
-from qpocket.io import hdf5, workspace
+from qpocket.io import hdf5, layout
 from qpocket.io import logging as qlog
 from qpocket.pipelines import collect, parallel
 from qpocket.pipelines.distance import compute_geodesic
@@ -76,7 +76,7 @@ def execute(cfg: QPocketConfig, pipeline_stages: Sequence[Callable]) -> Path:
     Returns:
         Run root directory.
     """
-    dirs = workspace.setup_directory_hierarchy(cfg.paths.workdir, run_id(cfg))
+    dirs = layout.create(cfg.paths.workdir, run_id(cfg))
     log_path = dirs["root"] / "qpocket_pipeline.log"
     qlog.configure(cfg, log_path)
 

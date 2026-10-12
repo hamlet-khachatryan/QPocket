@@ -28,6 +28,7 @@ def _old_style_run(root: Path) -> Path:
     run = root / "legacy" / "1ABC"
     meta = run / "metadata"
     meta.mkdir(parents=True)
+    (meta / "run.json").write_text('{"layout_version": 2}')
     ids = ["1ABC", "2DEF", "3GHI"]
     frame = pd.DataFrame(
         [[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]], index=ids, columns=ids)

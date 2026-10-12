@@ -241,7 +241,7 @@ def pocket_manifest(cfg: QPocketConfig, dirs: Dict[str, Path]) -> Tuple[List[Pat
 
     Args:
         cfg: QPocket configuration.
-        dirs: Directory path dictionary from ``setup_directory_hierarchy()``.
+        dirs: Directory map from ``layout.create``.
 
     Returns:
         Parallel lists of ``featurized.csv`` paths and PDB IDs, in master order.
@@ -449,7 +449,7 @@ def compute_spectral_distance_matrix(
 
     Args:
         cfg: QPocket configuration.
-        dirs: Directory path dictionary from ``setup_directory_hierarchy()``.
+        dirs: Directory map from ``layout.create``.
 
     Raises:
         ValueError: If fewer than two featurised pockets are available.

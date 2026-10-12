@@ -26,6 +26,7 @@ def make_run(path: Path, complete: bool = True) -> Path:
     (path / "metadata").mkdir(parents=True)
     (path / "pockets").mkdir()
     (path / "metadata" / "master.csv").write_text("pdb_id\n")
+    (path / "metadata" / "run.json").write_text('{"layout_version": 2}')
     if complete:
         (path / "metadata" / "spectral_distance_matrix.csv").write_text(",\n")
     return path

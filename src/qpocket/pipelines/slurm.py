@@ -120,7 +120,7 @@ def write_manifest(dirs: Dict[str, Path], stage: StageSpec, pdb_ids: Sequence[st
     """Write one PDB ID per line for an array stage to index into.
 
     Args:
-        dirs: Directory map from ``setup_directory_hierarchy``.
+        dirs: Directory map from ``layout.create``.
         stage: The stage this manifest belongs to.
         pdb_ids: Structures to process, in order.
 
