@@ -6,6 +6,7 @@ from click.testing import CliRunner
 
 from qpocket.config import validate_config
 from tests.conftest import make_config
+from qpocket.config import evolve
 
 
 def test_defaults_are_todays_six_columns():
@@ -14,14 +15,14 @@ def test_defaults_are_todays_six_columns():
 
 def test_unknown_provider_is_a_config_error():
     cfg = make_config()
-    cfg.features.enabled = ["apbs", "quantum"]
+    cfg = evolve(cfg, "features.enabled", ["apbs", "quantum"])
     with pytest.raises(ValueError, match="features.enabled"):
         validate_config(cfg)
 
 
 def test_empty_selection_is_a_config_error():
     cfg = make_config()
-    cfg.features.enabled = []
+    cfg = evolve(cfg, "features.enabled", [])
     with pytest.raises(ValueError, match="features.enabled"):
         validate_config(cfg)
 

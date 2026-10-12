@@ -1,6 +1,7 @@
 """Run configuration: dataclasses, legacy-key migration, defaults and validation."""
 from __future__ import annotations
 
+import dataclasses
 import re
 import sys
 from collections.abc import Sequence
@@ -15,14 +16,14 @@ from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 
-@dataclass
+@dataclass(frozen=True)
 class BoundingBoxParams:
     """Parameters for user-defined bounding box pocket definition."""
     center: Optional[List[float]] = None
     dimensions: Optional[List[float]] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class ReferenceParams:
     """Parameters for the reference structure."""
     pdb_id: Optional[str] = None
@@ -44,13 +45,13 @@ class ReferenceParams:
     interaction_padding: float = 5.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class PathConfig:
     """Configuration for file paths."""
     workdir: str = field(default_factory=lambda: str(Path.cwd()))
 
 
-@dataclass
+@dataclass(frozen=True)
 class FragmentScreenParams:
     """Parameters for fragment screening mode.
 
@@ -72,7 +73,7 @@ class FragmentScreenParams:
     reference_index: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class QueryParams:
     """Parameters specific for PDB query mode."""
     sequence_identity: float = 1.0
@@ -83,7 +84,7 @@ class QueryParams:
     enforce_same_uniprot: bool = False
 
 
-@dataclass
+@dataclass(frozen=True)
 class AlignParams:
     """Parameters specific for sequence alignment.
 
@@ -103,13 +104,13 @@ class AlignParams:
     require_all_chains: bool = True
 
 
-@dataclass
+@dataclass(frozen=True)
 class CleanParams:
     """Parameters specific for cleaning structures."""
     allowed_cofactors: Optional[str] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class IOConfig:
     """Configuration for I/O behaviour.
 
@@ -123,7 +124,7 @@ class IOConfig:
     compression: Literal["gzip", "none"] = "gzip"
 
 
-@dataclass
+@dataclass(frozen=True)
 class StageClustering:
     """Clustering settings for one stage of a two-stage grouping.
 
@@ -147,7 +148,7 @@ class StageClustering:
     threshold: Optional[float] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class ClusteringParams:
     """How pockets are grouped once the distance matrices exist.
 
@@ -171,7 +172,7 @@ class ClusteringParams:
     )
 
 
-@dataclass
+@dataclass(frozen=True)
 class SlurmStageResources:
     """Resource request for one SLURM stage.
 
@@ -185,7 +186,7 @@ class SlurmStageResources:
     time: str = "01:00:00"
 
 
-@dataclass
+@dataclass(frozen=True)
 class SlurmConfig:
     """Cluster submission settings for ``qpocket slurm``.
 
@@ -213,7 +214,7 @@ class SlurmConfig:
     stages: Dict[str, SlurmStageResources] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class DistanceConfig:
     """Parameters for spectral distance calculation and clustering.
 
@@ -249,7 +250,7 @@ def _plain(value):
     return value
 
 
-@dataclass
+@dataclass(frozen=True)
 class FeaturesConfig:
     """Which feature providers run, and their options.
 
@@ -275,7 +276,7 @@ def _default_interactions() -> List[str]:
     return list(INTERACTION_NAMES)
 
 
-@dataclass
+@dataclass(frozen=True)
 class InteractionsConfig:
     """Which interactions to detect, and with what geometry.
 
@@ -288,7 +289,7 @@ class InteractionsConfig:
     parameters: Dict[str, Dict] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ComputeConfig:
     """How much of this machine a local run may use.
 
@@ -301,7 +302,7 @@ class ComputeConfig:
     backend: Literal["process", "thread"] = "process"
 
 
-@dataclass
+@dataclass(frozen=True)
 class QPocketConfig:
     """Aggregated configuration for QPocket pipeline execution."""
     mode: Literal["pdb_query", "fragment_screen"] = "pdb_query"
@@ -910,6 +911,7 @@ def load_qpocket_config(
 
     fill_defaults(cfg)
 
+    OmegaConf.set_readonly(cfg, True)
     final_cfg = QPocketConfig(
         mode=cfg.mode,
         paths=cfg.paths,
@@ -979,3 +981,31 @@ def should_renumber(cfg: QPocketConfig) -> bool:
     if configured is None:
         return cfg.mode != "fragment_screen"
     return bool(configured)
+
+
+def evolve(cfg, path: str, value):
+    """A copy of a config with one dotted path replaced.
+
+    Args:
+        cfg: A config dataclass or OmegaConf node.
+        path: Dotted attribute path, e.g. "fragment_screen.reference_path".
+        value: The new value.
+
+    Returns:
+        The changed copy; ``cfg`` is untouched.
+
+    Raises:
+        AttributeError: If a segment of ``path`` does not exist.
+    """
+    head, _, rest = path.partition(".")
+    if isinstance(cfg, DictConfig):
+        if head not in cfg:
+            raise AttributeError(f"config has no {head!r}")
+        copy = OmegaConf.create(OmegaConf.to_container(cfg))
+        copy[head] = evolve(cfg[head], rest, value) if rest else value
+        OmegaConf.set_readonly(copy, True)
+        return copy
+    if not hasattr(cfg, head):
+        raise AttributeError(f"{type(cfg).__name__} has no {head!r}")
+    new = evolve(getattr(cfg, head), rest, value) if rest else value
+    return dataclasses.replace(cfg, **{head: new})

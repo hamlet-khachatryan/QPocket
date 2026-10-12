@@ -22,6 +22,7 @@ from qpocket.pipelines import stages, tasks
 from qpocket.pipelines.stages import ExtractionContext, StructureResult
 from qpocket.config import QPocketConfig
 from qpocket.pipelines.tasks import TaskError, resolve_pdb_id, run_task
+from qpocket.config import evolve
 
 PDB_IDS = ["1ABC", "2DEF", "3GHI"]
 
@@ -29,7 +30,7 @@ PDB_IDS = ["1ABC", "2DEF", "3GHI"]
 @pytest.fixture
 def cfg():
     config = QPocketConfig()
-    config.reference.pdb_id = "1ABC"
+    config = evolve(config, "reference.pdb_id", "1ABC")
     return config
 
 

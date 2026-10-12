@@ -29,6 +29,7 @@ from qpocket.pipelines.slurm import (
     write_scripts,
     write_submit_all,
 )
+from qpocket.config import evolve
 
 PDB_IDS = ["1ABC", "2DEF", "3GHI", "4JKL"]
 
@@ -36,7 +37,7 @@ PDB_IDS = ["1ABC", "2DEF", "3GHI", "4JKL"]
 @pytest.fixture
 def cfg():
     config = QPocketConfig()
-    config.reference.pdb_id = "1ABC"
+    config = evolve(config, "reference.pdb_id", "1ABC")
     return config
 
 
@@ -111,13 +112,13 @@ def test_an_array_stage_without_a_manifest_is_refused(cfg, dirs, config_file):
 
 
 def test_environment_lines_appear_verbatim_and_in_order(cfg, dirs, config_file):
-    cfg.slurm.environment = ["module load gcc/11.2", "conda activate qpocket"]
+    cfg = evolve(cfg, "slurm.environment", ["module load gcc/11.2", "conda activate qpocket"])
     text = featurize_script(cfg, dirs, config_file)
     assert text.index("module load gcc/11.2") < text.index("conda activate qpocket")
 
 
 def test_environment_lines_come_before_the_work(cfg, dirs, config_file):
-    cfg.slurm.environment = ["conda activate qpocket"]
+    cfg = evolve(cfg, "slurm.environment", ["conda activate qpocket"])
     text = featurize_script(cfg, dirs, config_file)
     assert text.index("conda activate qpocket") < text.index("qpocket task")
 
@@ -134,17 +135,17 @@ def test_account_is_omitted_when_unset(cfg, dirs, config_file):
 
 
 def test_account_is_emitted_when_set(cfg, dirs, config_file):
-    cfg.slurm.account = "proj123"
+    cfg = evolve(cfg, "slurm.account", "proj123")
     assert "#SBATCH --account=proj123" in featurize_script(cfg, dirs, config_file)
 
 
 def test_qos_is_emitted_when_set(cfg, dirs, config_file):
-    cfg.slurm.qos = "high"
+    cfg = evolve(cfg, "slurm.qos", "high")
     assert "#SBATCH --qos=high" in featurize_script(cfg, dirs, config_file)
 
 
 def test_a_stage_override_beats_the_defaults(cfg, dirs, config_file):
-    cfg.slurm.stages = {"featurize": type(cfg.slurm.defaults)(cpus=8, mem="16G", time="04:00:00")}
+    cfg = evolve(cfg, "slurm.stages", {"featurize": type(cfg.slurm.defaults)(cpus=8, mem="16G", time="04:00:00")})
     text = featurize_script(cfg, dirs, config_file)
     assert "#SBATCH --mem=16G" in text and "#SBATCH --cpus-per-task=8" in text
 
@@ -169,13 +170,13 @@ def test_chunks_tile_the_manifest_exactly_once():
 
 
 def test_a_stage_over_the_array_cap_is_split_into_several_scripts(cfg, dirs, config_file):
-    cfg.slurm.max_array_size = 2
+    cfg = evolve(cfg, "slurm.max_array_size", 2)
     scripts = write_scripts(cfg, dirs, config_file, PDB_IDS, stages=["featurize"])
     assert len(scripts["featurize"]) == 2
 
 
 def test_each_chunk_offsets_into_the_right_part_of_the_manifest(cfg, dirs, config_file):
-    cfg.slurm.max_array_size = 2
+    cfg = evolve(cfg, "slurm.max_array_size", 2)
     scripts = write_scripts(cfg, dirs, config_file, PDB_IDS, stages=["featurize"])
     offsets = [
         "+ 0 ))" in p.read_text() or "+ 2 ))" in p.read_text()
@@ -224,12 +225,12 @@ def test_apbs_runs_inside_featurisation_by_default(cfg):
 
 
 def test_apbs_becomes_its_own_stage_when_split(cfg):
-    cfg.slurm.split_apbs_stage = True
+    cfg = evolve(cfg, "slurm.split_apbs_stage", True)
     assert "apbs" in [s.name for s in active_stages(cfg)]
 
 
 def test_the_split_apbs_stage_runs_before_featurisation(cfg):
-    cfg.slurm.split_apbs_stage = True
+    cfg = evolve(cfg, "slurm.split_apbs_stage", True)
     names = [s.name for s in active_stages(cfg)]
     assert names.index("apbs") < names.index("featurize")
 
@@ -244,7 +245,7 @@ def test_submit_all_chains_the_configured_dependency(cfg, dirs, config_file):
 
 
 def test_submit_all_can_be_switched_to_strict_dependencies(cfg, dirs, config_file):
-    cfg.slurm.dependency = "afterok"
+    cfg = evolve(cfg, "slurm.dependency", "afterok")
     scripts = write_scripts(cfg, dirs, config_file, PDB_IDS)
     text = write_submit_all(cfg, dirs, scripts).read_text()
     assert "--dependency=afterok$PREV" in text
@@ -270,8 +271,8 @@ def test_the_first_stage_is_submitted_without_a_dependency(cfg, dirs, config_fil
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_every_generated_script_parses_as_bash(cfg, dirs, config_file):
-    cfg.slurm.environment = ["module load gcc/11.2", "conda activate qpocket"]
-    cfg.slurm.account = "proj123"
+    cfg = evolve(cfg, "slurm.environment", ["module load gcc/11.2", "conda activate qpocket"])
+    cfg = evolve(cfg, "slurm.account", "proj123")
     scripts = write_scripts(cfg, dirs, config_file, PDB_IDS)
     paths = [p for group in scripts.values() for p in group]
     paths.append(write_submit_all(cfg, dirs, scripts))

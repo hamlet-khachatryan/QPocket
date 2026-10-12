@@ -1,11 +1,12 @@
 """Both log formats work; the text one is what a first run asks for."""
 from qpocket.io import logging as qlog
 from tests.conftest import make_config
+from qpocket.config import evolve
 
 
 def _configure(tmp_path, log_format):
     cfg = make_config()
-    cfg.io.log_format = log_format
+    cfg = evolve(cfg, "io.log_format", log_format)
     qlog.configure(cfg, tmp_path / "run.log")
 
 

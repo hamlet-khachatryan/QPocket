@@ -17,6 +17,7 @@ from qpocket.pipelines.distance import (
     pad_or_truncate,
 )
 from tests.conftest import make_config
+from qpocket.config import evolve
 
 
 # ---------------------------------------------------------------------------
@@ -215,10 +216,10 @@ def test_data_processing_spectral_runs(tmp_path):
     p2 = _write_npz(tmp_path / "b.npz", seed=2)
 
     cfg = make_config()
-    cfg.distance.global_k = 5
-    cfg.distance.sigma = 0.5
-    cfg.distance.parallel_jobs = 1
-    cfg.distance.max_points = 5000
+    cfg = evolve(cfg, "distance.global_k", 5)
+    cfg = evolve(cfg, "distance.sigma", 0.5)
+    cfg = evolve(cfg, "distance.parallel_jobs", 1)
+    cfg = evolve(cfg, "distance.max_points", 5000)
 
     result = data_processing_spectral(cfg, [p1, p2])
     assert isinstance(result, dict)
@@ -231,10 +232,10 @@ def test_data_processing_spectral_scaler_applied(tmp_path):
     p2 = _write_npz(tmp_path / "b.npz", seed=20)
 
     cfg = make_config()
-    cfg.distance.global_k = 3
-    cfg.distance.sigma = 1.0
-    cfg.distance.parallel_jobs = 1
-    cfg.distance.max_points = 5000
+    cfg = evolve(cfg, "distance.global_k", 3)
+    cfg = evolve(cfg, "distance.sigma", 1.0)
+    cfg = evolve(cfg, "distance.parallel_jobs", 1)
+    cfg = evolve(cfg, "distance.max_points", 5000)
 
     result = data_processing_spectral(cfg, [p1, p2])
     # Just verify it runs without error and returns a dict

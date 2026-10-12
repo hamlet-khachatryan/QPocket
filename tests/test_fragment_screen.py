@@ -21,6 +21,7 @@ from qpocket.pipelines.stages import (
 )
 from qpocket.config import (FragmentScreenParams, QPocketConfig, run_id, sanitise_id,
                             should_renumber, validate_config)
+from qpocket.config import evolve
 
 
 def structure(path, text="ATOM      1  N   ALA A   1       0.000   0.000   0.000\n"):
@@ -47,12 +48,12 @@ def campaign(tmp_path):
         d.mkdir(parents=True, exist_ok=True)
 
     cfg = QPocketConfig(mode="fragment_screen")
-    cfg.fragment_screen = FragmentScreenParams(
+    cfg = evolve(cfg, "fragment_screen", FragmentScreenParams(
         input_type="paths",
         structure_paths=[str(a), str(b)],
         reference_path=str(ref),
-    )
-    cfg.reference.ligand_id = "LIG"
+    ))
+    cfg = evolve(cfg, "reference.ligand_id", "LIG")
     return cfg, dirs, {"ref": ref, "a": a, "b": b}
 
 
@@ -85,9 +86,9 @@ def test_two_files_with_the_same_name_do_not_collide(tmp_path):
     dirs = {"metadata": root / "metadata", "original": root / "structures" / "original"}
     dirs["original"].mkdir(parents=True)
     cfg = QPocketConfig(mode="fragment_screen")
-    cfg.fragment_screen = FragmentScreenParams(
+    cfg = evolve(cfg, "fragment_screen", FragmentScreenParams(
         input_type="paths", structure_paths=[str(one), str(two)], reference_path=str(one)
-    )
+    ))
     assert len(set(_load_fragment_screen_structures(cfg, dirs["original"]))) == 2
 
 
@@ -108,9 +109,9 @@ def test_the_reference_is_flagged_in_the_provenance_record(campaign):
 
 def test_a_reference_also_listed_as_a_structure_is_ingested_once(campaign):
     cfg, dirs, files = campaign
-    cfg.fragment_screen.structure_paths = [
+    cfg = evolve(cfg, "fragment_screen.structure_paths", [
         str(files["ref"]), str(files["a"]), str(files["b"])
-    ]
+    ])
     assert ingest(cfg, dirs).count("PARG_reference") == 1
 
 
@@ -128,8 +129,8 @@ def test_reference_id_matches_what_was_ingested(campaign):
 
 def test_without_a_reference_path_the_index_selects_one(campaign):
     cfg, dirs, _ = campaign
-    cfg.fragment_screen.reference_path = None
-    cfg.fragment_screen.reference_index = 1
+    cfg = evolve(cfg, "fragment_screen.reference_path", None)
+    cfg = evolve(cfg, "fragment_screen.reference_index", 1)
     ingest(cfg, dirs)
     table = pd.read_csv(dirs["metadata"] / "inputs.csv")
     assert table.iloc[1]["is_reference"]
@@ -137,7 +138,7 @@ def test_without_a_reference_path_the_index_selects_one(campaign):
 
 def test_some_structure_is_always_the_reference(campaign):
     cfg, dirs, _ = campaign
-    cfg.fragment_screen.reference_path = None
+    cfg = evolve(cfg, "fragment_screen.reference_path", None)
     ingest(cfg, dirs)
     assert pd.read_csv(dirs["metadata"] / "inputs.csv")["is_reference"].sum() == 1
 
@@ -163,22 +164,22 @@ def test_the_copied_file_keeps_its_format(campaign):
 
 def test_a_missing_file_is_skipped_and_the_rest_survive(campaign):
     cfg, dirs, files = campaign
-    cfg.fragment_screen.structure_paths = [str(files["a"]), "/nope/absent.pdb"]
+    cfg = evolve(cfg, "fragment_screen.structure_paths", [str(files["a"]), "/nope/absent.pdb"])
     assert ingest(cfg, dirs) == ["PARG_reference", "soak_A07"]
 
 
 def test_an_unrecognised_format_is_skipped(campaign, tmp_path):
     cfg, dirs, files = campaign
     notes = structure(tmp_path / "src" / "notes.txt")
-    cfg.fragment_screen.structure_paths = [str(files["a"]), str(notes)]
+    cfg = evolve(cfg, "fragment_screen.structure_paths", [str(files["a"]), str(notes)])
     assert "notes" not in ingest(cfg, dirs)
 
 
 def test_an_empty_ingest_raises_rather_than_reaching_alignment(campaign):
     """It used to return [] and fail later, somewhere far less informative."""
     cfg, dirs, _ = campaign
-    cfg.fragment_screen.reference_path = None
-    cfg.fragment_screen.structure_paths = ["/nope/a.pdb"]
+    cfg = evolve(cfg, "fragment_screen.reference_path", None)
+    cfg = evolve(cfg, "fragment_screen.structure_paths", ["/nope/a.pdb"])
     with pytest.raises(ValueError, match="ingested no structures"):
         stages.fetch_structures(cfg, dirs["original"])
 
@@ -187,9 +188,9 @@ def test_a_csv_without_the_expected_column_yields_nothing(campaign, tmp_path):
     cfg, dirs, _ = campaign
     csv = tmp_path / "in.csv"
     csv.write_text("path\n/a.pdb\n")
-    cfg.fragment_screen.input_type = "csv"
-    cfg.fragment_screen.csv_path = str(csv)
-    cfg.fragment_screen.reference_path = None
+    cfg = evolve(cfg, "fragment_screen.input_type", "csv")
+    cfg = evolve(cfg, "fragment_screen.csv_path", str(csv))
+    cfg = evolve(cfg, "fragment_screen.reference_path", None)
     assert _fragment_input_paths(cfg) == []
 
 
@@ -203,7 +204,7 @@ def test_the_run_is_named_after_the_reference_file(campaign):
 
 def test_an_explicit_pdb_id_overrides_the_derived_name(campaign):
     cfg, _, _ = campaign
-    cfg.reference.pdb_id = "MYRUN"
+    cfg = evolve(cfg, "reference.pdb_id", "MYRUN")
     assert run_id(cfg) == "MYRUN"
 
 
@@ -221,13 +222,13 @@ def test_renumbering_is_off_by_default_for_local_structures(campaign):
 
 def test_renumbering_is_on_by_default_for_a_pdb_query():
     cfg = QPocketConfig()
-    cfg.reference.pdb_id = "1ABC"
+    cfg = evolve(cfg, "reference.pdb_id", "1ABC")
     assert should_renumber(cfg) is True
 
 
 def test_an_explicit_setting_beats_the_mode_default(campaign):
     cfg, _, _ = campaign
-    cfg.alignment.renumber_residues = True
+    cfg = evolve(cfg, "alignment.renumber_residues", True)
     assert should_renumber(cfg) is True
 
 
@@ -247,6 +248,6 @@ def test_a_pdb_query_still_requires_a_four_character_id():
 
 def test_a_fragment_run_name_must_be_directory_safe(campaign):
     cfg, _, _ = campaign
-    cfg.reference.pdb_id = "bad/name"
+    cfg = evolve(cfg, "reference.pdb_id", "bad/name")
     with pytest.raises(ValueError, match="pdb_id"):
         validate_config(cfg)

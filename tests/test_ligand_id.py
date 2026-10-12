@@ -2,6 +2,7 @@
 import json
 
 from qpocket.pipelines.stages import StructureResult
+from qpocket.config import evolve
 
 
 def test_structure_result_round_trips_the_ligand_id():
@@ -52,7 +53,7 @@ def test_collect_writes_the_ligand_id_column(tmp_path):
 
     from qpocket.config import FeaturesConfig, QPocketConfig
     cfg = QPocketConfig()
-    cfg.features = FeaturesConfig()
+    cfg = evolve(cfg, "features", FeaturesConfig())
     collect_structure_results(cfg, dirs)
 
     columns = list(pd.read_csv(dirs["metadata"] / "master.csv").columns)

@@ -13,6 +13,7 @@ from qpocket.config import (
     validate_config,
 )
 from tests.conftest import make_config
+from qpocket.config import evolve
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +56,7 @@ def _single(**kw) -> DistanceConfig:
     from qpocket.config import ClusteringParams, StageClustering
 
     dm = _dm()
-    dm.clustering = ClusteringParams(single=StageClustering(method="affinity", **kw))
+    dm = evolve(dm, "clustering", ClusteringParams(single=StageClustering(method="affinity", **kw)))
     return dm
 
 
@@ -444,10 +445,10 @@ def test_affinity_max_iter_positive_ok():
 def test_compute_defaults_and_validation():
     cfg = make_config()
     assert cfg.compute.workers == 0 and cfg.compute.backend == "process"
-    cfg.compute.backend = "cluster"
+    cfg = evolve(cfg, "compute.backend", "cluster")
     with pytest.raises(ValueError, match="compute.backend"):
         validate_config(cfg)
-    cfg.compute.backend = "process"
-    cfg.compute.workers = -2
+    cfg = evolve(cfg, "compute.backend", "process")
+    cfg = evolve(cfg, "compute.workers", -2)
     with pytest.raises(ValueError, match="compute.workers"):
         validate_config(cfg)
