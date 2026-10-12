@@ -106,3 +106,50 @@ def test_collect_from_parts_keeps_order_and_reports_gaps(ws):
     assert [r.pdb_id for r in records] == ["B"]
     assert [(f.pdb_id, f.stage) for f in failures] == [("A", "align"), ("C", "featurize"),
                                                       ("D", "featurize")]
+
+
+STEPS = ("clean", "locate", "first_ligand", "protonate", "read_contacts",
+         "refine_and_featurize", "geodesics", "finish")
+
+
+def _counting_chain(monkeypatch, result):
+    """Replace every step: align returns `result` and counts; the rest pass it through."""
+    calls = []
+    monkeypatch.setattr(structure, "align", lambda ref, p, ws, raw: calls.append(raw.pdb_id) or result)
+    for name in STEPS:
+        monkeypatch.setattr(structure, name, lambda *args: args[-1])
+    return calls
+
+
+def _inputs(tmp_path):
+    from qpocket.core.types import RawStructure
+
+    raw_file = tmp_path / "T.pdb"
+    raw_file.write_text("ATOM\n")
+    return RawStructure("T", raw_file), Reference("REF", CTX, Structure("REF", "r"), None, None)
+
+
+def test_a_finished_structure_is_not_processed_again(ws, monkeypatch, tmp_path):
+    raw, ref = _inputs(tmp_path)
+    calls = _counting_chain(monkeypatch, Structure("T", "t", protein_state="UNBOUND_STATE"))
+    first = structure.process(ref, _params(), ws, raw)
+    again = structure.process(ref, _params(), ws, raw)
+    assert calls == ["T"] and again == first
+
+
+def test_a_changed_input_or_setting_is_processed_again(ws, monkeypatch, tmp_path):
+    raw, ref = _inputs(tmp_path)
+    calls = _counting_chain(monkeypatch, Structure("T", "t", protein_state="UNBOUND_STATE"))
+    structure.process(ref, _params(), ws, raw)
+    structure.process(ref, _params(interaction_padding=9.0), ws, raw)
+    raw.path.write_text("ATOM changed\n")
+    structure.process(ref, _params(interaction_padding=9.0), ws, raw)
+    assert calls == ["T", "T", "T"]
+
+
+def test_a_failed_structure_is_retried(ws, monkeypatch, tmp_path):
+    raw, ref = _inputs(tmp_path)
+    calls = _counting_chain(monkeypatch, Failure("T", "align", "x"))
+    structure.process(ref, _params(), ws, raw)
+    structure.process(ref, _params(), ws, raw)
+    assert calls == ["T", "T"]

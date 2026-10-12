@@ -468,6 +468,26 @@ def finish(record: Structure) -> Structure:
     return record._replace(smiles=smiles, points=None)
 
 
+def fingerprint(ref: Reference, p: StructureParams, raw: RawStructure) -> str:
+    """What a structure's result depends on, as one hash.
+
+    Args:
+        ref: The reference.
+        p: Chain parameters.
+        raw: The ingested structure.
+
+    Returns:
+        A sha256 hex digest of the input file, the parameters and the reference.
+    """
+    import hashlib
+    import json
+
+    digest = hashlib.sha256(Path(raw.path).read_bytes())
+    digest.update(repr(p).encode())
+    digest.update(json.dumps(ref.to_json(), sort_keys=True).encode())
+    return digest.hexdigest()
+
+
 def process(ref: Reference, p: StructureParams, ws: layout.Workspace, raw: RawStructure):
     """One structure, from ingested file to collected record; writes its sidecar.
 
@@ -481,6 +501,16 @@ def process(ref: Reference, p: StructureParams, ws: layout.Workspace, raw: RawSt
         Its record, or a Failure.
     """
     with start_action(action_type="process_structure", pdb_id=raw.pdb_id):
+        key = fingerprint(ref, p, raw)
+        try:
+            done = layout.read_part(ws, raw.pdb_id)
+        except ValueError:
+            done = None
+        # A re-run reuses a structure finished with the same inputs; failures are retried.
+        if done and done.get("fingerprint") == key and "failure" not in done:
+            log_message(message_type="skip", stage="structure", pdb_id=raw.pdb_id,
+                        reason="finished with the same inputs")
+            return Structure.from_json(done)
         result = pipe(
             raw,
             partial(align, ref, p, ws),
@@ -493,7 +523,7 @@ def process(ref: Reference, p: StructureParams, ws: layout.Workspace, raw: RawSt
             partial(geodesics, p, ws),
             finish,
         )
-        layout.write_part(ws, raw.pdb_id, result.to_json())
+        layout.write_part(ws, raw.pdb_id, {**result.to_json(), "fingerprint": key})
         log_message(message_type="structure_processed", pdb_id=raw.pdb_id,
                     status=getattr(result, "protein_state", None) or getattr(result, "stage", None))
         return result
