@@ -53,35 +53,34 @@ have different lengths and meanings. `qpocket compare` refuses pockets whose
 
 ## Adding a provider
 
-Copy `src/qpocket/core/providers/template.py`, which is registered but off by
-default:
+A provider is a function registered on `qpocket.core.ports.FEATURES`. Copy
+`src/qpocket/plugins/features/constant.py`, which is registered but off by default:
 
 ```python
-class ConstantProvider:
-    name = "template"
-    columns = ("template",)
-    requires = ()          # "pqr", "structure", or nothing
-
-    def compute(self, points, ctx):
-        value = float(ctx.options.get("value", 1.0))
-        return {"template": np.full(len(points), value, dtype=float)}
+@dataclass(frozen=True)
+class ConstantParams:
+    value: float = 1.0
 
 
-register(ConstantProvider())
+@FEATURES.register("template", params=ConstantParams, columns=("template",))
+def constant(points, ctx, params):
+    return {"template": np.full(len(points), params.value, dtype=float)}
 ```
 
-Then enable it:
+Add the module to `src/qpocket/plugins/features/__init__.py`, then enable it:
 
 ```yaml
 features:
   enabled: ["hbond", "aromatic", "template"]
-  options:
-    template: {value: 2.5}
 ```
 
-`ctx` carries the cleaned PDB path, the PQR path, the parsed atoms
-(`StructureData`) and your provider's options. Keep `compute` pure: no logging and
-no files. Anything that runs an external tool belongs in `qpocket.io`, with the
-result handed to the provider through `ctx.options` — that is how `apbs` works.
+`requires=("pqr",)` or `requires=("structure",)` asks for the protonated structure.
+`ctx` carries the cleaned PDB path, the PQR path, the parsed atoms (`StructureData`)
+and values the pipeline precomputed. Keep the function pure: no logging and no
+files. Anything that runs an external tool belongs in `qpocket.io`, with the result
+handed over through `ctx.options` — that is how `apbs` works.
+
+A provider currently runs with its parameter defaults: `features.options` is
+accepted in the config but not yet passed to providers.
 
 New columns land after the built-in ones, in provider order.

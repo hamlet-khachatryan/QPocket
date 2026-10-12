@@ -24,7 +24,7 @@ from qpocket.core.pocket import (
 )
 from qpocket.core import pocket
 from qpocket.core.features import DEFAULT_PROVIDERS, pocket_features
-from qpocket.core.providers import base
+from qpocket.core.ports import FEATURES
 from qpocket.io import tables, tools
 from qpocket.types import StructureData
 from qpocket.io.tables import write_points as _write_coords_csv
@@ -62,7 +62,7 @@ def featurize(csv_path: Path, pdb_path: Path,
             log_message(message_type="error", error=f"CSV read error: {e}")
             return
 
-        chosen = base.resolve(providers)
+        chosen = FEATURES.resolve(providers)
         needs_pqr = any("pqr" in provider.requires for provider in chosen)
         wants_apbs = any(provider.name == "apbs" for provider in chosen)
 

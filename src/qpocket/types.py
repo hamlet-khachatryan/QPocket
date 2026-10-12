@@ -1,6 +1,7 @@
 """Immutable values passed between core, io and pipelines."""
 import re
-from typing import NamedTuple, Optional, Tuple
+from pathlib import Path
+from typing import Dict, NamedTuple, Optional, Tuple
 
 import numpy as np
 
@@ -57,6 +58,24 @@ class StructureData(NamedTuple):
         """
         return cls(np.zeros((0, 3)), np.zeros(0), np.zeros(0),
                    np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3)))
+
+
+class FeatureContext(NamedTuple):
+    """Everything a provider may read about the structure being featurised.
+
+    Attributes:
+        points: (N, 3) pocket points.
+        pdb_path: Cleaned protein PDB, when one exists.
+        pqr_path: Protonated PQR, when a provider needed it.
+        structure_data: Atoms, charges, hydrophobicity and pharmacophore sites.
+        options: This run's options, including values the pipeline precomputed.
+    """
+
+    points: np.ndarray
+    pdb_path: Optional[Path]
+    pqr_path: Optional[Path]
+    structure_data: StructureData
+    options: Dict[str, object]
 
 
 class PocketSpec(NamedTuple):

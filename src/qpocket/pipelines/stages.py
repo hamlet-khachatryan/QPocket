@@ -1007,10 +1007,11 @@ def write_feature_record(meta_dir: Path, enabled: Sequence[str]) -> Path:
     Returns:
         Path of features.json.
     """
-    from qpocket.core.providers import base
+    from qpocket.core.features import columns_for
+    from qpocket.core.ports import FEATURES
 
     payload = {"enabled": list(enabled),
-               "columns": list(base.columns_for(base.resolve(list(enabled))))}
+               "columns": list(columns_for(FEATURES.resolve(list(enabled))))}
     path = Path(meta_dir) / "features.json"
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path

@@ -61,7 +61,8 @@ def _report(result, output: Optional[str]) -> None:
 def featurize_command(structure, chain, ligand, residues, padding, features_list, output):
     """Find and featurise one pocket in STRUCTURE (a PDB ID or a file)."""
     from qpocket.core.features import DEFAULT_PROVIDERS
-    from qpocket.core.providers import base
+    from qpocket.core.features import columns_for
+    from qpocket.core.ports import FEATURES
     from qpocket.pipelines.compare import featurize
     from qpocket.types import PocketSpec
 
@@ -70,7 +71,7 @@ def featurize_command(structure, chain, ligand, residues, padding, features_list
     providers = ([f.strip() for f in features_list.split(",") if f.strip()]
                  if features_list else list(DEFAULT_PROVIDERS))
     try:
-        columns = base.columns_for(base.resolve(providers))
+        columns = columns_for(FEATURES.resolve(providers))
         points, features = featurize(spec.validate(), features=providers)
     except (ValueError, FileNotFoundError) as exc:
         raise click.ClickException(str(exc))

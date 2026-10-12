@@ -751,12 +751,12 @@ def validate_config(cfg: "QPocketConfig") -> None:
                 )
 
     # --- FeaturesConfig ---
-    from qpocket.core.providers import base as _providers
+    from qpocket.core.ports import FEATURES as _features
 
     if not cfg.features.enabled:
         raise ValueError("features.enabled must name at least one provider")
     try:
-        _providers.resolve(list(cfg.features.enabled))
+        _features.resolve(list(cfg.features.enabled))
     except ValueError as exc:
         raise ValueError(f"features.enabled: {exc}") from exc
 

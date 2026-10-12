@@ -342,25 +342,40 @@ def structure_sites(structure) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 DEFAULT_PROVIDERS = ("apbs", "cp_lp", "hbond", "aromatic")
 
 
+def columns_for(plugins: Sequence) -> Tuple[str, ...]:
+    """Columns of a feature-channel set, in featurized.csv order.
+
+    Args:
+        plugins: Chosen feature plug-ins.
+
+    Returns:
+        Built-in columns first, in their historic order, then any new ones.
+    """
+    produced = [column for plugin in plugins for column in plugin.columns]
+    known = [c for c in FEATURE_COLUMNS if c in produced]
+    return tuple(known + [c for c in produced if c not in FEATURE_COLUMNS])
+
+
 def pocket_features(points: np.ndarray, data: StructureData, apbs: np.ndarray,
                     provider_names: Sequence[str] = DEFAULT_PROVIDERS) -> Dict[str, np.ndarray]:
-    """The per-point features of a pocket, from the enabled providers.
+    """The per-point features of a pocket, from the enabled channels.
 
     Args:
         points: (N, 3) pocket points.
         data: Protein atoms, charges, hydrophobicity and pharmacophore sites.
-        apbs: (N,) electrostatic potential, used by the apbs provider.
-        provider_names: Providers to run.
+        apbs: (N,) electrostatic potential, used by the apbs channel.
+        provider_names: Channels to run.
 
     Returns:
-        One column per provider column, in FEATURE_COLUMNS order.
+        One column per channel column, in FEATURE_COLUMNS order.
     """
-    from qpocket.core.providers.base import FeatureContext, columns_for, resolve
+    from qpocket.core.ports import FEATURES
+    from qpocket.types import FeatureContext
 
-    chosen = resolve(provider_names)
+    chosen = FEATURES.resolve(provider_names)
     ctx = FeatureContext(points=points, pdb_path=None, pqr_path=None,
                          structure_data=data, options={"apbs": apbs})
     produced: Dict[str, np.ndarray] = {}
-    for provider in chosen:
-        produced.update(provider.compute(points, ctx))
+    for plugin in chosen:
+        produced.update(plugin.fn(points, ctx, plugin.params()))
     return {column: produced[column] for column in columns_for(chosen)}
