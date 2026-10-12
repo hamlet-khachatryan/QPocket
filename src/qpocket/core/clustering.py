@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.cluster.hierarchy import dendrogram, fcluster, leaves_list, linkage
@@ -530,6 +530,7 @@ def two_stage_labels(
     chem_threshold: Optional[float] = None,
     chem_damping: float = PIPELINE_DAMPING,
     chem_max_iter: int = PIPELINE_MAX_ITER,
+    stage_labels: Optional[Callable[..., Clustering]] = None,
 ) -> TwoStageClustering:
     """Group on shape, then subdivide each group on chemistry.
 
@@ -554,6 +555,7 @@ def two_stage_labels(
         chem_threshold: Cut height for a threshold chemistry stage, applied within each shape cluster.
         chem_damping: As shape_damping, for stage two.
         chem_max_iter: As shape_max_iter, for stage two.
+        stage_labels: Per-stage clustering function; the built-in dispatch when None.
 
     Returns:
         The two-level grouping.
@@ -561,6 +563,7 @@ def two_stage_labels(
     Raises:
         ValueError: If the two matrices describe different numbers of structures.
     """
+    run_stage = stage_labels or _stage_labels
     shape_d = symmetrise(shape_distances)
     chem_d = symmetrise(chem_distances)
     if shape_d.shape != chem_d.shape:
@@ -570,7 +573,7 @@ def two_stage_labels(
         )
 
     n = len(shape_d)
-    stage_one = _stage_labels(
+    stage_one = run_stage(
         shape_d, shape_method, shape_linkage, shape_k, shape_k_range,
         shape_criterion, shape_threshold, shape_damping, shape_max_iter,
     )
@@ -587,7 +590,7 @@ def two_stage_labels(
             chem_clusterings[int(value)] = None
             continue
         sub = chem_d[np.ix_(members, members)]
-        stage_two = _stage_labels(
+        stage_two = run_stage(
             sub, chem_method, chem_linkage, chem_k, chem_k_range,
             chem_criterion, chem_threshold, chem_damping, chem_max_iter,
         )

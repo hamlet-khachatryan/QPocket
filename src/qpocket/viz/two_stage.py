@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from qpocket.core.clustering import dendrogram_segments, linkage_matrix, symmetrise, threshold_for_clusters
-from qpocket.pipelines.distance import cluster_pockets
+from qpocket.pipelines.clustering import cluster_pockets
 
 
 class RunMatrices(NamedTuple):

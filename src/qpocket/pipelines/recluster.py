@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 from qpocket.config import ClusteringParams, StageClustering
-from qpocket.pipelines.distance import cluster_pockets, write_clustering
+from qpocket.pipelines.clustering import cluster_pockets, write_clustering
 
 CLUSTERING_FILES = ("clustering_metadata.csv", "selected_representatives.csv", "clustering_params.json")
 
