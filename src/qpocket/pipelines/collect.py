@@ -1,12 +1,17 @@
 """Collect stage: interaction frequency and utilisation tables for a run."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import List, Sequence, Tuple
 
-from eliot import log_message
+import pandas as pd
+from eliot import log_message, start_action
 
 from qpocket.core import interactions
-from qpocket.io import hdf5
+from qpocket.core.result import Failure
+from qpocket.core.types import Structure
+from qpocket.io import hdf5, layout
 
 
 def calculate_observed_frequencies(h5_path: str) -> None:
@@ -91,3 +96,102 @@ def calculate_binding_site_utilization(
             log_message(message_type="utilization_saved", path=str(out_path))
     except Exception as e:
         log_message(message_type="error", stage="calculate_binding_site_utilization", error=str(e))
+
+
+def write_feature_record(meta_dir: Path, enabled: Sequence[str]) -> Path:
+    """Record the feature set a run used, for readers of its pockets.
+
+    Args:
+        meta_dir: The run's metadata directory.
+        enabled: Feature plug-in names, in config order.
+
+    Returns:
+        Path of features.json.
+    """
+    from qpocket.core.features import columns_for
+    from qpocket.core.ports import FEATURES
+
+    payload = {"enabled": list(enabled),
+               "columns": list(columns_for(FEATURES.resolve(list(enabled))))}
+    path = Path(meta_dir) / "features.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def collect_run(ws: "layout.Workspace", records: Sequence[Structure], failures: Sequence[Failure],
+                features: Sequence[str], compression: str) -> None:
+    """Write the run-wide tables from the per-structure records.
+
+    Args:
+        ws: The run.
+        records: Finished records, in input order; that order decides HDF5 insertion order and tie-breaks.
+        failures: Structures that dropped out.
+        features: Feature plug-in names.
+        compression: HDF5 compression.
+    """
+    with start_action(action_type="collect_structure_results"):
+        master_csv = ws.metadata / "master.csv"
+        pd.DataFrame([r.master_row() for r in records]).to_csv(master_csv, index=False)
+        log_message(message_type="master_csv_saved", path=str(master_csv), n_structures=len(records))
+        pd.DataFrame([f._asdict() for f in failures], columns=list(Failure._fields)).to_csv(
+            ws.metadata / "failures.csv", index=False)
+
+        with open(ws.screening / "actives.smi", "w", encoding="utf-8") as f:
+            f.write("SMILES\tPDB_ID\tLigand_Name\n")
+            for r in records:
+                if r.smiles:
+                    f.write(f"{r.smiles[0]}\t{r.pdb_id}\t{r.smiles[1]}\n")
+
+        write_feature_record(ws.metadata, features)
+        obs_h5 = ws.metadata / "observed_interactions.h5"
+        pot_h5 = ws.metadata / "potential_interactions.h5"
+        hdf5.save_interactions({r.pdb_id: list(r.potential) for r in records}, pot_h5,
+                               compression=compression)
+        hdf5.save_interactions({r.pdb_id: list(r.observed) for r in records}, obs_h5,
+                               compression=compression)
+        log_message(message_type="interaction_data_saved", n_structures=len(records))
+        try:
+            with start_action(action_type="frequency_analysis"):
+                calculate_observed_frequencies(str(obs_h5))
+                calculate_potential_frequencies(str(pot_h5))
+                calculate_binding_site_utilization(str(obs_h5), str(pot_h5))
+                log_message(message_type="frequency_analysis_complete")
+        except Exception as e:
+            log_message(message_type="error", stage="frequency_analysis", error=str(e))
+
+
+def collect_from_parts(ws: "layout.Workspace", pdb_ids: Sequence[str], features: Sequence[str],
+                       compression: str) -> Tuple[List[Structure], List[Failure]]:
+    """Collect a run whose structures were processed as separate tasks.
+
+    Args:
+        ws: The run.
+        pdb_ids: Every ingested structure, in input order.
+        features: Feature plug-in names.
+        compression: HDF5 compression.
+
+    Returns:
+        (records, failures) as written.
+    """
+    records: List[Structure] = []
+    failures: List[Failure] = []
+    for pid in pdb_ids:
+        try:
+            payload = layout.read_part(ws, pid)
+        except ValueError as e:
+            log_message(message_type="warning", stage="collect_structure_results",
+                        warning=f"unreadable sidecar {pid}.json: {e}")
+            failures.append(Failure(pid, "featurize", "unreadable sidecar"))
+            continue
+        if payload is None:
+            failures.append(Failure(pid, "featurize", "no sidecar"))
+        elif "failure" in payload:
+            failures.append(Failure.from_json(payload))
+        else:
+            records.append(Structure.from_json(payload))
+    if any(f.reason in ("no sidecar", "unreadable sidecar") for f in failures):
+        log_message(message_type="warning", stage="collect_structure_results",
+                    warning="structures with no sidecar",
+                    pdb_ids=[f.pdb_id for f in failures][:20], n_missing=len(failures))
+    collect_run(ws, records, failures, features, compression)
+    return records, failures

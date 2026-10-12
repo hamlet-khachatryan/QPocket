@@ -18,7 +18,6 @@ def test_load_reference_reads_what_build_wrote(tmp_path, monkeypatch):
     assert back.pdb_id == "7KG6" and np.array_equal(back.centroid, np.ones(3))
 
 
-@pytest.mark.xfail(strict=True, reason="clean_file lands in Task 6")
 def test_a_reference_that_cannot_be_cleaned_stops_the_run(tmp_path, monkeypatch):
     from qpocket.core.types import AlignmentContext, Structure
     from qpocket.pipelines import structure
