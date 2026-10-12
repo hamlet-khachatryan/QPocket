@@ -1,29 +1,32 @@
-"""One orchestrator per pipeline, built from the shared stages."""
-from pathlib import Path
+"""One run for both modes; they differ only in the structure source."""
+import pytest
 
-from qpocket.pipelines import fragment_screen, pdb_query, run, stages
-
-# Align, clean, identify and featurise are one chained fan-out per structure;
-# the stage-wise functions stay for `qpocket task <stage>` under SLURM.
-SHARED = (
-    stages.prepare_and_featurize,
-    stages.compute_spectral_distance_matrix,
-)
+from qpocket.config import FragmentScreenParams, QPocketConfig, evolve
+from qpocket.io import layout
+from qpocket.pipelines import run
 
 
-def test_pipelines_differ_only_in_how_structures_come_in():
-    assert pdb_query.STAGES == (stages.download_structures,) + SHARED
-    assert fragment_screen.STAGES == (stages.ingest_local_structures,) + SHARED
+def test_fragment_screen_mode_ingests_local_files(tmp_path, monkeypatch):
+    from qpocket.plugins.sources import local
 
-
-def test_run_dispatches_on_mode(monkeypatch):
     seen = []
-    monkeypatch.setattr(fragment_screen, "run", lambda cfg: seen.append(cfg.mode) or Path("x"))
+    monkeypatch.setattr(local, "copy_inputs", lambda params, ws: seen.append("local") or [])
+    cfg = evolve(QPocketConfig(mode="fragment_screen"), "fragment_screen",
+                 FragmentScreenParams(input_type="paths", structure_paths=["a.pdb"]))
+    with pytest.raises(ValueError, match="ingested no structures"):
+        run.ingest(cfg, layout.create(str(tmp_path), "run"))
+    assert seen == ["local"]
 
-    class Cfg:
-        mode = "fragment_screen"
 
-    assert run.run(Cfg()) == Path("x") and seen == ["fragment_screen"]
+def test_pdb_query_mode_searches_rcsb(tmp_path, monkeypatch):
+    from qpocket.io import rcsb
+
+    seen = []
+    monkeypatch.setattr(rcsb, "fetch_structure_ids", lambda **kw: seen.append(kw["ref_pdb_id"]) or [])
+    cfg = evolve(QPocketConfig(), "reference.pdb_id", "7KG6")
+    with pytest.raises(ValueError, match="no structures"):
+        run.ingest(cfg, layout.create(str(tmp_path), "run"))
+    assert seen == ["7KG6"]
 
 
 def test_every_core_module_is_under_the_layer_rules():

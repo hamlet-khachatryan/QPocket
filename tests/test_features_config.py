@@ -42,7 +42,7 @@ def test_cli_flags_narrow_the_set(monkeypatch, flags, expected):
 
 
 def test_collect_records_the_feature_set(tmp_path):
-    from qpocket.pipelines.stages import write_feature_record
+    from qpocket.pipelines.collect import write_feature_record
 
     write_feature_record(tmp_path, ["hbond", "aromatic"])
     payload = json.loads((tmp_path / "features.json").read_text(encoding="utf-8"))

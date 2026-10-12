@@ -61,12 +61,12 @@ class StageSpec(NamedTuple):
 
 #: The pipeline as SLURM sees it, in dependency order.
 STAGES: Tuple[StageSpec, ...] = (
-    StageSpec("prepare", 0, False, "metadata/master.csv",
-              "fetch, align, clean, and locate the reference pocket"),
+    StageSpec("prepare", 0, False, "metadata/reference.json",
+              "fetch the structures and build the reference"),
     StageSpec("apbs", 10, True, "pockets/{pdb_id}/apbs/mol.dx",
               "Poisson-Boltzmann potential grid, one task per structure"),
     StageSpec("featurize", 20, True, "pockets/{pdb_id}/featurized.csv",
-              "cavity detection, featurisation and PLIP, one task per structure"),
+              "align, clean, pocket, contacts and features, one task per structure"),
     StageSpec("collect", 30, False, "metadata/observed_interactions.h5",
               "merge per-structure results into master.csv, HDF5 and frequencies"),
     StageSpec("geodesic", 40, True, "pockets/{pdb_id}/geospectral_cache.npz",

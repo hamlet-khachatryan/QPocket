@@ -1,19 +1,56 @@
-"""Entry point for a full run: options to config, config to the mode's orchestrator."""
-from __future__ import annotations
-
+"""The conformational run: ingest, reference, every structure, collect, distances."""
+from functools import partial
 from pathlib import Path
 from typing import List, Optional, Union
 
-from qpocket.config import QPocketConfig
-from qpocket.pipelines import fragment_screen, pdb_query
-from qpocket.config import load_qpocket_config
+from eliot import log_message, start_action
 
-#: The orchestrator for each ``mode``.
-ORCHESTRATORS = {"pdb_query": pdb_query, "fragment_screen": fragment_screen}
+from qpocket.config import QPocketConfig, load_qpocket_config, run_id
+from qpocket.core.ports import SOURCES
+from qpocket.core.result import guarded, partition
+from qpocket.core.types import Sources
+from qpocket.io import layout
+from qpocket.io import logging as qlog
+from qpocket.pipelines import parallel
+from qpocket.pipelines.collect import collect_run
+from qpocket.pipelines.distance import compute_spectral_distance_matrix
+from qpocket.pipelines.reference import build_reference
+from qpocket.pipelines.structure import process, structure_params
+
+
+def ingest(cfg: QPocketConfig, ws: layout.Workspace) -> Sources:
+    """Run the structure source the config's mode names.
+
+    Args:
+        cfg: QPocket configuration.
+        ws: The run.
+
+    Returns:
+        What was ingested.
+    """
+    if cfg.mode == "fragment_screen":
+        fs = cfg.fragment_screen
+        plugin = SOURCES.get("local")
+        params = plugin.params(input_type=fs.input_type, csv_path=fs.csv_path,
+                               structure_paths=tuple(fs.structure_paths or ()),
+                               reference_path=fs.reference_path, reference_index=fs.reference_index)
+    else:
+        q = cfg.pdb_query
+        plugin = SOURCES.get("pdb_query")
+        params = plugin.params(pdb_id=cfg.reference.pdb_id, chain_id=cfg.reference.chain_id,
+                               sequence_identity=q.sequence_identity, min_length=q.min_length,
+                               max_length=q.max_length, resolution_limit=q.resolution_limit,
+                               experimental_method=q.experimental_method,
+                               enforce_same_uniprot=q.enforce_same_uniprot)
+    return plugin.fn(params, ws)
+
+
+def _pdb_id(raw) -> str:
+    return raw.pdb_id
 
 
 def run(cfg: QPocketConfig) -> Path:
-    """Run the pipeline the config's mode names.
+    """Run the whole conformational pipeline.
 
     Args:
         cfg: Validated config.
@@ -21,7 +58,24 @@ def run(cfg: QPocketConfig) -> Path:
     Returns:
         Run root directory.
     """
-    return ORCHESTRATORS[cfg.mode].run(cfg)
+    ws = layout.create(cfg.paths.workdir, run_id(cfg))
+    log_path = ws.root / "qpocket_pipeline.log"
+    qlog.configure(cfg, log_path)
+    with start_action(action_type="pipeline_execution", reference_pdb=run_id(cfg), mode=cfg.mode,
+                      workdir=str(ws.root)):
+        log_message(message_type="workspace_ready", root_path=str(ws.root), log_path=str(log_path))
+        sources = ingest(cfg, ws)
+        ref = build_reference(cfg, ws, sources.reference)
+        log_message(message_type="extraction_start", n_structures=len(sources.structures))
+        results = parallel.run_map(
+            guarded("structure", partial(process, ref, structure_params(cfg), ws), _pdb_id),
+            sources.structures, workers=cfg.compute.workers, backend=cfg.compute.backend,
+            stage="structure", log_dir=ws.root / parallel.WORKER_LOG_DIR, label=_pdb_id)
+        records, failures = partition(results)
+        collect_run(ws, records, failures, cfg.features.enabled, cfg.io.compression)
+        compute_spectral_distance_matrix(cfg, ws)
+        log_message(message_type="stage_complete", stage="prepare_and_featurize")
+    return ws.root
 
 
 def run_qpocket_pipeline(

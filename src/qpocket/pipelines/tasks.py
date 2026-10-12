@@ -31,7 +31,10 @@ from typing import Dict, List, Optional
 import pandas as pd
 from eliot import log_message, start_action
 
-from qpocket.pipelines import stages
+from qpocket.io import layout
+from qpocket.pipelines import collect as collecting
+from qpocket.pipelines.reference import build_reference, load_reference
+from qpocket.pipelines.structure import process, structure_params
 from qpocket.config import QPocketConfig
 from qpocket.pipelines.distance import (
     compute_geodesic,
@@ -76,55 +79,27 @@ def resolve_pdb_id(manifest: Path, index: int) -> str:
     return entries[index]
 
 
-def _master_row(dirs: Dict[str, Path], pdb_id: str) -> pd.Series:
-    """One structure's row of ``master.csv``.
-
-    Raises:
-        TaskError: If ``master.csv`` is absent or has no such structure.
-    """
-    csv_path = dirs["metadata"] / "master.csv"
-    if not csv_path.exists():
-        raise TaskError(f"{csv_path} not found — run the prepare stage first")
-
-    df = pd.read_csv(csv_path)
-    match = df[df["pdb_id"] == pdb_id]
-    if match.empty:
-        raise TaskError(f"{pdb_id} is not in master.csv")
-    return match.iloc[0]
-
-
 def task_prepare(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False) -> None:
-    """Fetch, align and clean every structure, then locate the reference pocket.
+    """Ingest the structures and build the reference every task aligns to.
 
     Args:
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
-        force: Rebuild the extraction context even if one is already saved.
+        force: Rebuild the reference even if one is already saved.
 
     Raises:
-        TaskError: If no ``master.csv`` or no reference pocket results.
+        TaskError: If nothing is ingested or the reference cannot be built.
     """
     with start_action(action_type="task_prepare"):
-        stages.fetch_structures(cfg, dirs["original"])
-        stages.align_structures(cfg, dirs)
-        stages.clean_structures(cfg, dirs)
-
-        csv_path = dirs["metadata"] / "master.csv"
-        if not csv_path.exists():
-            raise TaskError("prepare produced no master.csv — nothing was aligned")
-
-        context_path = dirs["metadata"] / "extraction_context.json"
-        if context_path.exists() and not force:
-            log_message(message_type="skip", stage="prepare", reason="context exists")
+        if (dirs.metadata / layout.REFERENCE_RECORD).exists() and not force:
+            log_message(message_type="skip", stage="prepare", reason="reference exists")
             return
+        from qpocket.pipelines.run import ingest
 
-        context = stages.build_extraction_context(cfg, dirs, pd.read_csv(csv_path))
-        if context is None:
-            raise TaskError(
-                "could not locate the reference pocket; every per-structure task "
-                "depends on it, so the run cannot continue"
-            )
-        stages.save_extraction_context(dirs, context)
+        try:
+            build_reference(cfg, dirs, ingest(cfg, dirs).reference)
+        except (ValueError, FileNotFoundError) as e:
+            raise TaskError(f"prepare failed: {e}; every per-structure task depends on it") from e
 
 
 def task_featurize(
@@ -145,16 +120,17 @@ def task_featurize(
         TaskError: If the task leaves no sidecar behind.
     """
     with start_action(action_type="task_featurize", pdb_id=pdb_id):
-        part = stages.parts_dir(dirs) / f"{pdb_id}.json"
+        part = layout.parts_dir(dirs) / f"{pdb_id}.json"
         if part.exists() and not force:
             log_message(message_type="skip", stage="featurize", pdb_id=pdb_id,
                         reason="sidecar exists")
             return
-
-        context = stages.load_extraction_context(dirs)
-        row = _master_row(dirs, pdb_id)
-        stages.process_one_structure(cfg, dirs, row, context)
-
+        try:
+            ref = load_reference(dirs)
+            raw = layout.raw_structure(dirs, pdb_id)
+        except FileNotFoundError as e:
+            raise TaskError(str(e)) from e
+        process(ref, structure_params(cfg), dirs, raw)
         if not part.exists():
             raise TaskError(f"featurisation of {pdb_id} wrote no sidecar at {part}")
 
@@ -189,13 +165,13 @@ def task_collect(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False)
         TaskError: If no sidecars were written, which means every featurisation task failed and going further would produce empty tables.
     """
     with start_action(action_type="task_collect"):
-        parts = list(stages.parts_dir(dirs).glob("*.json"))
-        if not parts:
+        if not any(layout.parts_dir(dirs).glob("*.json")):
             raise TaskError(
                 "no per-structure sidecars found — the featurize stage produced "
                 "nothing, so there is nothing to collect"
             )
-        stages.collect_structure_results(cfg, dirs)
+        ids = [p.stem for p in layout.structure_files(dirs)]
+        collecting.collect_from_parts(dirs, ids, cfg.features.enabled, cfg.io.compression)
 
         obs_h5 = dirs["metadata"] / "observed_interactions.h5"
         if not obs_h5.exists():
@@ -271,8 +247,10 @@ def manifest_ids(cfg: QPocketConfig, dirs: Dict[str, Path], stage: str) -> List[
         stage: Stage name.
 
     Returns:
-        PDB IDs, in ``master.csv`` order.
+        PDB IDs, in input order (``master.csv`` order for geodesic).
     """
+    if stage == "featurize":
+        return [p.stem for p in layout.structure_files(dirs)]
     csv_path = dirs["metadata"] / "master.csv"
     if stage == "geodesic" and csv_path.exists():
         _, ids = pocket_manifest(cfg, dirs)

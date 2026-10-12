@@ -13,12 +13,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from qpocket.pipelines import stages
-from qpocket.pipelines.stages import (
-    _fragment_input_paths,
-    _load_fragment_screen_structures,
-    reference_id,
-)
+from qpocket.core.ports import SOURCES
+from qpocket.io import layout
+from qpocket.pipelines import run as run_mod
+from qpocket.plugins.sources.local import copy_inputs, input_paths
 from qpocket.config import (FragmentScreenParams, QPocketConfig, run_id, sanitise_id,
                             should_renumber, validate_config)
 from qpocket.config import evolve
@@ -38,14 +36,7 @@ def campaign(tmp_path):
     a = structure(src / "soak_A07.pdb")
     b = structure(src / "soak_B11.pdb")
 
-    root = tmp_path / "run"
-    dirs = {
-        "root": root,
-        "metadata": root / "metadata",
-        "original": root / "structures" / "original",
-    }
-    for d in dirs.values():
-        d.mkdir(parents=True, exist_ok=True)
+    dirs = layout.create(str(tmp_path), "run")
 
     cfg = QPocketConfig(mode="fragment_screen")
     cfg = evolve(cfg, "fragment_screen", FragmentScreenParams(
@@ -57,8 +48,16 @@ def campaign(tmp_path):
     return cfg, dirs, {"ref": ref, "a": a, "b": b}
 
 
+def params(cfg):
+    fs = cfg.fragment_screen
+    return SOURCES.get("local").params(
+        input_type=fs.input_type, csv_path=fs.csv_path,
+        structure_paths=tuple(fs.structure_paths or ()), reference_path=fs.reference_path,
+        reference_index=fs.reference_index)
+
+
 def ingest(cfg, dirs):
-    return _load_fragment_screen_structures(cfg, dirs["original"])
+    return [r["pdb_id"] for r in copy_inputs(params(cfg), dirs)]
 
 
 # --- identifiers -----------------------------------------------------------
@@ -82,14 +81,12 @@ def test_two_files_with_the_same_name_do_not_collide(tmp_path):
     """Same basename in two directories must not overwrite each other."""
     one = structure(tmp_path / "a" / "xtal.pdb")
     two = structure(tmp_path / "b" / "xtal.pdb")
-    root = tmp_path / "run"
-    dirs = {"metadata": root / "metadata", "original": root / "structures" / "original"}
-    dirs["original"].mkdir(parents=True)
+    dirs = layout.create(str(tmp_path), "run")
     cfg = QPocketConfig(mode="fragment_screen")
     cfg = evolve(cfg, "fragment_screen", FragmentScreenParams(
         input_type="paths", structure_paths=[str(one), str(two)], reference_path=str(one)
     ))
-    assert len(set(_load_fragment_screen_structures(cfg, dirs["original"]))) == 2
+    assert len(set(ingest(cfg, dirs))) == 2
 
 
 # --- the reference ---------------------------------------------------------
@@ -123,8 +120,7 @@ def test_the_reference_need_not_be_one_of_the_screened_files(campaign):
 def test_reference_id_matches_what_was_ingested(campaign):
     """Break 7: this comparison never matched, so no row was the reference."""
     cfg, dirs, _ = campaign
-    ingest(cfg, dirs)
-    assert reference_id(cfg, dirs) in ingest(cfg, dirs)
+    assert run_mod.ingest(cfg, dirs).reference.pdb_id in ingest(cfg, dirs)
 
 
 def test_without_a_reference_path_the_index_selects_one(campaign):
@@ -181,7 +177,7 @@ def test_an_empty_ingest_raises_rather_than_reaching_alignment(campaign):
     cfg = evolve(cfg, "fragment_screen.reference_path", None)
     cfg = evolve(cfg, "fragment_screen.structure_paths", ["/nope/a.pdb"])
     with pytest.raises(ValueError, match="ingested no structures"):
-        stages.fetch_structures(cfg, dirs["original"])
+        run_mod.ingest(cfg, dirs)
 
 
 def test_a_csv_without_the_expected_column_yields_nothing(campaign, tmp_path):
@@ -191,7 +187,7 @@ def test_a_csv_without_the_expected_column_yields_nothing(campaign, tmp_path):
     cfg = evolve(cfg, "fragment_screen.input_type", "csv")
     cfg = evolve(cfg, "fragment_screen.csv_path", str(csv))
     cfg = evolve(cfg, "fragment_screen.reference_path", None)
-    assert _fragment_input_paths(cfg) == []
+    assert input_paths(params(cfg)) == []
 
 
 # --- run naming and renumbering -------------------------------------------

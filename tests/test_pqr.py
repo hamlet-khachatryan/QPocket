@@ -42,7 +42,7 @@ def _fake_pdb2pqr(calls):
 
 
 def test_featurize_runs_pdb2pqr_once_and_keeps_the_pqr(tmp_path, minimal_pdb):
-    from qpocket.pipelines.pockets import featurize
+    from qpocket.pipelines.structure import featurize
 
     pocket = tmp_path / "pockets" / "1ABC"
     pocket.mkdir(parents=True)
