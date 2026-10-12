@@ -175,6 +175,12 @@ def docking_engine(engine: Optional[str] = None) -> str:
     return executable(engine or load_screen_config().docking.engine_path)
 
 
+def _argv(job, executable: str, cpus: int):
+    from qpocket.core.ports import DOCKING
+
+    engine = str(job.get("engine") or "vina")  # tables written before the column existed
+    return DOCKING.get(engine).fn(job, executable, cpus)
+
 def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None) -> int:
     """Run one row of the task list.
 
@@ -189,7 +195,7 @@ def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None)
     """
     job = _read_jobs(jobs_csv).iloc[index]
     Path(job["output_pdbqt"]).parent.mkdir(parents=True, exist_ok=True)
-    argv = scr.vina_argv(job, docking_engine(engine), cpus)
+    argv = _argv(job, docking_engine(engine), cpus)
     return subprocess.run(argv).returncode
 
 
@@ -211,7 +217,7 @@ def run_local(jobs_csv: Path, workers: int = 0, cpus: int = 1, engine: Optional[
     def one(i: int) -> int:
         job = jobs.iloc[i]
         Path(job["output_pdbqt"]).parent.mkdir(parents=True, exist_ok=True)
-        return subprocess.run(scr.vina_argv(job, engine, cpus), capture_output=True, text=True).returncode
+        return subprocess.run(_argv(job, engine, cpus), capture_output=True, text=True).returncode
 
     with ThreadPoolExecutor(max_workers=resolve_workers(workers)) as pool:
         codes = list(pool.map(one, range(len(jobs))))

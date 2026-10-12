@@ -143,8 +143,11 @@ def validate_screen_config(cfg: ScreenConfig) -> None:
         errors.append(f"decoy.strategy must be one of {list(DECOYS.available())}, "
                       f"got '{cfg.decoy.strategy}'")
 
-    if cfg.docking.engine not in ("vina", "quickvina"):
-        errors.append(f"docking.engine must be 'vina' or 'quickvina', got '{cfg.docking.engine}'")
+    from qpocket.core.ports import DOCKING
+
+    if cfg.docking.engine not in DOCKING.available():
+        errors.append(f"docking.engine must be one of {list(DOCKING.available())}, "
+                      f"got '{cfg.docking.engine}'")
 
     if cfg.docking.exhaustiveness < 1:
         errors.append("docking.exhaustiveness must be >= 1")

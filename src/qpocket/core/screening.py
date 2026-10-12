@@ -147,6 +147,7 @@ JOB_COLUMNS = (
     "job_id", "protein_pdbqt", "ligand_pdbqt", "output_pdbqt",
     "center_x", "center_y", "center_z", "size_x", "size_y", "size_z",
     "exhaustiveness", "num_modes", "energy_range", "molecule_type", "pdb_id", "ligand_id",
+    "engine",
 )
 
 
@@ -186,6 +187,7 @@ def docking_jobs(proteins, ligands, box_params, results_dir, docking_cfg) -> pd.
                     "molecule_type": mol_type,
                     "pdb_id": prot_path.stem,
                     "ligand_id": lig_path.stem,
+                    "engine": getattr(docking_cfg, "engine", "vina"),
                 })
                 job_idx += 1
     return pd.DataFrame(rows, columns=list(JOB_COLUMNS))
