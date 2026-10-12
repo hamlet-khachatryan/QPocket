@@ -80,19 +80,27 @@ def doctor(config: Optional[str], smoke: bool):
         bad("apbs", str(e))
 
     # --- external tools ---------------------------------------------------
-    for tool, required in (("pdb2pqr", True), ("sbatch", False)):
+    from qpocket import doctor as checks
+    from qpocket.config import QPocketConfig, load_qpocket_config
+
+    try:
+        run_cfg = load_qpocket_config(config_path=config) if config else QPocketConfig()
+    except Exception:
+        run_cfg = QPocketConfig()  # the config check below says why it failed
+    for tool, users in checks.required_tools(run_cfg).items():
         found = shutil.which(tool)
         if found:
             ok(f"{tool} on PATH", found)
-        elif required:
-            bad(f"{tool} on PATH", "not found")
         else:
-            line("warn", f"{tool} on PATH", "not found (only needed for `qpocket slurm`)")
+            bad(f"{tool} on PATH", f"not found (needed by {', '.join(users)})")
+    found = shutil.which("sbatch")
+    if found:
+        ok("sbatch on PATH", found)
+    else:
+        line("warn", "sbatch on PATH", "not found (only needed for `qpocket slurm`)")
 
     # --- APBS actually running -------------------------------------------
     if smoke:
-        from qpocket import doctor as checks
-
         for label, probe in (
             ("pdb2pqr runs", checks.run_pdb2pqr_smoke_test),
             ("apbs runs", checks.run_apbs_smoke_test),

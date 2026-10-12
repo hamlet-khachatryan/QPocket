@@ -194,3 +194,27 @@ def test_pdb2pqr_actually_runs():
 
     seconds, detail = run_pdb2pqr_smoke_test()
     assert "bytes" in detail
+
+
+def test_required_tools_come_from_the_configured_plugins(monkeypatch):
+    from qpocket.config import evolve
+    from qpocket.core.ports import FEATURES
+    from qpocket.doctor import required_tools
+    from tests.conftest import make_config
+
+    assert required_tools(make_config()) == {"pdb2pqr": ("pdb2pqr",)}
+    plugin = FEATURES.get("template")
+    monkeypatch.setitem(FEATURES._plugins, "template", plugin._replace(tools=("xtb",)))
+    cfg = evolve(make_config(), "features.enabled", ["hbond", "template"])
+    assert required_tools(cfg)["xtb"] == ("template",)
+
+
+def test_doctor_reports_a_missing_plugin_tool(monkeypatch):
+    from click.testing import CliRunner
+
+    from qpocket import doctor as checks
+    from qpocket.cli import cli
+
+    monkeypatch.setattr(checks, "required_tools", lambda cfg: {"xtb-missing-tool": ("template",)})
+    result = CliRunner().invoke(cli, ["doctor", "--no-smoke"])
+    assert "xtb-missing-tool" in result.output and "template" in result.output

@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Tuple
 
 #: A three-atom PQR: enough for a valid Poisson-Boltzmann calculation.
 SMOKE_PQR = """\
@@ -131,3 +131,24 @@ def run_pdb2pqr_smoke_test(timeout: int = 300) -> Tuple[float, str]:
                 f"pdb2pqr wrote no PQR (exit {done.returncode}): {done.stderr.strip()[:300]}"
             )
         return time.time() - started, f"wrote {pqr.stat().st_size} bytes"
+
+
+def required_tools(cfg) -> Dict[str, Tuple[str, ...]]:
+    """Executables the configured plug-ins run, and which plug-ins need each.
+
+    Args:
+        cfg: A QPocket configuration.
+
+    Returns:
+        Tool name to the plug-in names that declare it.
+    """
+    from qpocket.core.ports import CHARGES, CONTACTS, FEATURES, POCKETS
+
+    pocket = "box" if cfg.reference.pocket_mode == "bounding_box" else "cavities"
+    plugins = (list(FEATURES.resolve(list(cfg.features.enabled))) + [CHARGES.get(cfg.charges.use)]
+               + list(CONTACTS.resolve(list(cfg.contacts.use))) + [POCKETS.get(pocket)])
+    needs: Dict[str, Tuple[str, ...]] = {}
+    for plugin in plugins:
+        for tool in plugin.tools:
+            needs[tool] = needs.get(tool, ()) + (plugin.name,)
+    return needs
