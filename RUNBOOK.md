@@ -185,7 +185,7 @@ instead, below.
 cd "$QP_RUNS"
 . "$QP_HOME/.venv/bin/activate"
 
-qpocket task prepare --config my_target.yaml     # fetch, align, clean — on the login node
+qpocket task prepare --config my_target.yaml     # fetch, build the reference — on the login node
 qpocket slurm generate --config my_target.yaml   # writes the job scripts, submits nothing
 ```
 

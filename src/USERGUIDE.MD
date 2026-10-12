@@ -1,49 +1,48 @@
-# User Guide
-## PDB Structure Fetching Module
+# User Guide (Python API)
 
-The **PDB Query Module** is the entry point for the QPocket pipeline. It is responsible for identifying and downloading protein structures from the RCSB PDB that share sequence identity and biological relevance with a given reference protein.
+The command line (`qpocket run`, `qpocket screen …`) is documented in `docs/`.
+This page shows the same pipeline from Python.
 
-### Key Features
-* Sequence-Based Search: Uses BLAST-like sequence identity thresholds to find homologs.
-* Optionally enforces matching UniProt Accession IDs to ensure biological consistency (e.g., distinguishing between very similar isoforms).
-* Filters results by experimental method (e.g., X-Ray) and resolution limit.
-
-### Configuration Parameters
-These parameters are defined in conf/config.yaml under the search and global sections.
-
-| Parameter                  |Type| Default |Description|
-|----------------------------|--------|---------|--------|
-| `workdir`                   |`str`| `null`  |Root path for output. If null, defaults to Current Working Directory.|
-| `query_reference`            |`str`| `N/A`   |The target PDB and Chain ID (format: PDBID_CHAIN).|
-| `search.sequence_identity`   |`float`| 1.0     |Sequence identity cutoff (0.0 to 1.0). 1.0 implies 100% match.|
-| `search.resolution_limit`    |`float`| 2.5     |Maximum allowed resolution in Ångstroms. Set to null to disable.|
-| `search.experimental_method` |`str`| "NMR"   |Filter by method (e.g., NMR, ELECTRON MICROSCOPY).|
-| `search.enforce_same_uniprot` |`bool`| `true`  |If true, only fetches structures that map to the same UniProt ID as the reference.|
-
-### Python API Usage
-
-The module uses two primary functions in `src.pdb_query.api`: `fetch_structure_ids` and `download_structures`.
+## A run
 
 ```python
-from src.pdb_query import api
-from src import utils
+from qpocket.config import load_qpocket_config
+from qpocket.pipelines.run import run
 
-# 1. Setup Project Hierarchy
-ref_id = "5R7Y_A"
-dirs = layout.create(None, ref_id)  # from qpocket.io import layout
-
-# 2. Fetch Matching IDs
-pdb_ids = api.fetch_structure_ids(
-    ref_pdb_id="5R7Y",
-    ref_chain_id="A",
-    similarity_threshold=1.0,    # 100% Identity
-    min_resolution=2.5,          # Resolution <= 2.5 Å
-    experimental_method="X-RAY DIFFRACTION",
-    enforce_uniprot=True         # Must match reference UniProt ID
-)
-
-# 3. Download Files
-if pdb_ids:
-    api.download_structures(pdb_ids, dirs['structures'])
+cfg = load_qpocket_config("my_target.yaml", overrides=["compute.workers=8"])
+run_dir = run(cfg)
 ```
 
+`run` ingests the structures (`pdb_query` searches RCSB; `fragment_screen` copies
+local files), builds the reference once, takes every structure through the same
+per-structure chain, and writes the run tables, distances and clusters.
+
+## Pockets without a run
+
+```python
+import qpocket as qp
+
+points, features = qp.featurize(qp.PocketSpec("7KG6", "A", "WDG"))
+result = qp.compare([qp.PocketSpec("7KG6", "A", "WDG"), qp.PocketSpec("4B1H", "A", "AR6")])
+```
+
+## Extending it
+
+Each choice below is a function registered by name in `qpocket.core.ports` and
+picked in config. Adding one is one new module under `qpocket/plugins/` plus a
+config value:
+
+| Registry | Config | Built-ins |
+|---|---|---|
+| `SOURCES` | `mode` | `pdb_query`, `local` |
+| `POCKETS` | `reference.pocket_mode` | `cavities`, `box` |
+| `CHARGES` | `charges.use` | `pdb2pqr` |
+| `FEATURES` | `features.enabled` | `apbs`, `cp_lp`, `hbond`, `aromatic`, `template` |
+| `CONTACTS` | `contacts.use` | `prolif` |
+| `CLUSTERING` | `distance.clustering.*.method` | `hierarchical`, `kmedoids`, `affinity` |
+| `DECOYS` | screen `decoy.strategy` | `lude` |
+| `DOCKING` | screen `docking.engine` | `vina`, `quickvina` |
+
+A plug-in declares its parameters (a frozen dataclass, filled from
+`<section>.options.<name>`), the executables it runs (`qpocket doctor` checks
+them) and the resources it needs (SLURM job sizes follow them).

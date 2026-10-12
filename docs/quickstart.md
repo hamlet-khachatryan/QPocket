@@ -61,19 +61,21 @@ qpocket run --config qpocket_config.yaml
 ## Python API
 
 ```python
-from qpocket.pipelines.stages import run_qpocket_pipeline
+from qpocket.config import load_qpocket_config
+from qpocket.pipelines.run import run
 
-run_qpocket_pipeline(
-    pdb_id="6HP0",
-    chain_id="A",
-    ligand_id="LKQ",
-    workdir="./results",
-    sequence_identity=0.9,
-    resolution_limit=2.5,
-    log_format="text",          # human-readable console output
-    save_intermediate=True,      # keep pre-crop pocket CSVs
-)
+cfg = load_qpocket_config(overrides=[
+    "reference.pdb_id=6HP0", "reference.chain_id=A", "reference.ligand_id=LKQ",
+    "paths.workdir=./results", "pdb_query.sequence_identity=0.9",
+    "pdb_query.resolution_limit=2.5",
+    "io.log_format=text",            # human-readable console output
+    "io.save_intermediate=true",     # keep pre-crop pocket CSVs
+])
+run(cfg)  # returns the run directory
 ```
+
+Running it again into the same `workdir` reuses every structure whose input file and
+settings are unchanged.
 
 ---
 
@@ -95,7 +97,11 @@ results/
     │       ├── binding_site_initial.csv  ← pre-crop cloud (if save_intermediate)
     │       └── featurized.csv            ← APBS / CP / LP / geometric features
     ├── metadata/
+    │   ├── run.json                       ← layout version; older runs must be re-run
+    │   ├── reference.json                 ← the reference every structure is aligned to
+    │   ├── parts/<pdb_id>.json            ← one record per structure (resume, SLURM)
     │   ├── master.csv                     ← one row per structure, with ligand_id
+    │   ├── failures.csv                   ← structures that dropped out, and why
     │   ├── spectral_distance_matrix.csv
     │   ├── clustering_metadata.csv
     │   ├── selected_representatives.csv
