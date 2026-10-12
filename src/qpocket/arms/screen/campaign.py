@@ -114,7 +114,7 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
             decoys_smi = candidate if candidate.exists() else None
 
         # 3. Receptors and ligands.
-        from qpocket.pipelines.screening_prep import prepare_all_ligands, prepare_all_proteins
+        from qpocket.arms.screen.receptors import prepare_all_ligands, prepare_all_proteins
 
         prepared = prepare_all_proteins(screening_dir, metadata_dir / "selected_representatives.csv",
                                         metadata_dir / "master.csv", cfg)
@@ -222,7 +222,7 @@ def analyze(pipeline_workdir, config_path: Optional[str] = None, **overrides) ->
         cfg: ScreenConfig = load_screen_config(config_path, **overrides)
         validate_screen_config(cfg)
         base = Path(pipeline_workdir).resolve()
-        from qpocket.pipelines.screening_analysis import run_full_analysis
+        from qpocket.arms.screen.analysis import run_full_analysis
 
         run_full_analysis(base / "screening", base, cfg)
         return base / "screening" / "analysis"

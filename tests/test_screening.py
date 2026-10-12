@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from qpocket.core import screening as scr
-from qpocket.pipelines import screening
+from qpocket.arms.screen import campaign as screening
 from qpocket.screen_config import ScreenConfig
 
 BOX = {"center_x": 1.0, "center_y": 2.0, "center_z": 3.0, "size_x": 20.0, "size_y": 21.0, "size_z": 22.0}
@@ -52,7 +52,7 @@ def test_local_submission_is_a_command_not_a_bash_parser(tmp_path):
 
 def _fake_inputs(monkeypatch):
     from qpocket.io import screening as io_screen
-    from qpocket.pipelines import screening_prep
+    from qpocket.arms.screen import receptors as screening_prep
 
     monkeypatch.setattr(io_screen, "extract_vina_box", lambda params, dirs: None)
     monkeypatch.setattr(screening_prep, "prepare_all_proteins", lambda *a, **k: ["P1", "P2"])

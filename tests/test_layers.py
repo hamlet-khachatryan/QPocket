@@ -90,3 +90,27 @@ def test_plugins_import_no_skeleton_or_apps(path):
 def test_only_registries_reach_plugins(path):
     for mod in _imports_of(path):
         assert not mod.startswith("qpocket.plugins"), (path.name, mod)
+
+
+@pytest.mark.parametrize("path", _modules_under("pipelines") + _modules_under("core"),
+                         ids=lambda p: str(p.relative_to(PKG)))
+def test_the_core_run_imports_no_arm(path):
+    for mod in _imports_of(path):
+        assert not mod.startswith("qpocket.arms"), (path.name, mod)
+
+
+def _arm_of(path):
+    rel = path.relative_to(PKG / "arms").parts
+    return rel[0].removesuffix(".py")
+
+
+@pytest.mark.parametrize("path", _modules_under("arms"), ids=lambda p: str(p.relative_to(PKG)))
+def test_arms_do_not_import_each_other(path):
+    own = _arm_of(path)
+    for mod in _imports_of(path):
+        if mod.startswith("qpocket.arms."):
+            assert mod.split(".")[2] == own, (path.name, mod)
+
+
+def test_the_arms_exist():
+    assert {p.stem for p in (PKG / "arms").iterdir()} >= {"screen", "compare", "recluster"}

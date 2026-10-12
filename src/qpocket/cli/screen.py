@@ -55,7 +55,7 @@ def prepare(
     box_padding: float | None,
 ) -> None:
     """Prepare proteins, ligands, and docking job scripts."""
-    from qpocket.pipelines.screening import prepare as prepare_campaign
+    from qpocket.arms.screen.campaign import prepare as prepare_campaign
 
     overrides: dict = {"run_mode": run_mode, "docking": {"engine": engine}}
 
@@ -115,7 +115,7 @@ def analyze(
     bedroc_alpha: float | None,
 ) -> None:
     """Analyse docking results and write CSV reports."""
-    from qpocket.pipelines.screening import analyze as analyze_campaign
+    from qpocket.arms.screen.campaign import analyze as analyze_campaign
 
     overrides: dict = {}
     if run_mode:
@@ -138,7 +138,7 @@ def run_task(jobs_csv: str, index: int, cpus: int, engine: str | None) -> None:
     from pathlib import Path
 
     from qpocket.io.tools import ToolNotFoundError
-    from qpocket.pipelines.screening import run_job
+    from qpocket.arms.screen.campaign import run_job
 
     try:
         code = run_job(Path(jobs_csv), index, cpus, engine)
@@ -159,7 +159,7 @@ def run_local(jobs_csv: str, workers: int, cpus: int, engine: str | None) -> Non
     from pathlib import Path
 
     from qpocket.io.tools import ToolNotFoundError
-    from qpocket.pipelines.screening import run_local as run_all
+    from qpocket.arms.screen.campaign import run_local as run_all
 
     try:
         failed = run_all(Path(jobs_csv), workers, cpus, engine)

@@ -180,7 +180,7 @@ def _(mo):
 
 @app.cell
 def _(mo, qviz, run_dir):
-    from qpocket.pipelines import recluster as _recluster
+    from qpocket.arms import recluster as _recluster
 
     cluster_matrices = qviz.two_stage.load_matrices(run_dir)
     cluster_settings = _recluster.load_settings(run_dir)
@@ -346,7 +346,7 @@ def _(apply_clustering, mo, pending_settings, run_dir):
     # them refresh.
     applied_at = None
     if apply_clustering.value and pending_settings is not None:
-        from qpocket.pipelines import recluster as _recluster_apply
+        from qpocket.arms import recluster as _recluster_apply
 
         _saved = _recluster_apply.run(run_dir, pending_settings)
         applied_at = str(_saved)

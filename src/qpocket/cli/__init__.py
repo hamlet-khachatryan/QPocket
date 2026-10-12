@@ -826,7 +826,7 @@ def recluster_command(run_dir, mode, min_cluster_size, shape_method, shape_linka
 
     import pandas as pd
 
-    from qpocket.pipelines import recluster
+    from qpocket.arms import recluster
 
     settings = recluster.load_settings(Path(run_dir))
 

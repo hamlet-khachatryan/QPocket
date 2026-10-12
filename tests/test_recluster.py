@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from qpocket.cli import cli
-from qpocket.pipelines import recluster
+from qpocket.arms import recluster
 
 GOLD = Path(__file__).resolve().parent / "golden/expected/7KG6"
 

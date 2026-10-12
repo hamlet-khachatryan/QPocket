@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from qpocket.pipelines import recluster
+from qpocket.arms import recluster
 from qpocket.viz import two_stage as ts
 
 

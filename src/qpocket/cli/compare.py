@@ -63,7 +63,7 @@ def featurize_command(structure, chain, ligand, residues, padding, features_list
     from qpocket.core.features import DEFAULT_PROVIDERS
     from qpocket.core.features import columns_for
     from qpocket.core.ports import FEATURES
-    from qpocket.pipelines.compare import featurize
+    from qpocket.arms.compare import featurize
     from qpocket.types import PocketSpec
 
     spec = PocketSpec(structure, chain, ligand,
@@ -85,7 +85,7 @@ def featurize_command(structure, chain, ligand, residues, padding, features_list
 @_fingerprint_options
 def compare_command(pockets, scaler, global_k, sigma, radius, output):
     """Compare pockets saved by `qpocket featurize` (two or more .npz files)."""
-    from qpocket.pipelines.compare import compare_features
+    from qpocket.arms.compare import compare_features
 
     if len(pockets) < 2:
         raise click.UsageError("give at least two pockets")
@@ -118,7 +118,7 @@ def compare_structures_command(pockets, padding, scaler, global_k, sigma, radius
     STRUCTURE is a PDB ID (downloaded) or a file. Example:
     qpocket compare-structures 7KG6:WDG 4CPN@A:TYR795,GLU756
     """
-    from qpocket.pipelines.compare import run
+    from qpocket.arms.compare import run
     from qpocket.types import PocketSpec
 
     if len(pockets) < 2:
