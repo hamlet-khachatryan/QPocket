@@ -939,123 +939,30 @@ def _(
     max_ligands,
     mo,
     n_unparsed,
-    pd,
+    qviz,
     show_ligand_props,
 ):
-    from rdkit import Chem
-    from rdkit.Chem import Descriptors, rdDepictor
-    from rdkit.Chem.Draw import rdMolDraw2D
-    from rdkit.Chem.rdMolDescriptors import CalcMolFormula
-
-    # ---- Which structures a depiction may come from -------------------------
     # The table can reach beyond the structures of this run, and a cluster is a
     # subset of those, so both are filtered on the active grouping.
-    _cluster_of = {
-        str(_row.pdb_id).upper(): int(_row.cluster_id)
-        for _row in active_info.itertuples()
-        if pd.notna(_row.cluster_id)
-    }
-    _rows = ligand_rows[ligand_rows["pdb_id"].isin(_cluster_of)]
-    _outside = len(ligand_rows) - len(_rows)
-    if ligand_cluster.value != "all clusters":
-        _wanted = str(ligand_cluster.value)
-        _rows = _rows[_rows["pdb_id"].map(lambda p: str(_cluster_of[p]) == _wanted)]
-
+    _rows, _outside, _cluster_of = qviz.ligands.in_scope(ligand_rows, active_info, ligand_cluster.value)
     mo.stop(
         _rows.empty,
         mo.md(f"_No structure in cluster {ligand_cluster.value} was solved with a ligand._"),
     )
-
-    # ---- One entry per distinct molecule ------------------------------------
-    _unique = []
-    for _canonical, _group in _rows.groupby("canonical", sort=False):
-        _pdb_ids = list(dict.fromkeys(_group["pdb_id"]))
-        _unique.append(
-            {
-                "canonical": _canonical,
-                "codes": list(dict.fromkeys(_group["code"])),
-                "pdb_ids": _pdb_ids,
-                "clusters": sorted({_cluster_of[_p] for _p in _pdb_ids}),
-                "poses": len(_group),
-            }
-        )
-    # Most widely crystallised first: those are the chemotypes the site really binds.
-    _unique.sort(key=lambda u: (-len(u["pdb_ids"]), u["codes"][0]))
+    _unique = qviz.ligands.distinct_molecules(_rows, _cluster_of)
     _shown = _unique[: int(max_ligands.value)]
-
-    # ---- Draw them as one SVG grid ------------------------------------------
-    rdDepictor.SetPreferCoordGen(True)  # cleaner ring layouts than the default
-    _mols, _legends = [], []
-    for _u in _shown:
-        _mol = Chem.MolFromSmiles(_u["canonical"])
-        rdDepictor.Compute2DCoords(_mol)
-        _mols.append(_mol)
-        _more = len(_u["pdb_ids"]) - 3
-        # ASCII only, and pipes rather than the middle dot used elsewhere: RDKit
-        # draws legends in its own font, which has no glyph for "·".
-        _caption = [
-            "/".join(_u["codes"]),
-            ", ".join(_u["pdb_ids"][:3]) + (f" +{_more}" if _more > 0 else ""),
-        ]
-        if ligand_cluster.value == "all clusters":
-            _caption.append(f"cluster {', '.join(str(_c) for _c in _u['clusters'])}")
-        _legends.append(" | ".join(_caption))
-
-    _ncol = max(1, min(int(ligand_cols.value), len(_mols)))
-    _nrow = -(-len(_mols) // _ncol)
-    _w, _h = 300, 265
-    _drawer = rdMolDraw2D.MolDraw2DSVG(_w * _ncol, _h * _nrow, _w, _h)
-    _opts = _drawer.drawOptions()
-    _opts.legendFontSize = 15
-    # Per-panel scaling: one large molecule in the set would otherwise shrink
-    # every other depiction to match it.
-    _opts.drawMolsSameScale = False
-    _drawer.DrawMolecules(_mols, legends=_legends)
-    _drawer.FinishDrawing()
-    _svg = _drawer.GetDrawingText()
-    _svg = _svg[_svg.index("<svg"):] if "<svg" in _svg else _svg
-
-    _props = pd.DataFrame(
-        [
-            {
-                "ligand": "/".join(_u["codes"]),
-                "structures": len(_u["pdb_ids"]),
-                "poses": _u["poses"],
-                "clusters": ", ".join(str(_c) for _c in _u["clusters"]),
-                "formula": CalcMolFormula(_mol),
-                "mw": round(Descriptors.MolWt(_mol), 1),
-                "clogp": round(Descriptors.MolLogP(_mol), 2),
-                "hbd": Descriptors.NumHDonors(_mol),
-                "hba": Descriptors.NumHAcceptors(_mol),
-                "tpsa": round(Descriptors.TPSA(_mol), 1),
-                "rot_bonds": Descriptors.NumRotatableBonds(_mol),
-                "pdb_ids": ", ".join(_u["pdb_ids"]),
-                "smiles": _u["canonical"],
-            }
-            for _u, _mol in zip(_shown, _mols)
-        ]
-    )
-
-    _notes = [
-        f"{len(_shown)} of {len(_unique)} distinct molecules drawn"
-        if len(_shown) < len(_unique)
-        else f"{len(_unique)} distinct molecules",
-        f"{len(_rows)} crystallised poses across {_rows['pdb_id'].nunique()} structures",
-    ]
-    if _outside:
-        _notes.append(f"{_outside} rows name a PDB entry outside this run, dropped")
-    if n_unparsed:
-        _notes.append(f"{n_unparsed} rows RDKit could not parse, dropped")
-
+    _svg, _mols = qviz.ligands.depictions(_shown, n_cols=int(ligand_cols.value),
+                                          all_clusters=ligand_cluster.value == "all clusters")
+    _notes = qviz.ligands.notes(_shown, _unique, _rows, _outside, n_unparsed)
     mo.vstack(
         [
             mo.Html(f'<div style="overflow-x:auto">{_svg}</div>'),
             mo.md("_" + " · ".join(_notes) + "_"),
         ]
-        + ([mo.ui.table(_props, selection=None, pagination=True)] if show_ligand_props.value else [])
+        + ([mo.ui.table(qviz.ligands.properties(_shown, _mols), selection=None, pagination=True)]
+           if show_ligand_props.value else [])
     )
     return
-
 
 @app.cell
 def _(mo):
@@ -1079,77 +986,12 @@ def _(mo):
 
 
 @app.cell
-def _(active_info, dist_df, dist_order, mo, np, pd, px):
+def _(active_info, dist_df, dist_order, mo, qviz):
     mo.stop(dist_df is None, mo.md("No distance matrix."))
-
-    # Symmetrise once; both the ordering and the plot use this copy.
-    _ids = list(dist_df.index)
-    _raw = dist_df.loc[_ids, _ids].to_numpy(dtype=float)
-    _sym = 0.5 * (_raw + _raw.T)
-    np.fill_diagonal(_sym, 0.0)
-    _M = pd.DataFrame(_sym, index=_ids, columns=_ids)
-
-    def _leaf_order(ids):
-        """Average-linkage leaf order of a subset — puts similar pockets adjacent."""
-        if len(ids) < 3:
-            return list(ids)
-        from scipy.cluster.hierarchy import leaves_list, linkage
-        from scipy.spatial.distance import squareform
-
-        _sub = _M.loc[ids, ids].to_numpy(dtype=float)
-        _Z = linkage(squareform(_sub, checks=False), method="average")
-        return [ids[i] for i in leaves_list(_Z)]
-
-    # ---- Build the row/column order -----------------------------------------
-    _cluster_of = dict(zip(active_info["pdb_id"].astype(str), active_info["cluster_id"]))
-    _blocks = []  # (cluster label, ids) — only used for the block annotations
-
-    if dist_order.value == "as loaded":
-        _order = list(_ids)
-    elif dist_order.value == "hierarchical":
-        _order = _leaf_order(list(_ids))
-    else:  # cluster blocks: cluster-major, hierarchical inside each cluster
-        _order = []
-        for _c in sorted({_cluster_of.get(str(i), -1) for i in _ids}):
-            _members = [i for i in _ids if _cluster_of.get(str(i), -1) == _c]
-            _members = _leaf_order(_members)
-            _blocks.append((_c, _members))
-            _order.extend(_members)
-
-    _mat = _M.loc[_order, _order]
-
-    _fig = px.imshow(
-        _mat,
-        color_continuous_scale="Blues",
-        aspect="auto",
-        labels=dict(color="spectral dist"),
-        height=620,
-    )
-    _fig.update_layout(
-        title=f"Pairwise spectral distance between pockets · ordered by {dist_order.value}",
-        xaxis=dict(tickmode="array", tickvals=list(range(len(_order))), ticktext=_order, tickangle=-90),
-        yaxis=dict(tickmode="array", tickvals=list(range(len(_order))), ticktext=_order),
-        margin=dict(t=70),
-    )
-
-    # ---- Outline the blocks so they read at a glance ------------------------
-    _cum = 0
-    for _c, _members in _blocks:
-        _lo, _hi = _cum - 0.5, _cum + len(_members) - 0.5
-        _fig.add_shape(
-            type="rect", x0=_lo, x1=_hi, y0=_lo, y1=_hi,
-            line=dict(color="#1a1a19", width=2), fillcolor="rgba(0,0,0,0)", layer="above",
-        )
-        _fig.add_annotation(
-            x=(_lo + _hi) / 2, y=1.0, xref="x", yref="paper",
-            text=f"cluster {_c}", showarrow=False, yanchor="bottom",
-            font=dict(size=12, color="#52514e"),
-        )
-        _cum += len(_members)
-
-    _fig
+    _M = qviz.matrix.symmetrised(dist_df)
+    _order, _blocks = qviz.matrix.ordering(_M, active_info, dist_order.value)
+    qviz.matrix.heatmap(_M, _order, _blocks, dist_order.value)
     return
-
 
 @app.cell
 def _(mo):
