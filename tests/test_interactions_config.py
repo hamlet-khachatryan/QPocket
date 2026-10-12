@@ -46,3 +46,16 @@ def test_parameters_for_a_disabled_interaction_are_rejected():
     cfg = evolve(cfg, "interactions.parameters", {"HBDonor": {"distance": 4.1}})
     with pytest.raises(ValueError, match="HBDonor"):
         validate_config(cfg)
+
+
+def test_a_config_file_can_narrow_the_interactions(tmp_path):
+    """The loader used to drop this section and run with the defaults."""
+    from qpocket.config import load_qpocket_config
+
+    path = tmp_path / "cfg.yaml"
+    path.write_text("reference:\n  pdb_id: 7KG6\n  chain_id: A\n"
+                    "interactions:\n  enabled: [Hydrophobic, HBDonor]\n"
+                    "  parameters:\n    HBDonor: {distance: 3.9}\n", encoding="utf-8")
+    cfg = load_qpocket_config(config_path=str(path))
+    assert list(cfg.interactions.enabled) == ["Hydrophobic", "HBDonor"]
+    assert cfg.interactions.parameters["HBDonor"]["distance"] == 3.9

@@ -929,6 +929,7 @@ def load_qpocket_config(
         # block loadable.
         compute=cfg.get("compute", ComputeConfig()),
         features=cfg.get("features", FeaturesConfig()),
+        interactions=cfg.get("interactions", InteractionsConfig()),
         slurm=cfg.get("slurm", SlurmConfig()),
     )
 
