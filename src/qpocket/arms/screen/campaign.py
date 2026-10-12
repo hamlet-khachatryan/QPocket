@@ -70,6 +70,21 @@ def write_submission(jobs_csv: Path, n_jobs: int, cfg: ScreenConfig,
     return ScreeningPlan(jobs_csv, scripts, command)
 
 
+def decoy_params(cfg: ScreenConfig, plugin):
+    """A decoy plug-in's params from the decoy and chembl sections.
+
+    Args:
+        cfg: Screening configuration.
+        plugin: The DECOYS plug-in.
+
+    Returns:
+        Its params instance.
+    """
+    from dataclasses import asdict, fields
+
+    available = {**asdict(cfg.decoy), "chembl_url": cfg.chembl.url, "chembl_dir": cfg.chembl.local_dir}
+    return plugin.params(**{f.name: available[f.name] for f in fields(plugin.params)})
+
 def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optional[Submit] = None,
             **overrides) -> ScreeningPlan:
     """Prepare every input of a docking campaign from a finished pipeline run.
@@ -106,12 +121,10 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
         # 2. Decoys, virtual screening only.
         decoys_smi: Optional[Path] = None
         if cfg.run_mode == "virtual_screening":
-            from qpocket.pipelines.decoys import generate_decoys_lude
+            from qpocket.core.ports import DECOYS
 
-            chembl_dir = sio_screen.download_chembl_dataset(cfg.chembl.url, cfg.chembl.local_dir)
-            generate_decoys_lude(actives_smi, chembl_dir, screening_dir, cfg.decoy)
-            candidate = screening_dir / "decoys.smi"
-            decoys_smi = candidate if candidate.exists() else None
+            plugin = DECOYS.get(cfg.decoy.strategy)
+            decoys_smi = plugin.fn(actives_smi, screening_dir, decoy_params(cfg, plugin))
 
         # 3. Receptors and ligands.
         from qpocket.arms.screen.receptors import prepare_all_ligands, prepare_all_proteins

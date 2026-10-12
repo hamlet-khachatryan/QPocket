@@ -5,6 +5,7 @@ chembl:
   local_dir: "~/.qpocket/chembl_data"
 
 decoy:
+  strategy: "lude"          # DECOYS plug-in
   n_decoys_per_active: 50
   max_similarity: 0.2
   mw_diff: 20.0

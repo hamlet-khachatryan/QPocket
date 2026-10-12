@@ -1,8 +1,10 @@
-"""Decoy generation (LUDe-style) for virtual screening."""
+"""LUDe decoys: property-matched, dissimilar molecules drawn from a ChEMBL pool."""
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 from eliot import log_message
@@ -10,7 +12,9 @@ from molvs import Standardizer
 from rdkit import Chem, DataStructs
 from rdkit.Chem import AllChem
 
+from qpocket.core.ports import DECOYS
 from qpocket.core.screening import calc_descriptors, standardize_molecule
+from qpocket.io.screening import download_chembl_dataset
 from qpocket.screen_config import DecoyConfig
 
 
@@ -141,35 +145,50 @@ def generate_decoys_lude(
 
 
 # Known issue (spec §6): unused and out of date; prepare() is the entry point.
-def run_screening_prep(
-    base_dir: str,
-    chembl_path: str,
-    box_config: dict,
-    decoy_config: dict,
-) -> None:
-    """Orchestrates Vina Box Extraction + Decoy Generation."""
-    from qpocket.io.screening import extract_vina_box
 
-    BASE = Path(base_dir)
-    DIRS = {
-        "metadata": BASE / "metadata",
-        "ligands": BASE / "metadata" / "ligands",
-        "cavities": BASE / "metadata" / "cavities",
-        "screening": BASE / "screening",
-    }
 
-    chembl_dir = Path(chembl_path)
+@dataclass(frozen=True)
+class LudeParams:
+    """Where the pool comes from, and how closely decoys must match.
 
-    # 1. Vina Box
-    extract_vina_box(box_config, DIRS)
+    Attributes:
+        chembl_url: Pool download URL.
+        chembl_dir: Local pool directory.
+        n_decoys_per_active: Decoys kept per active.
+        max_similarity: Highest Tanimoto similarity to the active allowed.
+        mw_diff: Molecular weight window.
+        logp_diff: LogP window.
+        rb_diff: Rotatable-bond window.
+        hba_diff: H-bond acceptor window.
+        hbd_diff: H-bond donor window.
+        charge_diff: Formal charge window.
+    """
 
-    # 2. Decoys
-    actives_path = DIRS["screening"] / "actives.smi"
-    if actives_path.exists():
-        cfg = DecoyConfig(
-            n_decoys_per_active=decoy_config.get("max_decoys", 50),
-            max_similarity=decoy_config.get("max_similarity", 0.2),
-        )
-        generate_decoys_lude(actives_path, chembl_dir, DIRS["screening"], cfg)
-    else:
-        log_message(message_type="warning", msg="Actives file missing, skipping decoy generation")
+    chembl_url: str
+    chembl_dir: str
+    n_decoys_per_active: int
+    max_similarity: float
+    mw_diff: float
+    logp_diff: float
+    rb_diff: int
+    hba_diff: int
+    hbd_diff: int
+    charge_diff: int
+
+
+@DECOYS.register("lude", params=LudeParams)
+def lude(actives_smi: Path, out_dir: Path, params: LudeParams) -> Optional[Path]:
+    """Property-matched decoys for every active.
+
+    Args:
+        actives_smi: actives.smi of the run.
+        out_dir: Where decoys.smi goes.
+        params: Pool and matching settings.
+
+    Returns:
+        decoys.smi, or None when nothing was written.
+    """
+    pool = download_chembl_dataset(params.chembl_url, params.chembl_dir)
+    generate_decoys_lude(actives_smi, pool, out_dir, params)
+    out = Path(out_dir) / "decoys.smi"
+    return out if out.exists() else None

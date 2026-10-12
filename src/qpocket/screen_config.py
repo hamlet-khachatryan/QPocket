@@ -16,7 +16,8 @@ class ChemblDatasetConfig:
 
 @dataclass
 class DecoyConfig:
-    """Property-matching limits for decoy selection."""
+    """Decoy strategy and its property-matching limits."""
+    strategy: str = "lude"  # DECOYS plug-in
     n_decoys_per_active: int = 50
     max_similarity: float = 0.2
     mw_diff: float = 20.0
@@ -135,6 +136,12 @@ def validate_screen_config(cfg: ScreenConfig) -> None:
 
     if cfg.preparation.num_conformers < 1:
         errors.append("preparation.num_conformers must be >= 1")
+
+    from qpocket.core.ports import DECOYS
+
+    if cfg.decoy.strategy not in DECOYS.available():
+        errors.append(f"decoy.strategy must be one of {list(DECOYS.available())}, "
+                      f"got '{cfg.decoy.strategy}'")
 
     if cfg.docking.engine not in ("vina", "quickvina"):
         errors.append(f"docking.engine must be 'vina' or 'quickvina', got '{cfg.docking.engine}'")
