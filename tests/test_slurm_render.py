@@ -151,7 +151,8 @@ def test_a_stage_override_beats_the_defaults(cfg, dirs, config_file):
 
 
 def test_a_stage_without_an_override_uses_the_defaults(cfg, dirs, config_file):
-    assert stage_resources(cfg, "geodesic") is cfg.slurm.defaults
+    res, default = stage_resources(cfg, "collect"), cfg.slurm.defaults
+    assert (res.cpus, res.mem, res.time) == (default.cpus, default.mem, default.time)
 
 
 # --- chunking -------------------------------------------------------------
@@ -204,7 +205,7 @@ def test_index_i_resolves_to_line_i_plus_one(cfg, dirs):
 
 
 def test_a_manifest_round_trips_ids_unchanged(cfg, dirs):
-    path = write_manifest(dirs, STAGES_BY_NAME["geodesic"], PDB_IDS)
+    path = write_manifest(dirs, STAGES_BY_NAME["featurize"], PDB_IDS)
     assert read_manifest(path) == PDB_IDS
 
 

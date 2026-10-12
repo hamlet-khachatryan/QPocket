@@ -69,8 +69,6 @@ STAGES: Tuple[StageSpec, ...] = (
               "align, clean, pocket, contacts and features, one task per structure"),
     StageSpec("collect", 30, False, "metadata/observed_interactions.h5",
               "merge per-structure results into master.csv, HDF5 and frequencies"),
-    StageSpec("geodesic", 40, True, "pockets/{pdb_id}/geospectral_cache.npz",
-              "geodesic graph and cached distances, one task per pocket"),
     StageSpec("distance", 50, False, "metadata/spectral_distance_matrix.csv",
               "spectral fingerprints, distance matrices and clustering"),
 )
@@ -91,21 +89,72 @@ def active_stages(cfg) -> Tuple[StageSpec, ...]:
     return tuple(s for s in STAGES if split or s.name != "apbs")
 
 
+class _Request(NamedTuple):
+    cpus: int
+    mem: str
+    time: str
+    gpu: int
+
+
+def _mem_gb(text: str) -> float:
+    """A SLURM memory string in GB; a bare number is MB, as SLURM reads it."""
+    value = str(text).strip().upper()
+    scale = {"K": 1 / 1024 ** 2, "M": 1 / 1024, "G": 1.0, "T": 1024.0}
+    if value and value[-1] in scale:
+        return float(value[:-1]) * scale[value[-1]]
+    return float(value) / 1024
+
+
+def _minutes(text: str) -> int:
+    """A SLURM walltime (HH:MM:SS, MM:SS or D-HH:MM:SS) in whole minutes, rounded up."""
+    days, _, clock = str(text).rpartition("-")
+    parts = [int(p) for p in clock.split(":")]
+    hours, minutes, seconds = [0] * (3 - len(parts)) + parts
+    if len(parts) == 2:
+        hours, minutes, seconds = 0, parts[0], parts[1]
+    return (int(days or 0) * 24 + hours) * 60 + minutes + (1 if seconds else 0)
+
+
+def _clock(minutes: int) -> str:
+    days, rest = divmod(int(minutes), 24 * 60)
+    text = f"{rest // 60:02d}:{rest % 60:02d}:00"
+    return f"{days}-{text}" if days else text
+
+
+def _plugin_resources(cfg):
+    from qpocket.core.ports import CHARGES, CONTACTS, FEATURES, POCKETS
+
+    pocket = "box" if cfg.reference.pocket_mode == "bounding_box" else "cavities"
+    plugins = (list(FEATURES.resolve(list(cfg.features.enabled))) + [CHARGES.get(cfg.charges.use)]
+               + list(CONTACTS.resolve(list(cfg.contacts.use))) + [POCKETS.get(pocket)])
+    return [p.resources for p in plugins]
+
+
 def stage_resources(cfg, stage_name: str):
-    """Resource request for a stage, falling back to ``slurm.defaults``.
+    """Resource request for a stage: its override, else the defaults raised to the plug-ins' needs.
 
     Args:
         cfg: A loaded config.
         stage_name: One of the names in :data:`STAGES`.
 
     Returns:
-        An object carrying ``cpus``, ``mem`` and ``time``.
+        An object carrying ``cpus``, ``mem``, ``time`` and ``gpu``.
     """
     overrides = getattr(cfg.slurm, "stages", None) or {}
-    # DictConfig and dict both support __contains__ / __getitem__.
-    if stage_name in overrides:
-        return overrides[stage_name]
-    return cfg.slurm.defaults
+    base = overrides[stage_name] if stage_name in overrides else cfg.slurm.defaults
+    request = _Request(int(base.cpus), str(base.mem), str(base.time),
+                       int(getattr(base, "gpu", 0) or 0))
+    if stage_name != "featurize" or stage_name in overrides:
+        return request
+    needs = _plugin_resources(cfg)
+    mem = max([_mem_gb(request.mem)] + [r.mem_gb for r in needs])
+    minutes = max([_minutes(request.time)] + [r.walltime_min for r in needs])
+    return _Request(
+        cpus=max([request.cpus] + [r.cpus for r in needs]),
+        mem=request.mem if mem <= _mem_gb(request.mem) else f"{int(-(-mem // 1))}G",
+        time=request.time if minutes <= _minutes(request.time) else _clock(minutes),
+        gpu=max([request.gpu] + [r.gpu for r in needs]),
+    )
 
 
 def slurm_dir(dirs: Dict[str, Path]) -> Path:
@@ -166,6 +215,7 @@ def _directives(cfg, stage: StageSpec, log_dir: Path, job_name: str,
         f"#SBATCH --cpus-per-task={res.cpus}",
         f"#SBATCH --mem={res.mem}",
         f"#SBATCH --time={res.time}",
+        *([f"#SBATCH --gres=gpu:{res.gpu}"] if res.gpu else []),
         # Absolute, so logs land beside the run and not in the submit directory.
         f"#SBATCH --output={log_dir}/{stage.name}_{pattern}.out",
         f"#SBATCH --error={log_dir}/{stage.name}_{pattern}.err",
