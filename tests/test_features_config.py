@@ -32,11 +32,12 @@ def test_empty_selection_is_a_config_error():
     (["--features", "hbond,aromatic"], "features.enabled=[hbond,aromatic]"),
 ])
 def test_cli_flags_narrow_the_set(monkeypatch, flags, expected):
-    from qpocket import cli as cli_mod
+    from qpocket.cli import cli
+    from qpocket.cli import run as cli_mod
 
     seen = {}
     monkeypatch.setattr(cli_mod, "run_qpocket_pipeline", lambda **kw: seen.update(kw))
-    result = CliRunner().invoke(cli_mod.cli, ["run", "--pdb-id", "7KG6", *flags])
+    result = CliRunner().invoke(cli, ["run", "--pdb-id", "7KG6", *flags])
     assert result.exit_code == 0, result.output
     assert expected in seen["extra_overrides"]
 

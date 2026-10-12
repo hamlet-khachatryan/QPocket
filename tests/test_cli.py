@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from click.testing import CliRunner
 
-from qpocket import cli as cli_mod
+from qpocket.cli import run as cli_mod  # the module that calls the pipeline
 from qpocket.cli import cli
 
 
