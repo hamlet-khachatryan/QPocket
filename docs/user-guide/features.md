@@ -80,7 +80,14 @@ and values the pipeline precomputed. Keep the function pure: no logging and no
 files. Anything that runs an external tool belongs in `qpocket.io`, with the result
 handed over through `ctx.options` — that is how `apbs` works.
 
-A provider currently runs with its parameter defaults: `features.options` is
-accepted in the config but not yet passed to providers.
+Its parameters come from `features.options.<name>`, checked against the params
+class when the config loads:
+
+```yaml
+features:
+  enabled: ["hbond", "aromatic", "template"]
+  options:
+    template: {value: 2.5}
+```
 
 New columns land after the built-in ones, in provider order.

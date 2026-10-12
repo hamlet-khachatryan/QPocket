@@ -12,7 +12,7 @@ from Bio.PDB import PDBParser
 from biopandas.pdb import PandasPdb
 from eliot import log_message, start_action
 
-from qpocket.config import QPocketConfig
+from qpocket.config import QPocketConfig, plugin_params
 from qpocket.core import pocket
 from qpocket.core.features import DEFAULT_PROVIDERS, pocket_features
 from qpocket.core.geometry import crop_pocket_by_interactions
@@ -41,7 +41,9 @@ class StructureParams:
         reference_ligand_id: The reference ligand, or None.
         save_intermediate: Also write binding_site_initial.csv.
         features: FEATURES plug-in names.
+        feature_options: Settings per feature plug-in.
         charges: CHARGES plug-in name.
+        charge_params: Its parameters.
         contacts: CONTACTS plug-in names.
         contact_params: Parameters per contact plug-in.
         geodesic_radius: Neighbour radius of the geodesic graph.
@@ -58,7 +60,9 @@ class StructureParams:
     reference_ligand_id: Optional[str]
     save_intermediate: bool
     features: Tuple[str, ...]
+    feature_options: Mapping[str, Any]
     charges: str
+    charge_params: Any
     contacts: Tuple[str, ...]
     contact_params: Mapping[str, Any]
     geodesic_radius: float
@@ -98,8 +102,13 @@ def structure_params(cfg: QPocketConfig) -> StructureParams:
         interaction_padding=cfg.reference.interaction_padding,
         reference_ligand_id=cfg.reference.ligand_id or None,
         save_intermediate=bool(cfg.io.save_intermediate),
-        features=tuple(cfg.features.enabled), charges="pdb2pqr",
-        contacts=("prolif",), contact_params={"prolif": prolif_params},
+        features=tuple(cfg.features.enabled), feature_options=dict(cfg.features.options or {}),
+        charges=cfg.charges.use,
+        charge_params=plugin_params(CHARGES, cfg.charges.use, cfg.charges.options),
+        contacts=tuple(cfg.contacts.use),
+        contact_params={name: prolif_params if name == "prolif"
+                        else plugin_params(CONTACTS, name, cfg.contacts.options)
+                        for name in cfg.contacts.use},
         geodesic_radius=cfg.distance.geo_graph_neighbor_radius,
         min_auxiliary_identity=cfg.alignment.min_auxiliary_identity,
         max_auxiliary_centroid_deviation=cfg.alignment.max_auxiliary_centroid_deviation,
@@ -133,7 +142,8 @@ def clean_file(record: Structure, ws: layout.Workspace, allowed_cofactors: str) 
 
 
 def featurize(csv_path: Path, pdb_path: Path, features: Sequence[str] = DEFAULT_PROVIDERS,
-              charges: str = "pdb2pqr") -> None:
+              charges: str = "pdb2pqr", options: Optional[Mapping[str, Any]] = None,
+              charge_params: Any = None) -> None:
     """Write featurized.csv beside a pocket's point cloud.
 
     Args:
@@ -141,6 +151,8 @@ def featurize(csv_path: Path, pdb_path: Path, features: Sequence[str] = DEFAULT_
         pdb_path: Cleaned protein PDB.
         features: FEATURES plug-in names.
         charges: CHARGES plug-in that provides atoms and charges.
+        options: Settings per feature plug-in.
+        charge_params: The charge model's parameters; its defaults when None.
     """
     with start_action(action_type="process_point_cloud"):
         if not csv_path.exists():
@@ -163,7 +175,8 @@ def featurize(csv_path: Path, pdb_path: Path, features: Sequence[str] = DEFAULT_
         try:
             if needs_pqr:
                 plugin = CHARGES.get(charges)
-                data = plugin.fn(Path(pdb_path), pqr_path, plugin.params())
+                data = plugin.fn(Path(pdb_path), pqr_path,
+                                 charge_params if charge_params is not None else plugin.params())
         except Exception as e:
             log_message(message_type="fatal_error", error=str(e))
             return
@@ -175,7 +188,7 @@ def featurize(csv_path: Path, pdb_path: Path, features: Sequence[str] = DEFAULT_
         log_message(message_type="status", msg="Running the feature features",
                     features=list(features))
         tables.write_featurized(out_path, table,
-                                pocket_features(points, data, apbs, features))
+                                pocket_features(points, data, apbs, features, options))
         log_message(message_type="success", output=str(out_path))
 
 
@@ -405,7 +418,8 @@ def refine_and_featurize(ref: Reference, p: StructureParams, ws: layout.Workspac
             log_message(message_type="skip", stage="featurise", pdb_id=record.pdb_id,
                         reason="already featurised")
         else:
-            featurize(pocket_dir / "binding_site.csv", Path(record.cleaned_file), p.features, p.charges)
+            featurize(pocket_dir / "binding_site.csv", Path(record.cleaned_file), p.features, p.charges,
+                      options=p.feature_options, charge_params=p.charge_params)
         return record
 
     points = record.points
@@ -418,7 +432,8 @@ def refine_and_featurize(ref: Reference, p: StructureParams, ws: layout.Workspac
             points = cropped
     write_points(points, pocket_dir / "binding_site.csv")
     (pocket_dir / "featurized.csv").unlink(missing_ok=True)  # the cloud changed
-    featurize(pocket_dir / "binding_site.csv", Path(record.cleaned_file), p.features, p.charges)
+    featurize(pocket_dir / "binding_site.csv", Path(record.cleaned_file), p.features, p.charges,
+                      options=p.feature_options, charge_params=p.charge_params)
     lf, state, lig = _write_ligand(record, ws, points, p.allowed_cofactors,
                                    unbound="UNBOUND_STATE", error="FAILED")
     if state == "FAILED":

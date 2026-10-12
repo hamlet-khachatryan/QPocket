@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 from Bio.PDB import is_aa
@@ -357,7 +357,8 @@ def columns_for(plugins: Sequence) -> Tuple[str, ...]:
 
 
 def pocket_features(points: np.ndarray, data: StructureData, apbs: np.ndarray,
-                    provider_names: Sequence[str] = DEFAULT_PROVIDERS) -> Dict[str, np.ndarray]:
+                    provider_names: Sequence[str] = DEFAULT_PROVIDERS,
+                    options: Optional[Mapping[str, Mapping]] = None) -> Dict[str, np.ndarray]:
     """The per-point features of a pocket, from the enabled channels.
 
     Args:
@@ -365,6 +366,7 @@ def pocket_features(points: np.ndarray, data: StructureData, apbs: np.ndarray,
         data: Protein atoms, charges, hydrophobicity and pharmacophore sites.
         apbs: (N,) electrostatic potential, used by the apbs channel.
         provider_names: Channels to run.
+        options: Per-channel settings, keyed by channel name.
 
     Returns:
         One column per channel column, in FEATURE_COLUMNS order.
@@ -377,5 +379,5 @@ def pocket_features(points: np.ndarray, data: StructureData, apbs: np.ndarray,
                          structure_data=data, options={"apbs": apbs})
     produced: Dict[str, np.ndarray] = {}
     for plugin in chosen:
-        produced.update(plugin.fn(points, ctx, plugin.params()))
+        produced.update(plugin.fn(points, ctx, plugin.params(**dict((options or {}).get(plugin.name) or {}))))
     return {column: produced[column] for column in columns_for(chosen)}

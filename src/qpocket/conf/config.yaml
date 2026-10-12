@@ -69,6 +69,16 @@ interactions:
             "XBDonor", "XBAcceptor", "MetalDonor", "MetalAcceptor"]
   parameters: {}                  # geometry overrides, keyed by interaction name
 
+charges:
+  # Which charge model gives the electrostatic features their atoms and charges.
+  use: "pdb2pqr"
+  options: {}                     # per-model settings, keyed by model name
+
+contacts:
+  # Which detectors read protein-ligand contacts; prolif uses `interactions` above.
+  use: ["prolif"]
+  options: {}                     # per-detector settings, keyed by detector name
+
 compute:
   # Local parallelism. Every per-structure step (align, clean, identify,
   # featurise, geodesic, fingerprint) runs on this many workers; collect and the

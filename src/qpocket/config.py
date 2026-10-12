@@ -267,6 +267,32 @@ class FeaturesConfig:
     options: Dict[str, Dict] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ChargesConfig:
+    """Which charge model gives the features their atoms and charges.
+
+    Attributes:
+        use: CHARGES plug-in name.
+        options: Per-plug-in settings, keyed by plug-in name.
+    """
+
+    use: str = "pdb2pqr"
+    options: Dict[str, Dict] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ContactsConfig:
+    """Which detectors read protein-ligand contacts.
+
+    Attributes:
+        use: CONTACTS plug-in names; prolif reads its settings from ``interactions``.
+        options: Per-plug-in settings, keyed by plug-in name.
+    """
+
+    use: List[str] = field(default_factory=lambda: ["prolif"])
+    options: Dict[str, Dict] = field(default_factory=dict)
+
+
 def _default_interactions() -> List[str]:
     """Interaction names requested from ProLIF by default.
 
@@ -319,6 +345,8 @@ class QPocketConfig:
     compute: ComputeConfig = field(default_factory=ComputeConfig)
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
     interactions: InteractionsConfig = field(default_factory=InteractionsConfig)
+    charges: ChargesConfig = field(default_factory=ChargesConfig)
+    contacts: ContactsConfig = field(default_factory=ContactsConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
 
     def __str__(self) -> str:
@@ -757,10 +785,28 @@ def validate_config(cfg: "QPocketConfig") -> None:
 
     if not cfg.features.enabled:
         raise ValueError("features.enabled must name at least one provider")
-    try:
-        _features.resolve(list(cfg.features.enabled))
-    except ValueError as exc:
-        raise ValueError(f"features.enabled: {exc}") from exc
+    from qpocket.core.ports import CHARGES as _charges, CONTACTS as _contacts
+
+    if not cfg.contacts.use:
+        raise ValueError("contacts.use must name at least one detector")
+    for section, key, registry, names in (
+            ("features", "enabled", _features, list(cfg.features.enabled)),
+            ("charges", "use", _charges, [cfg.charges.use]),
+            ("contacts", "use", _contacts, list(cfg.contacts.use))):
+        try:
+            registry.resolve(names)
+        except ValueError as exc:
+            raise ValueError(f"{section}.{key}: {exc}") from exc
+        options = getattr(cfg, section).options or {}
+        idle = sorted(set(options) - set(names))
+        if idle:
+            raise ValueError(f"{section}.options: settings for {idle}, which are not in "
+                             f"{section}.{key}")
+        for name in names:
+            try:
+                plugin_params(registry, name, options)
+            except ValueError as exc:
+                raise ValueError(f"{section}.options: {exc}") from exc
 
     # --- InteractionsConfig ---
     from qpocket.core.detect import LABELS as _interaction_labels
@@ -930,6 +976,8 @@ def load_qpocket_config(
         compute=cfg.get("compute", ComputeConfig()),
         features=cfg.get("features", FeaturesConfig()),
         interactions=cfg.get("interactions", InteractionsConfig()),
+        charges=cfg.get("charges", ChargesConfig()),
+        contacts=cfg.get("contacts", ContactsConfig()),
         slurm=cfg.get("slurm", SlurmConfig()),
     )
 
@@ -1010,3 +1058,27 @@ def evolve(cfg, path: str, value):
         raise AttributeError(f"{type(cfg).__name__} has no {head!r}")
     new = evolve(getattr(cfg, head), rest, value) if rest else value
     return dataclasses.replace(cfg, **{head: new})
+
+
+def plugin_params(registry, name: str, options):
+    """A plug-in's params, built from its entry in an options mapping.
+
+    Args:
+        registry: The port's Registry.
+        name: Plug-in name.
+        options: Mapping of plug-in name to settings.
+
+    Returns:
+        An instance of the plug-in's params class.
+
+    Raises:
+        ValueError: If a setting is not one of the plug-in's params.
+    """
+    plugin = registry.get(name)
+    given = dict((options or {}).get(name) or {})
+    allowed = {f.name for f in fields(plugin.params)}
+    unknown = sorted(set(given) - allowed)
+    if unknown:
+        raise ValueError(f"{registry.kind} {name}: unknown option(s) {unknown}; "
+                         f"allowed: {sorted(allowed)}")
+    return plugin.params(**given)
