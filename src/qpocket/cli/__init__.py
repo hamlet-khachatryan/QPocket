@@ -443,7 +443,7 @@ def validate(config_file: str):
     \b
     qpocket validate config.yaml
     """
-    from qpocket.pipelines.stages import load_qpocket_config
+    from qpocket.config import load_qpocket_config
 
     click.echo(f"Validating configuration file: {config_file}")
 
@@ -475,7 +475,7 @@ def init(output: str):
     qpocket init
     qpocket run --config qpocket_config.yaml
     """
-    from qpocket.pipelines.stages import CONF_PATH
+    from qpocket.config import CONF_PATH
 
     source = CONF_PATH / "config.yaml"
     if not source.exists():
@@ -513,7 +513,7 @@ def init(output: str):
 
 def _load_run(config: Optional[str], workdir: Optional[str], overrides: List[str]):
     """Load a config and its directory map, the way every slurm command needs."""
-    from qpocket.pipelines.stages import load_qpocket_config, run_id as api_run_id
+    from qpocket.config import load_qpocket_config, run_id as api_run_id
     from qpocket.io import workspace
 
     if workdir:
@@ -728,7 +728,7 @@ def doctor(config: Optional[str], smoke: bool):
     # --- the configuration ------------------------------------------------
     if config:
         try:
-            from qpocket.pipelines.stages import load_qpocket_config
+            from qpocket.config import load_qpocket_config
 
             load_qpocket_config(config_path=config)
             ok("config loads", config)

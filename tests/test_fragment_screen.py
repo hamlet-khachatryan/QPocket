@@ -18,11 +18,9 @@ from qpocket.pipelines.stages import (
     _fragment_input_paths,
     _load_fragment_screen_structures,
     reference_id,
-    run_id,
-    sanitise_id,
-    should_renumber,
 )
-from qpocket.config import FragmentScreenParams, QPocketConfig, validate_config
+from qpocket.config import (FragmentScreenParams, QPocketConfig, run_id, sanitise_id,
+                            should_renumber, validate_config)
 
 
 def structure(path, text="ATOM      1  N   ALA A   1       0.000   0.000   0.000\n"):

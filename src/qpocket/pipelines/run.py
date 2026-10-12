@@ -6,7 +6,7 @@ from typing import List, Optional, Union
 
 from qpocket.config import QPocketConfig
 from qpocket.pipelines import fragment_screen, pdb_query
-from qpocket.pipelines.stages import load_qpocket_config
+from qpocket.config import load_qpocket_config
 
 #: The orchestrator for each ``mode``.
 ORCHESTRATORS = {"pdb_query": pdb_query, "fragment_screen": fragment_screen}

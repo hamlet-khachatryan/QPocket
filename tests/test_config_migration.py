@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
-from qpocket.pipelines.stages import load_qpocket_config
+from qpocket.config import load_qpocket_config
 from qpocket.config import LEGACY_KEYS, fill_defaults, migrate_legacy
 
 

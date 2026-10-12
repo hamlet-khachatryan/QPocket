@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import re
-import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
@@ -12,19 +10,9 @@ import numpy as np
 import pandas as pd
 from Bio.PDB import PDBParser
 from eliot import log_message, start_action
-from hydra import compose, initialize_config_dir
-from hydra.core.global_hydra import GlobalHydra
-from omegaconf import OmegaConf
 
-from qpocket.config import (
-    ComputeConfig,
-    FeaturesConfig,
-    QPocketConfig,
-    SlurmConfig,
-    fill_defaults,
-    migrate_legacy,
-    validate_config,
-)
+from qpocket.config import (STRUCTURE_SUFFIXES, QPocketConfig, run_id, sanitise_id,
+                            should_renumber)
 from qpocket.io import hdf5, workspace
 from qpocket.io import logging as qlog
 from qpocket.pipelines import collect, parallel
@@ -37,141 +25,6 @@ from qpocket.pipelines import clean as cleaning
 from qpocket.pipelines import pockets as extraction
 from qpocket.core import pocket
 from qpocket.core import structure as st
-
-def _find_conf_dir() -> Path:
-    """Locate the Hydra config directory.
-
-    Returns:
-        The first directory that contains ``config.yaml``.
-
-    Raises:
-        FileNotFoundError: If neither location has one, naming both.
-    """
-    packaged = Path(__file__).resolve().parents[1] / "conf"
-    repo_root = Path(__file__).resolve().parents[3] / "conf"
-
-    for candidate in (packaged, repo_root):
-        if (candidate / "config.yaml").exists():
-            return candidate
-
-    raise FileNotFoundError(
-        "Q-Pocket's default configuration was not found. Looked in:\n"
-        f"  {packaged / 'config.yaml'}\n"
-        f"  {repo_root / 'config.yaml'}\n"
-        "In a git checkout this usually means src/qpocket/conf/ was "
-        "never committed."
-    )
-
-
-CONF_PATH = _find_conf_dir()
-
-
-def load_qpocket_config(
-    config_path: Optional[Union[str, Path]] = None,
-    overrides: Optional[List[str]] = None,
-) -> QPocketConfig:
-    """Loads, merges, and validates QPocket configuration.
-
-    Args:
-        config_path: Path to an external YAML configuration file.
-        overrides: Dot-notation override strings (e.g. ``["mode=fragment_screen", "reference.pdb_id=6HP0"]``).
-
-    Returns:
-        Fully validated :class:`~qpocket.config.QPocketConfig`.
-
-    Raises:
-        ValueError: If the assembled configuration fails validation.
-    """
-    GlobalHydra.instance().clear()
-
-    with initialize_config_dir(
-        version_base=None,
-        config_dir=str(CONF_PATH.resolve()),
-    ):
-        cfg = compose(config_name="config", overrides=overrides)
-
-    # Hydra composes in struct mode, which refuses unknown keys outright. A
-    # config written against an older release carries keys this one has renamed,
-    # and they have to survive the merge long enough for migrate_legacy to move
-    # them; unrecognised leftovers are reported there instead.
-    OmegaConf.set_struct(cfg, False)
-
-    if config_path:
-        user_cfg = OmegaConf.load(config_path)
-        cfg = OmegaConf.merge(cfg, user_cfg)
-
-    if overrides:
-        override_cfg = OmegaConf.from_dotlist(overrides)
-        cfg = OmegaConf.merge(cfg, override_cfg)
-
-    for notice in migrate_legacy(cfg):
-        log_message(message_type="config_deprecation", notice=notice)
-        print(f"config: {notice}", file=sys.stderr)
-
-    fill_defaults(cfg)
-
-    final_cfg = QPocketConfig(
-        mode=cfg.mode,
-        paths=cfg.paths,
-        reference=cfg.reference,
-        fragment_screen=cfg.fragment_screen,
-        pdb_query=cfg.pdb_query,
-        alignment=cfg.alignment,
-        cleaning=cfg.cleaning,
-        io=cfg.io,
-        distance=cfg.distance,
-        # `slurm` is only read by the `qpocket slurm` commands. Falling back to
-        # the dataclass default keeps a hand-written config that predates the
-        # block loadable.
-        compute=cfg.get("compute", ComputeConfig()),
-        features=cfg.get("features", FeaturesConfig()),
-        slurm=cfg.get("slurm", SlurmConfig()),
-    )
-
-    validate_config(final_cfg)
-    return final_cfg
-
-
-#: Structures accepted as local input in fragment-screen mode.
-STRUCTURE_SUFFIXES = (".pdb", ".cif", ".ent")
-
-
-def sanitise_id(name: str) -> str:
-    """Turn a filename into an identifier safe as a directory and a CSV key.
-
-    Args:
-        name: A file stem, or any label.
-
-    Returns:
-        The stem with every character outside ``[A-Za-z0-9_-]`` replaced by an underscore, truncated to 64 characters.
-    """
-    cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", str(name)).strip("_")[:64]
-    return cleaned or "structure"
-
-
-def run_id(cfg: QPocketConfig) -> str:
-    """Name of this run's workspace directory.
-
-    Args:
-        cfg: QPocket configuration.
-
-    Returns:
-        A directory-safe identifier.
-
-    Raises:
-        ValueError: If neither a ``pdb_id`` nor a ``reference_path`` is set, so the run has no name at all.
-    """
-    if cfg.reference.pdb_id:
-        return sanitise_id(cfg.reference.pdb_id)
-
-    if cfg.mode == "fragment_screen" and cfg.fragment_screen.reference_path:
-        return sanitise_id(Path(cfg.fragment_screen.reference_path).stem)
-
-    raise ValueError(
-        "the run has no name: set reference.pdb_id, or "
-        "fragment_screen.reference_path in fragment_screen mode"
-    )
-
 
 def inputs_table(dirs: Dict[str, Path]) -> Optional[pd.DataFrame]:
     """The ``pdb_id -> source file`` record written when structures are ingested."""
@@ -211,14 +64,6 @@ def reference_id(cfg: QPocketConfig, dirs: Optional[Dict[str, Path]] = None) -> 
             return str(table.iloc[idx]["pdb_id"])
 
     return cfg.reference.pdb_id
-
-
-def should_renumber(cfg: QPocketConfig) -> bool:
-    """Whether to remap residue numbers onto UniProt positions."""
-    configured = cfg.alignment.renumber_residues
-    if configured is None:
-        return cfg.mode != "fragment_screen"
-    return bool(configured)
 
 
 def execute(cfg: QPocketConfig, pipeline_stages: Sequence[Callable]) -> Path:

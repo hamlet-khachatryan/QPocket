@@ -171,7 +171,7 @@ def config_file(tmp_path):
 
 
 def effective(captured, config_file):
-    from qpocket.pipelines.stages import load_qpocket_config
+    from qpocket.config import load_qpocket_config
 
     return load_qpocket_config(
         config_path=str(config_file),
