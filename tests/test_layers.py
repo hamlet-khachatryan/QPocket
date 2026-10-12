@@ -61,3 +61,32 @@ def test_rules_catch_an_impure_module(tmp_path, monkeypatch):
         test_core_opens_no_files("bad.py")
     with pytest.raises(AssertionError):
         test_core_takes_no_config_or_dirs("bad.py")
+
+
+PKG = CORE.parent
+
+
+def _modules_under(sub):
+    root = PKG / sub
+    return sorted(root.rglob("*.py")) if root.exists() else []
+
+
+def _imports_of(path):
+    return list(_imported_modules(ast.parse(path.read_text(encoding="utf-8"))))
+
+
+@pytest.mark.parametrize("path", _modules_under("plugins"), ids=lambda p: str(p.relative_to(PKG)))
+def test_plugins_import_no_skeleton_or_apps(path):
+    banned = ("qpocket.pipelines", "qpocket.arms", "qpocket.cli", "qpocket.viz")
+    for mod in _imports_of(path):
+        assert not mod.startswith(banned), (path.name, mod)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [p for sub in ("pipelines", "arms", "cli") for p in _modules_under(sub)] + [PKG / "config.py"],
+    ids=lambda p: str(p.relative_to(PKG)),
+)
+def test_only_registries_reach_plugins(path):
+    for mod in _imports_of(path):
+        assert not mod.startswith("qpocket.plugins"), (path.name, mod)
