@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import shlex
-from typing import Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -48,6 +49,61 @@ def pdbqt_lines_to_mol(lines: List[str]) -> Optional[Chem.Mol]:
         return mol
     except Exception:
         return None
+
+
+class Pose(NamedTuple):
+    """One docked pose.
+
+    Attributes:
+        rank: 1 for the best-scored pose.
+        score: Engine score (kcal/mol for the Vina family).
+        mol: RDKit molecule in the receptor frame, or None when unreadable.
+    """
+
+    rank: int
+    score: float
+    mol: Optional[Chem.Mol]
+
+
+class Engine(NamedTuple):
+    """What a docking engine needs from QPocket and gives back.
+
+    Attributes:
+        argv: (job row, executable, cpus) -> command line.
+        read_poses: Output file -> poses in rank order.
+        output_ext: Output file suffix.
+        executable: Default binary name.
+    """
+
+    argv: Callable[[Mapping, str, int], List[str]]
+    read_poses: Callable[[Path], List[Pose]]
+    output_ext: str
+    executable: str
+
+
+def vina_poses(text: str) -> List[Pose]:
+    """Every pose in a Vina-family PDBQT output, best first.
+
+    Args:
+        text: Output file contents.
+
+    Returns:
+        Poses with rank, score and molecule.
+    """
+    poses: List[Pose] = []
+    lines: List[str] = []
+    score: Optional[float] = None
+    for line in text.splitlines(keepends=True):
+        if line.startswith("MODEL"):
+            lines, score = [], None
+        elif line.startswith("REMARK VINA RESULT"):
+            score = float(line.split()[3])
+        elif line.startswith("ENDMDL"):
+            poses.append(Pose(len(poses) + 1, score if score is not None else float("nan"),
+                              pdbqt_lines_to_mol(lines)))
+        else:
+            lines.append(line)
+    return poses
 
 
 def charges_ph(molecule_smi: str, ph: float = 7.4) -> str:

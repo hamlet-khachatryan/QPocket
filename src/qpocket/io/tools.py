@@ -30,6 +30,8 @@ _HINTS = {
     "pdb2pqr": "`uv sync` installs it; activate the environment",
     "obabel": "optional: install Open Babel separately for the SDF to PDBQT fallback",
     "vina": "set docking.engine_path or put vina on PATH",
+    "qvina2": "set docking.engine_path or put QuickVina 2 (qvina2) on PATH",
+    "gnina": "set docking.engine_path or put gnina on PATH",
 }
 
 

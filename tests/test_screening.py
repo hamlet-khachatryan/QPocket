@@ -95,7 +95,7 @@ def test_run_local_defaults_to_half_the_cores(tmp_path, monkeypatch):
         def map(self, fn, items):
             return [0 for _ in items]
 
-    monkeypatch.setattr(screening, "docking_engine", lambda engine=None: "vina")
+    monkeypatch.setattr(screening, "docking_engine", lambda engine, path=None: "vina")
     monkeypatch.setattr(screening, "ThreadPoolExecutor", Pool)
     assert screening.run_local(tmp_path / "docking_jobs.csv", engine="vina") == 0
     assert sizes == [max(1, (os.cpu_count() or 2) // 2)]
@@ -113,7 +113,7 @@ def test_run_local_runs_every_row_without_a_shell(tmp_path, monkeypatch):
         seen.append((argv, kwargs))
         return Done()
 
-    monkeypatch.setattr(screening, "docking_engine", lambda engine=None: "vina")
+    monkeypatch.setattr(screening, "docking_engine", lambda engine, path=None: "vina")
     monkeypatch.setattr(screening.subprocess, "run", fake_run)
     assert screening.run_local(tmp_path / "docking_jobs.csv", workers=2, engine="vina") == 0
     assert len(seen) == 3 and all(isinstance(a, list) and not k.get("shell") for a, k in seen)
@@ -137,4 +137,4 @@ def test_a_missing_docking_engine_says_what_to_do(tmp_path, monkeypatch):
 
     monkeypatch.setenv("PATH", "")
     with pytest.raises(tools.ToolNotFoundError, match="engine_path"):
-        screening.docking_engine("vina")
+        screening.docking_engine(screening.engine_for({"engine": "vina"}))

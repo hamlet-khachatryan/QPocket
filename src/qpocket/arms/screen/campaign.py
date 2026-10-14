@@ -158,28 +158,57 @@ def _read_jobs(jobs_csv: Path) -> pd.DataFrame:
     return pd.read_csv(jobs_csv, dtype=str, keep_default_na=False)
 
 
-def docking_engine(engine: Optional[str] = None) -> str:
-    """Resolve the docking executable, with a message when it is missing.
+_PATH_COLUMNS = ("protein_pdbqt", "ligand_pdbqt", "output_pdbqt")
+
+
+def engine_for(job):
+    """The DOCKING engine a job row names; tables without the column mean vina.
 
     Args:
-        engine: Executable name or path; None reads docking.engine_path.
+        job: One docking_jobs.csv row.
 
     Returns:
-        Path to the engine.
+        The Engine.
+    """
+    from qpocket.core.ports import DOCKING
+
+    return DOCKING.get(str(job.get("engine") or "vina")).fn()
+
+
+def resolve_paths(job, base: Path) -> dict:
+    """A job row with relative paths made absolute against its task folder.
+
+    Args:
+        job: One docking_jobs.csv row.
+        base: The folder holding docking_jobs.csv.
+
+    Returns:
+        The row as a dict.
+    """
+    row = dict(job)
+    for column in _PATH_COLUMNS:
+        if column in row and not Path(str(row[column])).is_absolute():
+            row[column] = str(Path(base) / str(row[column]))
+    return row
+
+
+def docking_engine(engine, path: Optional[str] = None) -> str:
+    """The engine's executable, with a clear message when it is missing.
+
+    Args:
+        engine: The Engine.
+        path: Explicit executable, overriding the engine's default.
+
+    Returns:
+        Path to the binary.
 
     Raises:
         ToolNotFoundError: If it is not installed.
     """
     from qpocket.io.tools import executable
 
-    return executable(engine or load_screen_config().docking.engine_path)
+    return executable(path or engine.executable)
 
-
-def _argv(job, executable: str, cpus: int):
-    from qpocket.core.ports import DOCKING
-
-    engine = str(job.get("engine") or "vina")  # tables written before the column existed
-    return DOCKING.get(engine).fn(job, executable, cpus)
 
 def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None) -> int:
     """Run one row of the task list.
@@ -193,10 +222,10 @@ def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None)
     Returns:
         The engine's exit code.
     """
-    job = _read_jobs(jobs_csv).iloc[index]
+    job = resolve_paths(_read_jobs(jobs_csv).iloc[index], Path(jobs_csv).parent)
+    eng = engine_for(job)
     Path(job["output_pdbqt"]).parent.mkdir(parents=True, exist_ok=True)
-    argv = _argv(job, docking_engine(engine), cpus)
-    return subprocess.run(argv).returncode
+    return subprocess.run(eng.argv(job, docking_engine(eng, engine), cpus)).returncode
 
 
 def run_local(jobs_csv: Path, workers: int = 0, cpus: int = 1, engine: Optional[str] = None) -> int:
@@ -212,12 +241,14 @@ def run_local(jobs_csv: Path, workers: int = 0, cpus: int = 1, engine: Optional[
         Number of failed jobs.
     """
     jobs = _read_jobs(jobs_csv)
-    engine = docking_engine(engine)
+    base = Path(jobs_csv).parent
 
     def one(i: int) -> int:
-        job = jobs.iloc[i]
+        job = resolve_paths(jobs.iloc[i], base)
+        eng = engine_for(job)
         Path(job["output_pdbqt"]).parent.mkdir(parents=True, exist_ok=True)
-        return subprocess.run(_argv(job, engine, cpus), capture_output=True, text=True).returncode
+        argv = eng.argv(job, docking_engine(eng, engine), cpus)
+        return subprocess.run(argv, capture_output=True, text=True).returncode
 
     with ThreadPoolExecutor(max_workers=resolve_workers(workers)) as pool:
         codes = list(pool.map(one, range(len(jobs))))

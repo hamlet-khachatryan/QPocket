@@ -1,35 +1,31 @@
-"""AutoDock Vina and QuickVina: the same command line, different executables."""
-from typing import List, Mapping
+"""AutoDock Vina and QuickVina 2: the same command line and PDBQT output."""
+from pathlib import Path
+from typing import List
 
 from qpocket.core.ports import DOCKING
-from qpocket.core.screening import vina_argv
+from qpocket.core.screening import Engine, Pose, vina_argv, vina_poses
+
+
+def _read(path: Path) -> List[Pose]:
+    path = Path(path)
+    return vina_poses(path.read_text(encoding="utf-8")) if path.exists() else []
+
+
+@DOCKING.register("quickvina", tools=("qvina2",))
+def quickvina() -> Engine:
+    """QuickVina 2: Vina's search, faster.
+
+    Returns:
+        The engine.
+    """
+    return Engine(vina_argv, _read, ".pdbqt", "qvina2")
 
 
 @DOCKING.register("vina", tools=("vina",))
-def vina(job: Mapping, executable: str, cpus: int) -> List[str]:
-    """Command line for one Vina run.
-
-    Args:
-        job: One docking_jobs.csv row.
-        executable: The engine binary.
-        cpus: Threads.
+def vina() -> Engine:
+    """AutoDock Vina.
 
     Returns:
-        argv, no shell involved.
+        The engine.
     """
-    return vina_argv(job, executable, cpus)
-
-
-@DOCKING.register("quickvina", tools=("qvina",))
-def quickvina(job: Mapping, executable: str, cpus: int) -> List[str]:
-    """Command line for one QuickVina run; it takes Vina's arguments.
-
-    Args:
-        job: One docking_jobs.csv row.
-        executable: The engine binary.
-        cpus: Threads.
-
-    Returns:
-        argv, no shell involved.
-    """
-    return vina_argv(job, executable, cpus)
+    return Engine(vina_argv, _read, ".pdbqt", "vina")
