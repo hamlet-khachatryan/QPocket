@@ -24,7 +24,7 @@ def run(tmp_path, monkeypatch):
                  ).to_csv(ws.metadata / "master.csv", index=False)
     pd.DataFrame({"pdb_id": ["R1", "R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
     (ws.screening / "actives.smi").write_text("SMILES\tPDB_ID\tLigand_Name\nCCO\tR1\tETH\nCCO\tR2\tETH\n")
-    def fake_receptor(pdb, pocket, out, rid, cfg):
+    def fake_receptor(pdb, pocket, out, rid, cfg, sequences=None):
         out.mkdir(parents=True, exist_ok=True)
         (out / f"{rid}.pdbqt").write_text("x")
         return out / f"{rid}.pdbqt"

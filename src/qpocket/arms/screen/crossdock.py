@@ -27,6 +27,16 @@ def _representatives(ws) -> List[str]:
     return [str(v) for v in reps[column]]
 
 
+def _sequences(ws, rep_id: str) -> Optional[dict]:
+    from qpocket.io.repair import chain_sequences
+
+    try:
+        return chain_sequences(layout.raw_structure(ws, rep_id).path)
+    except Exception as e:  # no original file or no sequence records: side chains only
+        log_message(message_type="warning", stage="chain_sequences", pdb_id=rep_id, error=str(e))
+        return None
+
+
 def _pocket(ws, rep_id: str) -> np.ndarray:
     return pd.read_csv(ws.pockets / rep_id / "binding_site.csv")[["x", "y", "z"]].to_numpy(float)
 
@@ -120,7 +130,8 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
         cleaned = pd.read_csv(ws.metadata / "master.csv").set_index("pdb_id")["cleaned_file"].to_dict()
         receptors = {}
         for rep in rep_ids:
-            path = prepare_receptor(Path(cleaned[rep]), _pocket(ws, rep), folder / "receptors", rep, cfg)
+            path = prepare_receptor(Path(cleaned[rep]), _pocket(ws, rep), folder / "receptors", rep, cfg,
+                                    sequences=_sequences(ws, rep) if cfg.receptor.repair else None)
             if path is not None:
                 receptors[rep] = path.relative_to(folder).as_posix()
         actives = distinct_actives(ws.screening / "actives.smi", ws.metadata / "master.csv")

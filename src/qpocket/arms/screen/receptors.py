@@ -157,7 +157,7 @@ def _protonate(pdb: Path, pqr: Path, cfg: ScreenConfig) -> Path:
 
 
 def prepare_receptor(cleaned_pdb: Path, pocket: np.ndarray, out_dir: Path, rep_id: str,
-                     cfg: ScreenConfig) -> Optional[Path]:
+                     cfg: ScreenConfig, sequences: Optional[dict] = None) -> Optional[Path]:
     """Repair, protonate and write one docking receptor.
 
     Args:
@@ -166,6 +166,7 @@ def prepare_receptor(cleaned_pdb: Path, pocket: np.ndarray, out_dir: Path, rep_i
         out_dir: receptors/ of the task folder.
         rep_id: Representative id.
         cfg: Screening configuration.
+        sequences: Chain to full sequence, so missing loops can be seen (from chain_sequences).
 
     Returns:
         The receptor PDBQT, or None when a step failed.
@@ -175,7 +176,7 @@ def prepare_receptor(cleaned_pdb: Path, pocket: np.ndarray, out_dir: Path, rep_i
     pdb, pqr, pdbqt = out_dir / f"{rep_id}.pdb", out_dir / f"{rep_id}.pqr", out_dir / f"{rep_id}.pdbqt"
     try:
         if cfg.receptor.repair:
-            repair(cleaned_pdb, pdb, pocket, cfg.receptor.loop_radius)
+            repair(cleaned_pdb, pdb, pocket, cfg.receptor.loop_radius, sequences=sequences)
         else:
             shutil.copyfile(cleaned_pdb, pdb)
         _protonate(pdb, pqr, cfg)

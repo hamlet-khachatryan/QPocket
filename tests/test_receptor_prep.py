@@ -38,7 +38,7 @@ def test_prepare_receptor_chains_repair_protonation_and_pdbqt(monkeypatch, tmp_p
     from qpocket.screen_config import ScreenConfig
 
     calls = []
-    monkeypatch.setattr(receptors, "repair", lambda src, dst, pocket, radius: calls.append(("repair", radius))
+    monkeypatch.setattr(receptors, "repair", lambda src, dst, pocket, radius, sequences=None: calls.append(("repair", radius))
                         or Path(dst).write_text("ATOM\n") or {"loops_built": 0})
     monkeypatch.setattr(receptors, "_protonate",
                         lambda pdb, pqr, cfg: calls.append(("protonate", cfg.receptor.use)) or Path(pqr).write_text("x") or Path(pqr))
@@ -97,3 +97,56 @@ def test_pdbfixer_adds_missing_side_chain_atoms_without_moving_others(tmp_path):
     text = (tmp_path / "out.pdb").read_text()
     assert " NZ  LYS" in text and stats["atoms_added"] >= 3
     assert "  0.257   0.418   0.692" in text  # CA of residue 1 unmoved
+
+
+PARG = Path(__file__).resolve().parents[1] / "experiments/PARG/7KG6/structures/original"
+
+
+def test_chain_sequences_come_from_the_original_entry():
+    pytest.importorskip("gemmi")
+    from qpocket.io.repair import chain_sequences
+
+    seqs = chain_sequences(PARG / "4B1H.cif")
+    assert len(seqs["A"]) == 531 and all(len(name) == 3 for name in seqs["A"])
+
+
+def _single_chain_a(tmp_path):
+    """4B1H chain A with one conformer per atom, as cleaning leaves it, written as PDB."""
+    import gemmi
+
+    st = gemmi.read_structure(str(PARG / "4B1H.cif"))
+    st.remove_alternative_conformations()
+    st.remove_ligands_and_waters()
+    for name in [ch.name for ch in st[0] if ch.name != "A"]:
+        st[0].remove_chain(name)
+    st.setup_entities()
+    path = tmp_path / "4B1H_A.pdb"
+    st.write_pdb(str(path))
+    return path, st
+
+
+def test_a_missing_loop_near_the_pocket_is_built_and_nothing_moves(tmp_path):
+    pytest.importorskip("pdbfixer")
+    from biopandas.pdb import PandasPdb
+
+    from qpocket.io.repair import chain_sequences, repair
+
+    pdb, st = _single_chain_a(tmp_path)
+    # Pocket right at the gap (residues 524-529 are unmodelled in 4B1H).
+    flank = [r for r in st[0]["A"] if r.seqid.num in (523, 530)]
+    pocket = np.array([[a.pos.x, a.pos.y, a.pos.z] for r in flank for a in r])
+    seqs = chain_sequences(PARG / "4B1H.cif")
+
+    far = repair(pdb, tmp_path / "far.pdb", pocket + 1000.0, 10.0, sequences=seqs)
+    near = repair(pdb, tmp_path / "near.pdb", pocket, 10.0, sequences=seqs)
+    assert far["loops_built"] == 0 and far["loops_skipped"] >= 1
+    assert near["loops_built"] >= 1
+
+    key = ["chain_id", "residue_number", "residue_name", "atom_name"]
+    before = PandasPdb().read_pdb(str(pdb)).df["ATOM"]
+    after = PandasPdb().read_pdb(str(tmp_path / "near.pdb")).df["ATOM"]
+    m = before.merge(after, on=key, suffixes=("_in", "_out"))
+    shift = np.abs(m[["x_coord_in", "y_coord_in", "z_coord_in"]].to_numpy()
+                   - m[["x_coord_out", "y_coord_out", "z_coord_out"]].to_numpy()).max()
+    assert len(m) == len(before) and shift < 1e-3
+    assert set(range(524, 530)) <= set(after["residue_number"])

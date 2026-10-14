@@ -1,6 +1,6 @@
 """Receptor repair with PDBFixer: side chains everywhere, loops near the pocket."""
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Mapping, Optional
 
 import numpy as np
 from eliot import log_message
@@ -8,7 +8,30 @@ from eliot import log_message
 from qpocket.core.receptor import gaps_to_build
 
 
-def repair(pdb_in: Path, pdb_out: Path, pocket: np.ndarray, loop_radius: float) -> Dict[str, int]:
+def chain_sequences(structure_path: Path) -> Dict[str, List[str]]:
+    """Full polymer sequence of every chain, from an entry's SEQRES or entity records.
+
+    Args:
+        structure_path: The ingested PDB or mmCIF file.
+
+    Returns:
+        Author chain name to residue names, unmodelled residues included.
+    """
+    import gemmi
+
+    st = gemmi.read_structure(str(structure_path))
+    st.setup_entities()
+    out: Dict[str, List[str]] = {}
+    for chain in st[0]:
+        polymer = chain.get_polymer()
+        entity = st.get_entity_of(polymer) if len(polymer) else None
+        if entity is not None and entity.full_sequence:
+            out[chain.name] = [gemmi.Entity.first_mon(m) for m in entity.full_sequence]
+    return out
+
+
+def repair(pdb_in: Path, pdb_out: Path, pocket: np.ndarray, loop_radius: float,
+           sequences: Optional[Mapping[str, List[str]]] = None) -> Dict[str, int]:
     """Complete missing side-chain atoms and the missing loops that border the pocket.
 
     Args:
@@ -16,6 +39,7 @@ def repair(pdb_in: Path, pdb_out: Path, pocket: np.ndarray, loop_radius: float) 
         pdb_out: Where the repaired receptor goes.
         pocket: (N, 3) pocket points, Å.
         loop_radius: Build a missing loop only this close to the pocket, Å.
+        sequences: Chain to full sequence; without it no missing loop can be seen, because cleaned files carry no SEQRES.
 
     Returns:
         Counts: loops_built, loops_skipped, atoms_added.
@@ -25,6 +49,11 @@ def repair(pdb_in: Path, pdb_out: Path, pocket: np.ndarray, loop_radius: float) 
     from pdbfixer import PDBFixer
 
     fixer = PDBFixer(filename=str(pdb_in))
+    if sequences:
+        from pdbfixer.pdbfixer import Sequence
+
+        fixer.sequences = [Sequence(c.id, list(sequences[c.id]))
+                           for c in fixer.topology.chains() if c.id in sequences]
     fixer.findMissingResidues()
     xyz = np.array(fixer.positions.value_in_unit(unit.angstrom))
     chains = list(fixer.topology.chains())
