@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import shlex
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -144,3 +144,91 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
         log_message(message_type="crossdock_prepared", receptors=len(receptors), actives=len(ligands),
                     jobs=len(jobs))
         return ScreeningPlan(jobs_csv, [folder / "run_docking.sbatch"], command)
+
+
+class CrossdockResult(NamedTuple):
+    """What analyze produced.
+
+    Attributes:
+        poses: Every pose with score and RMSD.
+        pairs: One row per docking.
+        success: Rates per representative, per active and overall.
+        folder: The task folder.
+    """
+
+    poses: pd.DataFrame
+    pairs: pd.DataFrame
+    success: pd.DataFrame
+    folder: Path
+
+
+def _engine(name: str, folder: Optional[Path] = None):
+    from qpocket.arms.screen.campaign import engine_for
+
+    return engine_for({"engine": name}, folder)
+
+
+def pose_table(folder: Path, jobs: pd.DataFrame, actives: pd.DataFrame) -> pd.DataFrame:
+    """Every docked pose, scored against the closest crystal copy of its molecule.
+
+    Args:
+        folder: The task folder.
+        jobs: docking_jobs.csv.
+        actives: ligands.csv.
+
+    Returns:
+        job_id, representative, active_id, rank, score, rmsd.
+    """
+    from rdkit import Chem
+
+    from qpocket.core.crossdock import pose_rmsd
+
+    by_id = actives.set_index("active_id")
+    crystals: Dict[str, list] = {}
+    for active_id, row in by_id.iterrows():
+        files = [f for f in str(row["crystal_files"] if pd.notna(row["crystal_files"]) else "").split(";") if f]
+        crystals[active_id] = [m for m in (Chem.MolFromPDBFile(f, sanitize=False, removeHs=True) for f in files)
+                               if m is not None]
+    rows = []
+    for job in jobs.itertuples():
+        out = Path(job.output_pdbqt)
+        out = out if out.is_absolute() else Path(folder) / out
+        if not out.exists():
+            continue
+        smiles = by_id.loc[job.active_id, "canonical"] if job.active_id in by_id.index else None
+        for pose in _engine(str(job.engine or "vina"), folder).read_poses(out):
+            values = [pose_rmsd(pose.mol, c, smiles) for c in crystals.get(job.active_id, [])]
+            values = [v for v in values if v is not None]
+            rows.append({"job_id": job.job_id, "representative": job.representative,
+                         "active_id": job.active_id, "rank": pose.rank, "score": pose.score,
+                         "rmsd": min(values) if values else float("nan")})
+    return pd.DataFrame(rows, columns=["job_id", "representative", "active_id", "rank", "score", "rmsd"])
+
+
+def analyze(run_dir, config_path: Optional[str] = None, **overrides) -> CrossdockResult:
+    """Score a finished cross-docking campaign.
+
+    Args:
+        run_dir: Run root.
+        config_path: screen_config.yaml, or None for the defaults.
+        **overrides: Config overrides.
+
+    Returns:
+        Poses, pairs and success rates; also written as CSVs in the task folder.
+    """
+    from qpocket.core.crossdock import pair_table, success_table
+
+    cfg = load_screen_config(config_path, **overrides)
+    folder = layout.workspace(Path(run_dir).resolve()).screening / CROSSDOCK_DIR
+    with start_action(action_type="crossdock_analyze", folder=str(folder)):
+        jobs = pd.read_csv(folder / "docking_jobs.csv", dtype={"engine": str})
+        actives = pd.read_csv(folder / "ligands.csv", keep_default_na=False)
+        poses = pose_table(folder, jobs, actives)
+        pairs = pair_table(poses, cfg.analysis.rmsd_threshold, cfg.analysis.top_k)
+        success = success_table(pairs)
+        poses.to_csv(folder / "crossdock_poses.csv", index=False)
+        pairs.to_csv(folder / "crossdock_pairs.csv", index=False)
+        success.to_csv(folder / "crossdock_success.csv", index=False)
+        log_message(message_type="crossdock_analysed", jobs=len(jobs), docked=len(pairs),
+                    overall=success.iloc[-1].to_dict() if len(success) else {})
+        return CrossdockResult(poses, pairs, success, folder)

@@ -289,6 +289,10 @@ def analyze(pipeline_workdir, config_path: Optional[str] = None, **overrides) ->
     with start_action(action_type="qpocket_screen_analyze", workdir=str(pipeline_workdir)):
         cfg: ScreenConfig = load_screen_config(config_path, **overrides)
         validate_screen_config(cfg)
+        if cfg.run_mode == "cross_docking":
+            from qpocket.arms.screen import crossdock
+
+            return crossdock.analyze(pipeline_workdir, config_path, **overrides).folder
         base = Path(pipeline_workdir).resolve()
         from qpocket.arms.screen.analysis import run_full_analysis
 
