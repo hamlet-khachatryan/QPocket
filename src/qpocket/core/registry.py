@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import threading
 from typing import Callable, Dict, Generic, NamedTuple, Optional, Sequence, Tuple, TypeVar
 
 F = TypeVar("F", bound=Callable)
@@ -65,6 +66,7 @@ class Registry(Generic[F]):
     def __init__(self, kind: str, loader: Optional[Callable[[], None]] = None):
         self.kind = kind
         self._loader = loader
+        self._lock = threading.RLock()
         self._plugins: Dict[str, Plugin] = {}
 
     def register(self, name: str, *, params: type = NoParams, resources: Resources = Resources(),
@@ -100,9 +102,15 @@ class Registry(Generic[F]):
         return add
 
     def _load(self) -> None:
-        if self._loader is not None:
-            loader, self._loader = self._loader, None
-            loader()
+        if self._loader is None:
+            return
+        # Threads arriving mid-load wait here instead of seeing an empty registry;
+        # the loader is cleared only once it has run. Re-entrant: loading registers.
+        with self._lock:
+            if self._loader is not None:
+                loader = self._loader
+                loader()
+                self._loader = None
 
     def available(self) -> Tuple[str, ...]:
         """Registered names, in registration order.

@@ -79,3 +79,29 @@ def test_importing_qpocket_loads_no_plugin():
             "loaded = [m for m in sys.modules if m.startswith('qpocket.plugins')]; "
             "assert not loaded, loaded")
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_concurrent_first_lookups_all_see_the_loaded_plugins():
+    """A thread arriving while another loads the built-ins must wait, not find it empty."""
+    import threading
+    import time
+
+    reg = Registry("slow")
+
+    def loader():
+        time.sleep(0.2)
+        reg.register("late")(lambda: 1)
+
+    reg._loader = loader
+    seen, start = [], threading.Barrier(8)
+
+    def lookup():
+        start.wait()
+        seen.append("late" in reg.available())
+
+    threads = [threading.Thread(target=lookup) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert seen == [True] * 8
