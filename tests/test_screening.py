@@ -142,3 +142,25 @@ def test_a_missing_docking_engine_says_what_to_do(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", "")
     with pytest.raises(tools.ToolNotFoundError, match="engine_path"):
         screening.docking_engine(screening.engine_for({"engine": "gnina"}))  # vina is bundled
+
+
+def test_prepare_options_only_override_the_config_when_given(monkeypatch, tmp_path):
+    from click.testing import CliRunner
+
+    from qpocket.arms.screen import campaign
+    from qpocket.cli import cli
+
+    seen = {}
+
+    def fake_prepare(workdir, config_path, submit=None, **overrides):
+        seen.update(overrides)
+        jobs = tmp_path / "docking_jobs.csv"
+        jobs.write_text("job_id\n")
+        return campaign.ScreeningPlan(jobs, [], "true")
+
+    monkeypatch.setattr(campaign, "prepare", fake_prepare)
+    CliRunner().invoke(cli, ["screen", "prepare", "--workdir", str(tmp_path)])
+    assert "run_mode" not in seen and "engine" not in seen.get("docking", {})
+    CliRunner().invoke(cli, ["screen", "prepare", "--workdir", str(tmp_path), "--engine", "vina",
+                             "--run-mode", "virtual_screening"])
+    assert seen["run_mode"] == "virtual_screening" and seen["docking"]["engine"] == "vina"

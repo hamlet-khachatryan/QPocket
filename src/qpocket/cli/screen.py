@@ -15,16 +15,15 @@ def screen_cli() -> None:
 @click.option("--config", "config_path", default=None, help="Path to screen_config.yaml.")
 @click.option(
     "--run-mode",
-    default="cross_docking",
+    default=None,
     type=click.Choice(["cross_docking", "virtual_screening"]),
-    show_default=True,
-    help="Screening mode.",
+    help="Screening mode (default: the config's run_mode).",
 )
 @click.option(
     "--engine",
-    default="quickvina",
-    show_default=True,
-    help="Docking engine: quickvina, vina, gnina, or one declared in docking.custom_engines.",
+    default=None,
+    help="Docking engine: quickvina, vina, gnina, or one declared in docking.custom_engines "
+         "(default: the config's docking.engine).",
 )
 @click.option("--engine-path", default=None, help="Path/name of the docking engine binary.")
 @click.option("--exhaustiveness", default=None, type=int, help="Vina exhaustiveness.")
@@ -40,8 +39,8 @@ def screen_cli() -> None:
 def prepare(
     workdir: str,
     config_path: str | None,
-    run_mode: str,
-    engine: str,
+    run_mode: str | None,
+    engine: str | None,
     engine_path: str | None,
     exhaustiveness: int | None,
     num_modes: int | None,
@@ -56,7 +55,11 @@ def prepare(
     """Prepare proteins, ligands, and docking job scripts."""
     from qpocket.arms.screen.campaign import prepare as prepare_campaign
 
-    overrides: dict = {"run_mode": run_mode, "docking": {"engine": engine}}
+    overrides: dict = {}
+    if run_mode:
+        overrides["run_mode"] = run_mode
+    if engine:
+        overrides.setdefault("docking", {})["engine"] = engine
 
     if engine_path:
         overrides.setdefault("docking", {})["engine_path"] = engine_path
@@ -77,7 +80,6 @@ def prepare(
     if box_padding is not None:
         overrides.setdefault("box", {})["padding"] = box_padding
 
-    # Known issue (spec §6): these defaults always override the config file.
     plan = prepare_campaign(workdir, config_path, submit=submit or ("slurm" if use_slurm else None), **overrides)
     import pandas as pd
 
