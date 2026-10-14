@@ -147,7 +147,8 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
                                              encoding="utf-8")
         engine = engine_for({"engine": cfg.docking.engine}, folder)
         jobs = crossdock_jobs(receptors, ligands, box, cfg.docking.engine, engine.output_ext,
-                              cfg.docking.exhaustiveness, cfg.docking.num_modes, cfg.docking.energy_range)
+                              cfg.docking.exhaustiveness, cfg.docking.num_modes, cfg.docking.energy_range,
+                              seed=cfg.docking.seed)
         (folder / "poses").mkdir(parents=True, exist_ok=True)
         jobs_csv = folder / "docking_jobs.csv"
         jobs.to_csv(jobs_csv, index=False)

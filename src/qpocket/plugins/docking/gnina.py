@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List, Mapping
 
 from qpocket.core.ports import DOCKING
-from qpocket.core.screening import Engine, Pose
+from qpocket.core.screening import Engine, Pose, _seed_args
 
 
 def _argv(job: Mapping, executable: str, cpus: int) -> List[str]:
@@ -13,7 +13,7 @@ def _argv(job: Mapping, executable: str, cpus: int) -> List[str]:
             "--center_z", str(job["center_z"]),
             "--size_x", str(job["size_x"]), "--size_y", str(job["size_y"]), "--size_z", str(job["size_z"]),
             "--exhaustiveness", str(job["exhaustiveness"]), "--num_modes", str(job["num_modes"]),
-            "--cpu", str(cpus)]
+            "--cpu", str(cpus), *_seed_args(job)]
 
 
 def _read(path: Path) -> List[Pose]:

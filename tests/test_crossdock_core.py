@@ -72,3 +72,22 @@ def test_success_rates_by_representative_active_and_overall():
     assert s.loc[("representative", "R1"), "topk_success_rate"] == 50.0
     assert s.loc[("active", "L1"), "top1_success_rate"] == 50.0
     assert s.loc[("overall", "all"), "n_pairs"] == 3
+
+
+def test_the_seed_travels_in_the_job_and_reaches_vina():
+    from qpocket.core.screening import vina_argv
+
+    jobs = cx.crossdock_jobs({"R1": "receptors/R1.pdbqt"}, {"L1": "ligands/L1.pdbqt"},
+                             {"center_x": 0, "center_y": 0, "center_z": 0, "size_x": 1, "size_y": 1, "size_z": 1},
+                             "vina", ".pdbqt", 8, 9, 3.0, seed=7)
+    argv = vina_argv(jobs.iloc[0], "vina", 2)
+    assert argv[argv.index("--seed") + 1] == "7"
+
+
+def test_older_job_tables_without_a_seed_still_run():
+    from qpocket.core.screening import vina_argv
+
+    job = {"protein_pdbqt": "r", "ligand_pdbqt": "l", "output_pdbqt": "o", "center_x": 0, "center_y": 0,
+           "center_z": 0, "size_x": 1, "size_y": 1, "size_z": 1, "exhaustiveness": 8, "num_modes": 9,
+           "energy_range": 3}
+    assert "--seed" not in vina_argv(job, "vina", 2)

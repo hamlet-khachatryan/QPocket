@@ -109,7 +109,7 @@ def vina_poses(text: str) -> List[Pose]:
 
 #: Fields a custom engine's command template may use.
 PLACEHOLDERS = ("exe", "receptor", "ligand", "output", "center_x", "center_y", "center_z",
-                "size_x", "size_y", "size_z", "exhaustiveness", "num_modes", "energy_range", "cpus")
+                "size_x", "size_y", "size_z", "exhaustiveness", "num_modes", "energy_range", "cpus", "seed")
 
 
 def template_fields(command: str) -> set:
@@ -163,7 +163,7 @@ def template_engine(spec: Mapping) -> Engine:
     def argv(job: Mapping, executable: str, cpus: int) -> List[str]:
         return shlex.split(command.format(
             exe=executable, receptor=job["protein_pdbqt"], ligand=job["ligand_pdbqt"],
-            output=job["output_pdbqt"], cpus=cpus,
+            output=job["output_pdbqt"], cpus=cpus, seed=(_seed_args(job) or ["", ""])[1],
             **{k: job[k] for k in ("center_x", "center_y", "center_z", "size_x", "size_y", "size_z",
                                    "exhaustiveness", "num_modes", "energy_range")}))
 
@@ -315,6 +315,13 @@ def docking_jobs(proteins, ligands, box_params, results_dir, docking_cfg) -> pd.
     return pd.DataFrame(rows, columns=list(JOB_COLUMNS))
 
 
+def _seed_args(job) -> List[str]:
+    seed = job.get("seed") if hasattr(job, "get") else None
+    if seed is None or (isinstance(seed, float) and seed != seed) or str(seed).strip() in ("", "nan", "None"):
+        return []
+    return ["--seed", str(int(float(seed)))]
+
+
 def vina_argv(job, engine: str, cpus: int) -> List[str]:
     """Command line for one docking job.
 
@@ -337,6 +344,7 @@ def vina_argv(job, engine: str, cpus: int) -> List[str]:
         "--num_modes", str(job["num_modes"]),
         "--energy_range", str(job["energy_range"]),
         "--cpu", str(cpus),
+        *_seed_args(job),
     ]
 
 

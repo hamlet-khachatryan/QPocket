@@ -74,7 +74,8 @@ def pose_rmsd(docked, crystal, smiles: Optional[str] = None) -> Optional[float]:
 
 
 def crossdock_jobs(receptors: Dict[str, str], ligands: Dict[str, str], box: Dict[str, float], engine: str,
-                   output_ext: str, exhaustiveness: int, num_modes: int, energy_range: float) -> pd.DataFrame:
+                   output_ext: str, exhaustiveness: int, num_modes: int, energy_range: float,
+                   seed: Optional[int] = None) -> pd.DataFrame:
     """Every ligand docked into every receptor, as a task table.
 
     Args:
@@ -86,6 +87,7 @@ def crossdock_jobs(receptors: Dict[str, str], ligands: Dict[str, str], box: Dict
         exhaustiveness: Search effort.
         num_modes: Poses kept.
         energy_range: Score window of kept poses, kcal/mol.
+        seed: Random seed, so a rerun reproduces the poses; None leaves it to the engine.
 
     Returns:
         One row per docking, in ligand-major order.
@@ -101,8 +103,9 @@ def crossdock_jobs(receptors: Dict[str, str], ligands: Dict[str, str], box: Dict
                 "exhaustiveness": int(exhaustiveness), "num_modes": int(num_modes),
                 "energy_range": float(energy_range), "molecule_type": "active", "pdb_id": rep_id,
                 "ligand_id": active_id, "engine": engine, "representative": rep_id, "active_id": active_id,
+                "seed": seed,
             })
-    return pd.DataFrame(rows, columns=list(JOB_COLUMNS) + ["representative", "active_id"])
+    return pd.DataFrame(rows, columns=list(JOB_COLUMNS) + ["representative", "active_id", "seed"])
 
 
 def pair_table(poses: pd.DataFrame, threshold: float, top_k: int) -> pd.DataFrame:
