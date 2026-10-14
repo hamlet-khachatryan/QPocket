@@ -41,7 +41,7 @@ def vendored(binary: str) -> Optional[Path]:
     manifest_path = VENDOR_DIR / "manifest.json"
     if not manifest_path.exists():
         return None
-    spec = (json.loads(manifest_path.read_text()).get(binary, {}).get("platforms", {})
+    spec = (json.loads(manifest_path.read_text(encoding="utf-8")).get(binary, {}).get("platforms", {})
             .get(platform_key()))
     if not spec or not spec.get("sha256"):
         return None

@@ -22,10 +22,9 @@ def screen_cli() -> None:
 )
 @click.option(
     "--engine",
-    default="vina",
-    type=click.Choice(["vina", "quickvina"]),
+    default="quickvina",
     show_default=True,
-    help="Docking engine.",
+    help="Docking engine: quickvina, vina, gnina, or one declared in docking.custom_engines.",
 )
 @click.option("--engine-path", default=None, help="Path/name of the docking engine binary.")
 @click.option("--exhaustiveness", default=None, type=int, help="Vina exhaustiveness.")
