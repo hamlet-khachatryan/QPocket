@@ -43,22 +43,31 @@ def vendored(binary: str) -> Optional[Path]:
         return None
     spec = (json.loads(manifest_path.read_text(encoding="utf-8")).get(binary, {}).get("platforms", {})
             .get(platform_key()))
-    if not spec or not spec.get("sha256"):
+    if not spec:
         return None
-    path = VENDOR_DIR / platform_key() / spec["file"]
-    if not path.exists():
+    # A plain binary is one part; a dynamically linked one also lists the libraries it loads.
+    parts = spec.get("parts") or [{"path": spec["file"], "sha256": spec.get("sha256")}]
+    if not all(part.get("sha256") for part in parts):
         return None
-    if path not in _verified:
-        _verified[path] = hashlib.sha256(path.read_bytes()).hexdigest() == spec["sha256"]
-        if not _verified[path]:
-            log_message(message_type="error", stage="vendored_engine", path=str(path),
-                        error="sha256 mismatch; refusing to run it")
-    if not _verified[path]:
+    folder = VENDOR_DIR / platform_key()
+    if not all(_checked(folder / part["path"], part["sha256"]) for part in parts):
         return None
+    path = folder / spec["file"]
     mode = path.stat().st_mode
     if not mode & stat.S_IXUSR:
         path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return path
+
+
+def _checked(path: Path, sha256: str) -> bool:
+    if not path.exists():
+        return False
+    if path not in _verified:
+        _verified[path] = hashlib.sha256(path.read_bytes()).hexdigest() == sha256
+        if not _verified[path]:
+            log_message(message_type="error", stage="vendored_engine", path=str(path),
+                        error="sha256 mismatch; refusing to run it")
+    return _verified[path]
 
 
 def resolve_executable(binary: str, explicit: Optional[str] = None) -> str:

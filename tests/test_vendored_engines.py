@@ -57,3 +57,44 @@ def test_the_real_manifest_is_consistent():
         for key, spec in entry["platforms"].items():
             if spec and spec.get("sha256"):
                 assert (engines.REAL_VENDOR_DIR / key / spec["file"]).exists(), (binary, key)
+
+
+@pytest.fixture
+def fake_multipart(tmp_path, monkeypatch):
+    """An engine shipped as an executable plus the libraries it loads."""
+    key = engines.platform_key()
+    exe = tmp_path / key / "qvina2" / "bin" / "qvina2"
+    lib = tmp_path / key / "qvina2" / "lib" / "libboost_thread.dylib"
+    for path, data in ((exe, b"#!/bin/sh\necho qvina\n"), (lib, b"library")):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()  # noqa: E731
+    manifest = {"qvina2": {"version": "2.1", "license": "Apache-2.0", "source": "test", "platforms": {key: {
+        "file": "qvina2/bin/qvina2",
+        "parts": [{"path": "qvina2/bin/qvina2", "url": None, "member": "bin/qvina2", "sha256": digest(exe)},
+                  {"path": "qvina2/lib/libboost_thread.dylib", "url": None,
+                   "member": "lib/libboost_thread.dylib", "sha256": digest(lib)}]}}}}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(engines, "VENDOR_DIR", tmp_path)
+    engines._verified.clear()
+    return exe, lib
+
+
+def test_a_multipart_engine_is_verified_part_by_part(fake_multipart):
+    exe, _ = fake_multipart
+    assert engines.vendored("qvina2") == exe and os.stat(exe).st_mode & stat.S_IXUSR
+
+
+def test_a_tampered_library_refuses_the_engine(fake_multipart):
+    _, lib = fake_multipart
+    lib.write_bytes(b"changed")
+    assert engines.vendored("qvina2") is None
+
+
+def test_every_recorded_part_in_the_real_manifest_exists():
+    manifest = json.loads((engines.REAL_VENDOR_DIR / "manifest.json").read_text())
+    for binary, entry in manifest.items():
+        for key, spec in entry["platforms"].items():
+            for part in (spec or {}).get("parts", []):
+                if part.get("sha256"):
+                    assert (engines.REAL_VENDOR_DIR / key / part["path"]).exists(), (binary, key, part["path"])

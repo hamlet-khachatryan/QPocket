@@ -39,8 +39,82 @@
         "sha256": "bc1f908869181d17b48c9a9b4c2a28cce5264ccf3053e15bce32bb5baf83b43d"
       },
       "linux-arm64": null,
-      "macos-arm64": null,
-      "macos-x86_64": null
+      "macos-arm64": {
+        "file": "qvina2/bin/qvina2",
+        "parts": [
+          {
+            "path": "qvina2/bin/qvina2",
+            "url": "https://api.anaconda.org/download/conda-forge/qvina/2.1.0/osx-arm64/qvina-2.1.0-h4a521e9_8.conda",
+            "member": "bin/qvina2",
+            "sha256": "caf5f22a3928be8adf3cb017508eaacbdcecf68ef29c5bca24fceea016c5f79c"
+          },
+          {
+            "path": "qvina2/lib/libboost_filesystem.dylib",
+            "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-arm64/libboost-1.84.0-hc9fb7c5_7.conda",
+            "member": "lib/libboost_filesystem.dylib",
+            "sha256": "ab7b4f84e8a1a4e352ec0f80f36ac5f0d8072058d2767eaf7236695ddfbe13f3"
+          },
+          {
+            "path": "qvina2/lib/libboost_atomic.dylib",
+            "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-arm64/libboost-1.84.0-hc9fb7c5_7.conda",
+            "member": "lib/libboost_atomic.dylib",
+            "sha256": "6c5e82340f9fa36ec995e1f2f5794bc8edc1976c671e1690009a7b6d739b5084"
+          },
+          {
+            "path": "qvina2/lib/libboost_program_options.dylib",
+            "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-arm64/libboost-1.84.0-hc9fb7c5_7.conda",
+            "member": "lib/libboost_program_options.dylib",
+            "sha256": "5c90d08843c49005a9110e69374c0deb03e6ce153df054741d42b3ff1d1d599e"
+          },
+          {
+            "path": "qvina2/lib/libboost_thread.dylib",
+            "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-arm64/libboost-1.84.0-hc9fb7c5_7.conda",
+            "member": "lib/libboost_thread.dylib",
+            "sha256": "9de19f1161c989097e6c7518626db6721c990f5ffcbe99d1c647724cfb18f409"
+          }
+        ]
+      },
+      "macos-x86_64": {
+        "file": "qvina2/bin/qvina2",
+        "parts": [
+          {
+            "path": "qvina2/bin/qvina2",
+            "url": "https://api.anaconda.org/download/conda-forge/qvina/2.1.0/osx-64/qvina-2.1.0-h0a522fa_8.conda",
+            "member": "bin/qvina2",
+            "sha256": "6a665a6c9d3e771a02912daefcb116d3158febb62fc609d4568bdf946dbdf2ac"
+          },
+          {
+            "path": "qvina2/lib/libboost_filesystem.dylib",
+            "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-64/libboost-1.84.0-hf0da243_7.conda",
+            "member": "lib/libboost_filesystem.dylib",
+            "sha256": "33db1172a9f2d2272594b119eb619ac05b3ee46e87fae8da3c84bf4312a6c255"
+          },
+          {
+            "path": "qvina2/lib/libboost_atomic.dylib",
+            "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-64/libboost-1.84.0-hf0da243_7.conda",
+            "member": "lib/libboost_atomic.dylib",
+            "sha256": "21a73fbf5ceacd4be0c633fa67082d9c0a077383da83b933f37daee8bfce1e73"
+          },
+          {
+            "path": "qvina2/lib/libboost_program_options.dylib",
+            "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-64/libboost-1.84.0-hf0da243_7.conda",
+            "member": "lib/libboost_program_options.dylib",
+            "sha256": "b44e7657235b4c00b17a05706b042ee752347c37b594d4197abd54035fc864d4"
+          },
+          {
+            "path": "qvina2/lib/libboost_thread.dylib",
+            "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-64/libboost-1.84.0-hf0da243_7.conda",
+            "member": "lib/libboost_thread.dylib",
+            "sha256": "af14efaf8e7d2edb95972824705936798cd243308b58525c8c30780a949880f5"
+          }
+        ]
+      }
+    },
+    "extra_licenses": {
+      "boost.txt": {
+        "url": "https://api.anaconda.org/download/conda-forge/libboost/1.84.0/osx-arm64/libboost-1.84.0-hc9fb7c5_7.conda",
+        "member": "info/licenses/LICENSE_1_0.txt"
+      }
     }
   }
 }
