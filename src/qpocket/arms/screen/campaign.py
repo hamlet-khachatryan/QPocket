@@ -102,6 +102,10 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
     with start_action(action_type="qpocket_screen_prepare", workdir=str(pipeline_workdir)):
         cfg: ScreenConfig = load_screen_config(config_path, **overrides)
         validate_screen_config(cfg)
+        if cfg.run_mode == "cross_docking":
+            from qpocket.arms.screen import crossdock
+
+            return crossdock.prepare(pipeline_workdir, config_path, **overrides)
         # Submission artefacts are opt-in: preparing inputs writes the task list.
         submit = submit or ("slurm" if cfg.slurm.enabled else None)
 

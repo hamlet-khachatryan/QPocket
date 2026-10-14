@@ -58,11 +58,15 @@ def _fake_inputs(monkeypatch):
     monkeypatch.setattr(screening_prep, "prepare_all_proteins", lambda *a, **k: ["P1", "P2"])
     monkeypatch.setattr(screening_prep, "prepare_all_ligands",
                         lambda *a, **k: {"actives": ["L1"], "decoys": []})
+    from qpocket.core.ports import DECOYS
+
+    # Cross-docking has its own prepare; these cover the generic (virtual screening) path.
+    monkeypatch.setitem(DECOYS._plugins, "lude", DECOYS.get("lude")._replace(fn=lambda a, o, p: None))
 
 
 def test_prepare_writes_only_the_task_list_by_default(tmp_path, monkeypatch):
     _fake_inputs(monkeypatch)
-    plan = screening.prepare(tmp_path)
+    plan = screening.prepare(tmp_path, run_mode="virtual_screening")
     assert len(pd.read_csv(plan.jobs_csv)) == 2 and plan.scripts == []
     assert plan.command.startswith("qpocket screen run-local")
     assert not list((tmp_path / "screening").glob("run_docking*"))
@@ -71,7 +75,7 @@ def test_prepare_writes_only_the_task_list_by_default(tmp_path, monkeypatch):
 @pytest.mark.parametrize("submit,suffix", [("slurm", ".sbatch"), ("local", ".sh")])
 def test_scripts_are_written_on_request(tmp_path, monkeypatch, submit, suffix):
     _fake_inputs(monkeypatch)
-    plan = screening.prepare(tmp_path, submit=submit)
+    plan = screening.prepare(tmp_path, submit=submit, run_mode="virtual_screening")
     assert plan.scripts and plan.scripts[0].suffix == suffix
 
 
