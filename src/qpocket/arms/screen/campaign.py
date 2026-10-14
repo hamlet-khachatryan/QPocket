@@ -1,6 +1,7 @@
 """Virtual screening: prepare a docking campaign, run its jobs, analyse the results."""
 from __future__ import annotations
 
+import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -161,18 +162,31 @@ def _read_jobs(jobs_csv: Path) -> pd.DataFrame:
 _PATH_COLUMNS = ("protein_pdbqt", "ligand_pdbqt", "output_pdbqt")
 
 
-def engine_for(job):
-    """The DOCKING engine a job row names; tables without the column mean vina.
+def engine_for(job, folder: Optional[Path] = None):
+    """The engine a job row names: a registered one, else one declared in the task folder.
 
     Args:
-        job: One docking_jobs.csv row.
+        job: One docking_jobs.csv row; no engine column means vina.
+        folder: The task folder holding engines.json.
 
     Returns:
         The Engine.
+
+    Raises:
+        ValueError: If the name is neither registered nor declared.
     """
     from qpocket.core.ports import DOCKING
+    from qpocket.core.screening import template_engine
 
-    return DOCKING.get(str(job.get("engine") or "vina")).fn()
+    name = str(job.get("engine") or "vina")
+    if name in DOCKING.available():
+        return DOCKING.get(name).fn()
+    declared = Path(folder) / "engines.json" if folder else None
+    if declared is not None and declared.exists():
+        specs = json.loads(declared.read_text(encoding="utf-8"))
+        if name in specs:
+            return template_engine(specs[name])
+    raise ValueError(f"docking engine {name!r} is neither built in nor declared in {declared}")
 
 
 def resolve_paths(job, base: Path) -> dict:
@@ -223,7 +237,7 @@ def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None)
         The engine's exit code.
     """
     job = resolve_paths(_read_jobs(jobs_csv).iloc[index], Path(jobs_csv).parent)
-    eng = engine_for(job)
+    eng = engine_for(job, Path(jobs_csv).parent)
     Path(job["output_pdbqt"]).parent.mkdir(parents=True, exist_ok=True)
     return subprocess.run(eng.argv(job, docking_engine(eng, engine), cpus)).returncode
 
@@ -245,7 +259,7 @@ def run_local(jobs_csv: Path, workers: int = 0, cpus: int = 1, engine: Optional[
 
     def one(i: int) -> int:
         job = resolve_paths(jobs.iloc[i], base)
-        eng = engine_for(job)
+        eng = engine_for(job, base)
         Path(job["output_pdbqt"]).parent.mkdir(parents=True, exist_ok=True)
         argv = eng.argv(job, docking_engine(eng, engine), cpus)
         return subprocess.run(argv, capture_output=True, text=True).returncode

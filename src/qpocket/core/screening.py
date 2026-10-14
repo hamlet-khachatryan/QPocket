@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import shlex
+import string
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence
 
@@ -104,6 +105,71 @@ def vina_poses(text: str) -> List[Pose]:
         else:
             lines.append(line)
     return poses
+
+
+#: Fields a custom engine's command template may use.
+PLACEHOLDERS = ("exe", "receptor", "ligand", "output", "center_x", "center_y", "center_z",
+                "size_x", "size_y", "size_z", "exhaustiveness", "num_modes", "energy_range", "cpus")
+
+
+def template_fields(command: str) -> set:
+    """Placeholder names a command template uses.
+
+    Args:
+        command: The template.
+
+    Returns:
+        Field names.
+    """
+    return {name for _, name, _, _ in string.Formatter().parse(command) if name}
+
+
+def _sdf_poses(score_property: str):
+    def read(path) -> List[Pose]:
+        if not Path(path).exists():
+            return []
+        poses = []
+        for mol in Chem.SDMolSupplier(str(path), removeHs=False):
+            if mol is not None:
+                score = float(mol.GetProp(score_property)) if mol.HasProp(score_property) else float("nan")
+                poses.append(Pose(len(poses) + 1, score, mol))
+        return poses
+    return read
+
+
+def pdbqt_poses(path) -> List[Pose]:
+    """Every pose in a Vina-style PDBQT file; none when it is absent.
+
+    Args:
+        path: Output file.
+
+    Returns:
+        Poses, best first.
+    """
+    return vina_poses(Path(path).read_text(encoding="utf-8")) if Path(path).exists() else []
+
+
+def template_engine(spec: Mapping) -> Engine:
+    """An Engine built from a config declaration.
+
+    Args:
+        spec: executable, command template, output ("pdbqt" or "sdf"), score_property.
+
+    Returns:
+        The engine.
+    """
+    command = str(spec["command"])
+
+    def argv(job: Mapping, executable: str, cpus: int) -> List[str]:
+        return shlex.split(command.format(
+            exe=executable, receptor=job["protein_pdbqt"], ligand=job["ligand_pdbqt"],
+            output=job["output_pdbqt"], cpus=cpus,
+            **{k: job[k] for k in ("center_x", "center_y", "center_z", "size_x", "size_y", "size_z",
+                                   "exhaustiveness", "num_modes", "energy_range")}))
+
+    sdf = spec.get("output") == "sdf"
+    reader = _sdf_poses(spec.get("score_property", "minimizedAffinity")) if sdf else pdbqt_poses
+    return Engine(argv, reader, ".sdf" if sdf else ".pdbqt", str(spec["executable"]))
 
 
 def charges_ph(molecule_smi: str, ph: float = 7.4) -> str:

@@ -32,6 +32,11 @@ docking:
   energy_range: 3.0
   cpus: 4
   seed: 42
+  custom_engines: {}        # any binary, e.g.
+  #  smina:
+  #    executable: /opt/smina/smina
+  #    output: sdf           # or pdbqt (Vina-style models)
+  #    command: "{exe} -r {receptor} -l {ligand} -o {output} --center_x {center_x} --center_y {center_y} --center_z {center_z} --size_x {size_x} --size_y {size_y} --size_z {size_z} --exhaustiveness {exhaustiveness} --num_modes {num_modes} --cpu {cpus}"
 
 slurm:
   enabled: false

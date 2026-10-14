@@ -53,6 +53,7 @@ class DockingConfig:
     energy_range: float = 3.0
     cpus: int = 4
     seed: int = 42
+    custom_engines: Dict[str, Dict] = field(default_factory=dict)  # any binary, by command template
 
 
 @dataclass
@@ -164,10 +165,29 @@ def validate_screen_config(cfg: ScreenConfig) -> None:
                       f"got '{cfg.decoy.strategy}'")
 
     from qpocket.core.ports import DOCKING
+    from qpocket.core.screening import PLACEHOLDERS, template_fields
 
-    if cfg.docking.engine not in DOCKING.available():
-        errors.append(f"docking.engine must be one of {list(DOCKING.available())}, "
-                      f"got '{cfg.docking.engine}'")
+    for name, spec in (cfg.docking.custom_engines or {}).items():
+        where = f"docking.custom_engines.{name}"
+        if name in DOCKING.available():
+            errors.append(f"{where}: '{name}' is a built-in engine; choose another name")
+        missing = {"executable", "command"} - set(spec)
+        if missing:
+            errors.append(f"{where}: missing {sorted(missing)}")
+            continue
+        used = template_fields(str(spec["command"]))
+        for required in ("receptor", "ligand", "output"):
+            if required not in used:
+                errors.append(f"{where}.command must contain {{{required}}}")
+        unknown = sorted(used - set(PLACEHOLDERS))
+        if unknown:
+            errors.append(f"{where}.command uses unknown placeholders {unknown}; "
+                          f"allowed: {list(PLACEHOLDERS)}")
+        if spec.get("output", "pdbqt") not in ("pdbqt", "sdf"):
+            errors.append(f"{where}.output must be 'pdbqt' or 'sdf'")
+    known = list(DOCKING.available()) + list(cfg.docking.custom_engines or {})
+    if cfg.docking.engine not in known:
+        errors.append(f"docking.engine must be one of {known}, got '{cfg.docking.engine}'")
 
     if cfg.docking.exhaustiveness < 1:
         errors.append("docking.exhaustiveness must be >= 1")
