@@ -25,12 +25,13 @@ preparation:
   max_iters: 500
 
 docking:
-  engine: "vina"
-  engine_path: "vina"
+  engine: "quickvina"      # DOCKING plug-in
+  engine_path: null         # default: the engine's own executable
   exhaustiveness: 8
   num_modes: 10
   energy_range: 3.0
   cpus: 4
+  seed: 42
 
 slurm:
   enabled: false
@@ -41,6 +42,18 @@ slurm:
   max_concurrent: 100
 
 analysis:
-  rmsd_threshold: 2.0
+  rmsd_threshold: 2.0      # pose success: RMSD to the crystal pose below this (A)
+  top_k: 3                 # also count a success when any of the top k poses passes
   bedroc_alpha: 20.0
   ef_fractions: [0.001, 0.01, 0.03, 0.05, 0.1]
+
+receptor:
+  repair: true            # PDBFixer: missing side-chain atoms, loops near the pocket
+  loop_radius: 10.0       # build a missing loop only within this distance (A) of the pocket
+  use: "pdb2pqr"          # RECEPTORS plug-in: protonation and partial charges
+  options:
+    pdb2pqr: {ph: 7.4, forcefield: "AMBER"}
+
+crossdock:
+  box_mode: "representative_pockets"   # or "interacting_residues"
+  box_padding: 5.0

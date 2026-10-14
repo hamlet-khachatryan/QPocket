@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from omegaconf import OmegaConf
 
@@ -46,12 +46,13 @@ class PreparationConfig:
 @dataclass
 class DockingConfig:
     """Docking engine and its search settings."""
-    engine: str = "vina"  # vina | quickvina
-    engine_path: str = "vina"
+    engine: str = "quickvina"  # DOCKING plug-in
+    engine_path: Optional[str] = None  # default: the engine's own executable
     exhaustiveness: int = 8
     num_modes: int = 10
     energy_range: float = 3.0
     cpus: int = 4
+    seed: int = 42
 
 
 @dataclass
@@ -72,8 +73,25 @@ class SlurmConfig:
 class AnalysisConfig:
     """Pose RMSD threshold and enrichment metric settings."""
     rmsd_threshold: float = 2.0
+    top_k: int = 3
     bedroc_alpha: float = 20.0
     ef_fractions: List[float] = field(default_factory=lambda: [0.001, 0.01, 0.03, 0.05, 0.1])
+
+
+@dataclass
+class ReceptorConfig:
+    """How representatives become docking receptors."""
+    repair: bool = True          # PDBFixer: missing side-chain atoms, nearby loops
+    loop_radius: float = 10.0    # build a missing loop only this close (A) to the pocket
+    use: str = "pdb2pqr"         # RECEPTORS plug-in: protonation and partial charges
+    options: Dict[str, Dict] = field(default_factory=dict)
+
+
+@dataclass
+class CrossdockConfig:
+    """The one search box every cross-docking run shares."""
+    box_mode: str = "representative_pockets"  # or interacting_residues
+    box_padding: float = 5.0
 
 
 @dataclass
@@ -87,6 +105,8 @@ class ScreenConfig:
     docking: DockingConfig = field(default_factory=DockingConfig)
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
+    receptor: ReceptorConfig = field(default_factory=ReceptorConfig)
+    crossdock: CrossdockConfig = field(default_factory=CrossdockConfig)
 
 
 def load_screen_config(path: Optional[str] = None, **overrides) -> ScreenConfig:
@@ -164,6 +184,16 @@ def validate_screen_config(cfg: ScreenConfig) -> None:
     for frac in cfg.analysis.ef_fractions:
         if not (0.0 < frac <= 1.0):
             errors.append(f"analysis.ef_fractions contains invalid value {frac} (must be in (0, 1])")
+
+    if cfg.crossdock.box_mode not in ("representative_pockets", "interacting_residues"):
+        errors.append("crossdock.box_mode must be 'representative_pockets' or 'interacting_residues', "
+                      f"got '{cfg.crossdock.box_mode}'")
+    if cfg.crossdock.box_padding < 0:
+        errors.append("crossdock.box_padding must be >= 0")
+    if cfg.receptor.loop_radius < 0:
+        errors.append("receptor.loop_radius must be >= 0")
+    if cfg.analysis.top_k < 1:
+        errors.append("analysis.top_k must be >= 1")
 
     if errors:
         raise ValueError("Invalid screen config:\n" + "\n".join(f"  - {e}" for e in errors))
