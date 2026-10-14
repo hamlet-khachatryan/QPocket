@@ -232,6 +232,36 @@ def protonate_for_interactions(pdb_path: Path, out_pqr: Path) -> Path:
         return out_pqr
 
 
+
+def protonate_receptor(pdb_path: Path, out_pqr: Path, ph: float = 7.4, forcefield: str = "AMBER") -> Path:
+    """Protonate a docking receptor with PROPKA at a pH and assign force-field charges.
+
+    Args:
+        pdb_path: Repaired receptor.
+        out_pqr: Where the PQR goes.
+        ph: Protonation pH.
+        forcefield: pdb2pqr force field for radii and charges.
+
+    Returns:
+        out_pqr.
+
+    Raises:
+        RuntimeError: If pdb2pqr writes nothing.
+    """
+    with start_action(action_type="run_pdb2pqr_receptor", pdb=str(pdb_path), ph=ph):
+        out_pqr = Path(out_pqr).resolve()
+        cmd = [executable("pdb2pqr"), f"--ff={forcefield}", f"--ffout={forcefield}",
+               "--titration-state-method=propka", f"--with-ph={ph}", "--whitespace",
+               str(Path(pdb_path).resolve()), str(out_pqr)]
+        with tempfile.TemporaryDirectory() as scratch:
+            p = Popen(cmd, stdout=PIPE, stderr=PIPE, cwd=scratch)
+            out, err = p.communicate()
+        if not out_pqr.exists() or out_pqr.stat().st_size == 0:
+            log_message(message_type="error", error=err.decode(), stdout=out.decode())
+            raise RuntimeError("PDB2PQR failed or produced empty file.")
+        repair_pqr_with_missing_ions(Path(pdb_path), out_pqr)
+        return out_pqr
+
 def read_dx_grid(dx_path: Path):
     """Read an APBS OpenDX file.
 

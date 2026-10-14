@@ -214,6 +214,10 @@ def validate_screen_config(cfg: ScreenConfig) -> None:
         errors.append("receptor.loop_radius must be >= 0")
     if cfg.analysis.top_k < 1:
         errors.append("analysis.top_k must be >= 1")
+    from qpocket.core.ports import RECEPTORS
+
+    if cfg.receptor.use not in RECEPTORS.available():
+        errors.append(f"receptor.use must be one of {list(RECEPTORS.available())}, got '{cfg.receptor.use}'")
 
     if errors:
         raise ValueError("Invalid screen config:\n" + "\n".join(f"  - {e}" for e in errors))

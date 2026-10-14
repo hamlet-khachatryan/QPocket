@@ -74,6 +74,11 @@ viz = [
   "plotly>=5.18",
   "umap-learn>=0.5",
 ]
+# Receptor repair for cross-docking (missing side-chain atoms and loops near the pocket).
+screen = [
+  "pdbfixer>=1.9",
+  "openmm>=8.1",
+]
 
 [project.urls]
 Homepage = "https://github.com/hamlet-khachatryan/QPocket"

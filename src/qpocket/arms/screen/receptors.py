@@ -1,12 +1,15 @@
 """Receptor and ligand preparation for every representative and ligand."""
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from eliot import log_message
 
+from qpocket.io.repair import repair
 from qpocket.io.screening import prepare_ligand_pdbqt, prepare_protein_pdbqt, receptor_from_pqr
 from qpocket.screen_config import ScreenConfig
 
@@ -143,3 +146,40 @@ def prepare_all_ligands(
         decoys=len(result["decoys"]),
     )
     return result
+
+
+def _protonate(pdb: Path, pqr: Path, cfg: ScreenConfig) -> Path:
+    from qpocket.config import plugin_params
+    from qpocket.core.ports import RECEPTORS
+
+    plugin = RECEPTORS.get(cfg.receptor.use)
+    return plugin.fn(pdb, pqr, plugin_params(RECEPTORS, cfg.receptor.use, cfg.receptor.options))
+
+
+def prepare_receptor(cleaned_pdb: Path, pocket: np.ndarray, out_dir: Path, rep_id: str,
+                     cfg: ScreenConfig) -> Optional[Path]:
+    """Repair, protonate and write one docking receptor.
+
+    Args:
+        cleaned_pdb: The representative's cleaned structure.
+        pocket: Its pocket points, for deciding which loops to build.
+        out_dir: receptors/ of the task folder.
+        rep_id: Representative id.
+        cfg: Screening configuration.
+
+    Returns:
+        The receptor PDBQT, or None when a step failed.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pdb, pqr, pdbqt = out_dir / f"{rep_id}.pdb", out_dir / f"{rep_id}.pqr", out_dir / f"{rep_id}.pdbqt"
+    try:
+        if cfg.receptor.repair:
+            repair(cleaned_pdb, pdb, pocket, cfg.receptor.loop_radius)
+        else:
+            shutil.copyfile(cleaned_pdb, pdb)
+        _protonate(pdb, pqr, cfg)
+    except Exception as e:
+        log_message(message_type="error", stage="prepare_receptor", pdb_id=rep_id, error=str(e))
+        return None
+    return pdbqt if receptor_from_pqr(pqr, pdbqt) else None
