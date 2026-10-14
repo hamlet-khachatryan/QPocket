@@ -99,6 +99,17 @@ def doctor(config: Optional[str], smoke: bool):
     else:
         line("warn", "sbatch on PATH", "not found (only needed for `qpocket slurm`)")
 
+    # --- docking engines (only `qpocket screen` needs them) ---------------
+    from qpocket.core.ports import DOCKING
+    from qpocket.io.engines import resolve_executable
+
+    for name in DOCKING.available():
+        engine = DOCKING.get(name).fn()
+        try:
+            ok(f"docking {name}", resolve_executable(engine.executable))
+        except Exception as e:
+            line("warn", f"docking {name}", str(e).split(":")[0] + " (only needed for `qpocket screen`)")
+
     # --- APBS actually running -------------------------------------------
     if smoke:
         for label, probe in (

@@ -205,9 +205,9 @@ def docking_engine(engine, path: Optional[str] = None) -> str:
     Raises:
         ToolNotFoundError: If it is not installed.
     """
-    from qpocket.io.tools import executable
+    from qpocket.io.engines import resolve_executable
 
-    return executable(path or engine.executable)
+    return resolve_executable(engine.executable, path)
 
 
 def run_job(jobs_csv: Path, index: int, cpus: int, engine: Optional[str] = None) -> int:

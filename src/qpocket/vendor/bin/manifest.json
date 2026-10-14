@@ -1,0 +1,46 @@
+{
+  "vina": {
+    "version": "1.2.7",
+    "license": "Apache-2.0",
+    "source": "https://github.com/ccsb-scripps/AutoDock-Vina",
+    "license_api": "https://api.github.com/repos/ccsb-scripps/AutoDock-Vina/license",
+    "platforms": {
+      "linux-x86_64": {
+        "file": "vina",
+        "url": "https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/vina_1.2.7_linux_x86_64",
+        "sha256": "f31f774f723bba7bbe6e9d1c47577020eea9a8da16424284c043d22593570644"
+      },
+      "linux-arm64": {
+        "file": "vina",
+        "url": "https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/vina_1.2.7_linux_aarch64",
+        "sha256": "d30c18a7d5f6f8ea9146e1cbc0aa7ade0bbb105b54ece08b4e5a7fa53edb6c62"
+      },
+      "macos-arm64": {
+        "file": "vina",
+        "url": "https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/vina_1.2.7_mac_aarch64",
+        "sha256": "823c2bbacf26d72183861322345f0a89736aca66c8e81054c66f93af5ad623f1"
+      },
+      "macos-x86_64": {
+        "file": "vina",
+        "url": "https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.7/vina_1.2.7_mac_x86_64",
+        "sha256": "9f44ccbb163223613283a75d0be53235d9e63f4da08292cb7196144f9838b7f9"
+      }
+    }
+  },
+  "qvina2": {
+    "version": "2.1",
+    "license": "Apache-2.0",
+    "source": "https://github.com/QVina/qvina",
+    "license_api": "https://api.github.com/repos/QVina/qvina/license",
+    "platforms": {
+      "linux-x86_64": {
+        "file": "qvina2",
+        "url": "https://raw.githubusercontent.com/QVina/qvina/master/bin/qvina2.1",
+        "sha256": "bc1f908869181d17b48c9a9b4c2a28cce5264ccf3053e15bce32bb5baf83b43d"
+      },
+      "linux-arm64": null,
+      "macos-arm64": null,
+      "macos-x86_64": null
+    }
+  }
+}

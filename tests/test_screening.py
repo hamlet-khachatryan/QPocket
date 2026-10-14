@@ -137,4 +137,4 @@ def test_a_missing_docking_engine_says_what_to_do(tmp_path, monkeypatch):
 
     monkeypatch.setenv("PATH", "")
     with pytest.raises(tools.ToolNotFoundError, match="engine_path"):
-        screening.docking_engine(screening.engine_for({"engine": "vina"}))
+        screening.docking_engine(screening.engine_for({"engine": "gnina"}))  # vina is bundled
