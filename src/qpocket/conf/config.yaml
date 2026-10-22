@@ -9,7 +9,7 @@ reference:
   auxiliary_chain_ids: null   # e.g. ["B"] — chains forming the interface with chain_id
   ligand_id: null             # e.g. "LKQ"
   ligand_chain_id: null       # Chain containing the ligand; null = auto-search all chains
-                              # (required when ligand sits in a separate chain, e.g. homodimers)
+                              # (required when ligand sits between a separate chain)
   pocket_definition: "Solvent"       # "Interactions" or "Solvent"
   pocket_mode: "cavity_detection"    # "cavity_detection" or "bounding_box"
   bounding_box:               # Used only when pocket_mode is "bounding_box"
@@ -21,10 +21,8 @@ fragment_screen:
   input_type: "csv"           # "csv" or "paths"
   csv_path: null              # Path to CSV with 'pdb_path' column
   structure_paths: null       # List of structure file paths (alternative to CSV)
-  reference_path: null        # Reference structure; names the run and defines
-                              # the pocket. Need not appear in structure_paths.
-  reference_index: 0          # Fallback reference selector, used only when
-                              # reference_path is null
+  reference_path: null        # Reference structure
+  reference_index: 0          # Fallback reference selector, used only when reference_path is null
 
 paths:
   workdir: null
@@ -144,7 +142,7 @@ slurm:
                                 # "afterok" blocks the chain if any task fails
   split_apbs_stage: false       # give APBS its own array stage and cache the grid
 
-  environment: []               # shell lines injected verbatim into every script
+  environment: []
   # environment:
   #   - "module load gcc/11.2"
   #   - "source ~/miniconda3/etc/profile.d/conda.sh"
