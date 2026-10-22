@@ -1,0 +1,102 @@
+%% QPocket — functional workflow and data state transitions (pluggable architecture)
+%% Nodes are operations, edge labels are the values passed between them.
+%% [REGISTRY] marks a plug-in point: the step asks that registry which function to run.
+%% Render:  mmdc -i docs/architecture.mmd -o docs/architecture.svg
+
+graph LR
+
+%% ═══════════ 1 · CONFIG AND INGEST ═══════════
+subgraph ING["1 · Config and ingest"]
+  CFG["Load and Validate Config<br/>frozen; plug-in names and options checked"]
+  SRC["Ingest Structures<br/>[SOURCES] pdb_query · local"]
+  WS["Create Run Workspace<br/>layout v2 · metadata/run.json"]
+end
+
+CFG -->|"QPocketConfig"| WS
+CFG -->|"source params"| SRC
+WS -->|"Workspace"| SRC
+
+%% ═══════════ 2 · REFERENCE ═══════════
+subgraph REF["2 · Reference — built once"]
+  RALN["Align and Clean the Reference"]
+  RPOC["Locate Reference Pocket<br/>ligand centroid → cavity → box"]
+  RSAVE["Persist Reference<br/>metadata/reference.json"]
+end
+
+SRC -->|"Sources.reference"| RALN
+RALN -->|"Structure + AlignmentContext"| RPOC
+RPOC -->|"Reference"| RSAVE
+
+%% ═══════════ 3 · PER-STRUCTURE CHAIN ═══════════
+subgraph CHAIN["3 · Per-structure chain — one pipe per structure, any backend"]
+  ALN["Align onto Reference"]
+  CLN["Clean"]
+  LOC["Locate Pocket<br/>[POCKETS] cavities · box"]
+  LIG["Pick Ligand in Pocket"]
+  PROT["Protonate Complex"]
+  CON["Read Contacts<br/>[CONTACTS] prolif"]
+  FEAT["Crop to Contacts, Featurise<br/>[FEATURES] + [CHARGES]"]
+  GEO["Geodesic Graph"]
+  FIN["Finish Record<br/>SMILES; sidecar with input fingerprint"]
+end
+
+SRC -->|"RawStructure ×N"| ALN
+RSAVE -->|"Reference"| ALN
+ALN -->|"Structure"| CLN
+CLN -->|"Structure"| LOC
+LOC -->|"Structure + points | pocket state"| LIG
+LIG -->|"Structure + ligand"| PROT
+PROT -->|"protonated complex"| CON
+CON -->|"potential · observed"| FEAT
+FEAT -->|"featurized.csv"| GEO
+GEO -->|"geospectral_cache.npz"| FIN
+ALN -.->|"Failure"| FAILS
+CLN -.->|"Failure"| FAILS
+
+%% ═══════════ 4 · COLLECT ═══════════
+subgraph COL["4 · Collect"]
+  COLL["Collect Records<br/>input order"]
+  FAILS["failures.csv"]
+  TABLES["master.csv · HDF5 contact stores<br/>frequencies · actives.smi · features.json"]
+end
+
+FIN -->|"Structure ×N"| COLL
+COLL --> TABLES
+COLL --> FAILS
+
+%% ═══════════ 5 · DISTANCES AND CLUSTERS ═══════════
+subgraph SPEC["5 · Spectral distances and clustering"]
+  FP["Fingerprints<br/>scaler · Laplacian · eigenbasis"]
+  DIST["Distance Matrices<br/>shape · chemistry · combined"]
+  CLU["Cluster Pockets<br/>[CLUSTERING] hierarchical · kmedoids · affinity"]
+  OUT["clustering_metadata · representatives · params"]
+end
+
+TABLES -->|"featurised pockets"| FP
+FP -->|"Fingerprint ×N"| DIST
+DIST -->|"Distances"| CLU
+CLU -->|"ClusterAssignment"| OUT
+
+%% ═══════════ 6 · ARMS ═══════════
+subgraph ARMS["6 · Arms — over a finished run"]
+  SCR["Screen<br/>[DECOYS] lude · [DOCKING] vina · quickvina"]
+  CMP["Compare Pockets<br/>no run needed"]
+  REC["Recluster<br/>from stored matrices"]
+  VIZ["Explorer<br/>viz.grid · viz.ligands · viz.matrix"]
+end
+
+OUT -->|"representatives"| SCR
+TABLES -->|"actives.smi"| SCR
+DIST -->|"matrices"| REC
+REC -->|"ClusterAssignment"| OUT
+OUT --> VIZ
+TABLES --> VIZ
+
+%% ═══════════ 7 · EXECUTION ═══════════
+subgraph EXEC["7 · Execution — same chain, three ways"]
+  LOCAL["Local or Process Pool<br/>qpocket run · re-runs reuse finished structures"]
+  SLURM["SLURM Arrays<br/>prepare · featurize · collect · distance<br/>job size from plug-in Resources"]
+end
+
+LOCAL -.->|"maps the chain"| ALN
+SLURM -.->|"one array task per structure"| ALN

@@ -11,3 +11,11 @@ __pycache__/
 tests/fixtures/complexes/
 site/
 experiments/__marimo__/
+
+# not part of the package: local data, runs, IDE and assistant settings
+.claude/
+.idea/
+experiments/
+runs/
+paper_graphics/
+poses/
