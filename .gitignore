@@ -10,7 +10,7 @@ __pycache__/
 *.py[cod]
 tests/fixtures/complexes/
 site/
-experiments/__marimo__/
+__marimo__/
 
 # not part of the package: local data, runs, IDE and assistant settings
 .claude/

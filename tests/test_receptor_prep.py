@@ -102,6 +102,7 @@ def test_pdbfixer_adds_missing_side_chain_atoms_without_moving_others(tmp_path):
 PARG = Path(__file__).resolve().parents[1] / "experiments/PARG/7KG6/structures/original"
 
 
+@pytest.mark.skipif(not PARG.exists(), reason="needs the bundled PARG structures")
 def test_chain_sequences_come_from_the_original_entry():
     pytest.importorskip("gemmi")
     from qpocket.io.repair import chain_sequences

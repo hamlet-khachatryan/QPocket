@@ -63,6 +63,8 @@ def _same_file(got_root: Path, rel: str) -> None:
 
 @pytest.mark.golden
 @pytest.mark.skipif(not EXPECTED.exists(), reason="run scripts/make_golden.py tests/golden/expected first")
+@pytest.mark.skipif(not (REPO / "experiments/PARG/7KG6/structures/original").exists(),
+                    reason="needs the bundled PARG structures")
 @pytest.mark.parametrize("workers", [0, 1])
 def test_outputs_are_numerically_equal(tmp_path, workers):
     subprocess.run([sys.executable, str(REPO / "scripts/make_golden.py"), str(tmp_path),
