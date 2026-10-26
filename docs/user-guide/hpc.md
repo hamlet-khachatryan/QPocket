@@ -9,8 +9,8 @@ each one becomes its own array task.
 10_structure             array N   align, clean, protonate, ligands, contacts, cavities
 20_sites                 1 job     collect, discover the sites, cut every site's clouds
 
-site_01_30_site_featurize  array M   features -> APBS, one per cloud of the site
-site_01_40_site_cluster    1 job     fingerprints, distance matrices, clustering
+S1-H21_30_site_featurize  array M   features -> APBS, one per cloud of the site
+S1-H21_40_site_cluster    1 job     fingerprints, distance matrices, clustering
 ```
 
 ## 1. Install on the cluster
@@ -88,9 +88,9 @@ Once `sites` has finished, featurise and cluster a site on the cluster — one t
 per cloud, with APBS inside:
 
 ```bash
-qpocket slurm generate --config run.yaml --site site_01
-bash <workdir>/<run>/slurm/submit_site_01.sh
-qpocket slurm status --config run.yaml --site site_01
+qpocket slurm generate --config run.yaml --site S1-H21
+bash <workdir>/<run>/slurm/submit_S1-H21.sh
+qpocket slurm status --config run.yaml --site S1-H21
 ```
 
 A site's scripts, manifests and logs carry its id, so several sites can be

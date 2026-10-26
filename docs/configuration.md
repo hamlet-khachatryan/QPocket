@@ -58,10 +58,12 @@ reference:
 | `pocket_definition: Interactions` | The cavity cropped to residues the ligand actually contacts. |
 
 ```yaml
-sites:                        # every ligand-occupied binding site is discovered
+sites:                        # sites are built from CavFind cavities; see the sites section below
   min_heavy_atoms: 6          # smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites
-  link_cutoff: 4.0            # ligands closer than this (Å, any heavy atoms) join one site
-  box_padding: 4.0            # Å around the union of a site's ligands
+  min_cavity_points: 50       # smaller cavities never form or join a site
+  cavity_overlap: 0.5         # box IoU two cavities (or two sites) need to be grouped
+  ligand_fraction: 0.5        # share of a ligand's heavy atoms inside a site box
+  box_padding: 0.0            # Å added to a site box when assigning ligands
 ```
 
 `reference.ligand_id`, `ligand_chain_id`, `pocket_mode` and `bounding_box` are
@@ -395,7 +397,7 @@ slurm:
 ```
 
 The run's stages are `prepare`, `structure` (one task per structure) and
-`sites`; `qpocket slurm generate --site site_01` writes that site's
+`sites`; `qpocket slurm generate --site S1-H21` writes that site's
 `site_featurize` (one task per cloud) and `site_cluster`. The old stage keys
 `apbs`, `featurize`, `collect`, `geodesic` and `distance`, and
 `split_apbs_stage`, are ignored with a warning; move their values to the new keys.

@@ -10,15 +10,16 @@ uv run qpocket doctor                                # can this machine run the 
 uv run qpocket run --config experiments/PARG.yaml    # a full run
 ```
 
-`qpocket run` aligns and cleans the structures, finds every ligand-occupied binding
-site, and cuts one pocket point cloud per site per structure. You do not name a
+`qpocket run` aligns and cleans the structures, builds binding sites from the
+cavities CavFind finds across them, and keeps each structure's own cavity as its
+pocket point cloud at each site. You do not name a
 reference ligand. It stops there; analyse a site next:
 
 ```bash
 uv run qpocket explore RUNS                          # pick a site, press the step buttons
 uv run qpocket site list RUNS/7KG6
-uv run qpocket site featurize RUNS/7KG6 --site site_01
-uv run qpocket site cluster   RUNS/7KG6 --site site_01
+uv run qpocket site featurize RUNS/7KG6 --site S1-H21
+uv run qpocket site cluster   RUNS/7KG6 --site S1-H21
 ```
 
 A run uses half the cores by default; `--workers N` changes that, `--workers 1`

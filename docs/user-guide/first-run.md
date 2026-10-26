@@ -62,7 +62,7 @@ site, gets its protonated protein anyway, and the run continues.
 Then analyse a site, here by shape alone, which needs no featurisation:
 
 ```bash
-uv run qpocket site shape runs/parg-minimal/7KG6 --site site_01
+uv run qpocket site shape runs/parg-minimal/7KG6 --site S1-H21
 ```
 
 With many structures, use a CSV instead of repeating `--structure-paths`:
@@ -179,7 +179,7 @@ To reconsider a site's clustering without recomputing anything, adjust the two-s
 thresholds in the notebook and save, or from the command line:
 
 ```bash
-uv run qpocket recluster ./runs/parg-minimal/7KG6/sites/site_01 --shape-threshold 0.25
+uv run qpocket recluster ./runs/parg-minimal/7KG6/sites/S1-H21 --shape-threshold 0.25
 ```
 
 The previous clustering is archived under `sites/site_NN/metadata/clustering_history/` rather
@@ -203,8 +203,8 @@ runs/parg-minimal/7KG6/
 │   └── ligands.csv             ← every site ligand found
 ├── sites/
 │   ├── sites.csv, grouping.json
-│   └── site_01/
-│       ├── ligands.pdb, contact_atoms.csv
+│   └── S1-H21/
+│       ├── ligands.pdb
 │       ├── pockets/<pdb_id>/
 │       │   ├── binding_site.csv    ← the site's point cloud in that structure
 │       │   └── featurized.csv      ← after Featurise: one row per point

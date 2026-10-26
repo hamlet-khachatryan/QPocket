@@ -10,12 +10,12 @@ list, and nothing runs until you say so.
 ## Prepare
 
 ```bash
-qpocket screen prepare --workdir runs/7KG6 --site site_01
+qpocket screen prepare --workdir runs/7KG6 --site S1-H21
 ```
 
 This builds the box, prepares receptors (from each pocket's `protein.pqr`, so the
 run's protonation states and charges carry into docking) and ligands, and writes
-`sites/site_01/screening/docking_jobs.csv`, one row per receptor × ligand. It prints
+`sites/S1-H21/screening/docking_jobs.csv`, one row per receptor × ligand. It prints
 the command to run them and stops.
 
 ## Run
@@ -23,7 +23,7 @@ the command to run them and stops.
 Locally, on this machine:
 
 ```bash
-qpocket screen run-local runs/7KG6/sites/site_01/screening/docking_jobs.csv --workers 8
+qpocket screen run-local runs/7KG6/sites/S1-H21/screening/docking_jobs.csv --workers 8
 ```
 
 `--workers` defaults to half the cores; `--cpus` sets threads per docking job.
@@ -32,8 +32,8 @@ This works on Linux, macOS and Windows.
 On a cluster, ask for submission scripts:
 
 ```bash
-qpocket screen prepare --workdir runs/7KG6 --site site_01 --submit slurm
-sbatch runs/7KG6/sites/site_01/screening/run_docking.sbatch
+qpocket screen prepare --workdir runs/7KG6 --site S1-H21 --submit slurm
+sbatch runs/7KG6/sites/S1-H21/screening/run_docking.sbatch
 ```
 
 Each array task runs one job through `qpocket screen run-task`, so nothing parses
@@ -43,11 +43,11 @@ CSV in bash, and long job lists are split into chunks under the array-size cap.
 ## Analyse
 
 ```bash
-qpocket screen analyze --workdir runs/7KG6 --site site_01
+qpocket screen analyze --workdir runs/7KG6 --site S1-H21
 ```
 
 Writes scores, pose RMSD, enrichment metrics (virtual-screening mode) and
-interaction statistics to `sites/site_01/screening/analysis/`.
+interaction statistics to `sites/S1-H21/screening/analysis/`.
 
 ## Pose RMSD
 

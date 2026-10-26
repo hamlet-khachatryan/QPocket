@@ -207,3 +207,14 @@ HEPES, Tris, citrate, …) unless a run lists them in `sites.keep_ligands`. PARG
 holds GOL (e.g. 6HMM), so its sites and ligand tables change. The PARG data is
 not available at the time of writing, so the golden test skips; re-capture the
 baseline when it returns.
+
+## Sites defined by CavFind cavities
+
+Sites are no longer ligand-linked (`sites.link_cutoff`). CavFind cavities of at
+least `sites.min_cavity_points` points are grouped by box IoU
+(`sites.cavity_overlap`), ligands are assigned by box containment, each
+structure's cloud is its own member cavities' points (no box cut, no
+Interactions crop), site ids are `S<rank>-<residue>`, and CavFind misses go to
+`sites/cavfind_misses.csv`. Every site table, cloud and downstream matrix of the
+golden run changes. The PARG data is not available at the time of writing, so
+the golden test skips; re-capture the baseline when it returns.

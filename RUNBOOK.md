@@ -228,8 +228,8 @@ sites                    0/1   sites/sites.csv
 ```
 
 When `sites` is done, featurise and cluster a site the same way:
-`qpocket slurm generate --config my_target.yaml --site site_01`, then
-`bash "$QP_RUNS/7KG6/slurm/submit_site_01.sh"`.
+`qpocket slurm generate --config my_target.yaml --site S1-H21`, then
+`bash "$QP_RUNS/7KG6/slurm/submit_S1-H21.sh"`.
 
 ---
 

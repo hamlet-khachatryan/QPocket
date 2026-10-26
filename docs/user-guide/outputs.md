@@ -15,10 +15,11 @@
 │   └── ligands.csv                  ← every site ligand found, per structure
 ├── sites/
 │   ├── sites.csv                    ← one row per binding site
-│   ├── grouping.json                ← the link cutoff the ligands were grouped at
-│   └── site_NN/
+│   ├── grouping.json                ← the site parameters the cavities were grouped with
+│   ├── cavities.csv                 ← every CavFind cavity, its box and its sites
+│   ├── cavfind_misses.csv           ← ligands CavFind found no cavity for
+│   └── S<rank>-<residue>/       ← e.g. S1-H21
 │       ├── ligands.pdb              ← the site's ligands, superposed
-│       ├── contact_atoms.csv        ← protein atoms the site's ligands contact
 │       ├── pockets/<pdb_id>/
 │       │   ├── binding_site.csv         ← the site's cloud in that structure (x, y, z)
 │       │   └── featurized.csv           ← after Featurise: x, y, z + feature columns
@@ -49,7 +50,7 @@ and `screening/`; those appear when you run a site's steps.
 | `aligned_file` | Path to aligned PDB |
 | `cleaned_file` | Path to cleaned PDB |
 | `ligand_file` | Path to extracted ligand PDB (or null) |
-| `protein_state` | `BOUND_STATE` / `UNBOUND_STATE` / `CAVITY_CLOSED` / `FAILED` |
+| `protein_state` | `BOUND_STATE` (cavity and ligand) / `UNBOUND_STATE` (cavity only) / `FAILED` |
 
 ### `sites/site_NN/metadata/clustering_metadata.csv`
 

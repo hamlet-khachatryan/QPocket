@@ -29,8 +29,8 @@ in the explorer or from the command line:
 ```bash
 qpocket explore ./results                              # pick a site, press the step buttons
 qpocket site list ./results/6HP0             # the sites and the steps each has done
-qpocket site featurize ./results/6HP0 --site site_01
-qpocket site cluster   ./results/6HP0 --site site_01
+qpocket site featurize ./results/6HP0 --site S1-H21
+qpocket site cluster   ./results/6HP0 --site S1-H21
 ```
 
 `qpocket site shape` clusters on shape alone, without featurising.
@@ -106,9 +106,8 @@ results/
     ├── sites/
     │   ├── sites.csv                      ← one row per site
     │   ├── grouping.json                  ← the cutoff the ligands were grouped at
-    │   └── site_01/
+    │   └── S1-H21/
     │       ├── ligands.pdb                ← the site's ligands, superposed
-    │       ├── contact_atoms.csv
     │       ├── pockets/<pdb_id>/binding_site.csv   ← the site's cloud in that structure
     │       │                                       ← (+ featurized.csv after Featurise)
     │       ├── metadata/                  ← distances, clustering, representatives

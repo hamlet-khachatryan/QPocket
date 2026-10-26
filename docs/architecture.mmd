@@ -52,7 +52,7 @@ subgraph COL["4 · Collect"]
   COLL["Collect Records<br/>input order"]
   FAILS["failures.csv"]
   TABLES["master.csv · ligands.csv · HDF5 contact stores<br/>frequencies · actives.smi"]
-  GRP["Group Ligands into Sites<br/>link_cutoff · sites.csv · grouping.json"]
+  GRP["Group Cavities into Sites<br/>cavity_overlap · sites.csv · cavfind_misses.csv"]
   CLOUD["Cut One Cloud per Site per Structure<br/>box_padding · geodesics cached<br/>qpocket run stops here"]
 end
 

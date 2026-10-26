@@ -4,7 +4,7 @@
 
 - Large-scale retrieval of structurally homologous proteins from the PDB
 - Structure alignment and residue renumbering to a canonical UniProt reference
-- Discovery of every ligand-occupied binding site, with one pocket point cloud per site per structure
+- Binding sites built from CavFind cavities across all structures, with each structure's own cavity as its pocket cloud
 - Spectral graph fingerprinting and pairwise distance matrix computation
 - Automatic unsupervised clustering (Affinity Propagation) of pocket shapes
 - Co-crystallised ligand extraction for active compound sets
@@ -54,9 +54,9 @@ PDB / fragment CSV
 
 ### Binding-site discovery
 
-No reference ligand is needed. Every ligand in every structure is found, ligands
-whose atoms lie within `sites.link_cutoff` of each other across structures are
-grouped into a **site**, and each site gets one pocket point cloud per structure.
+No reference ligand is needed. CavFind cavities that overlap across structures
+(box IoU ≥ `sites.cavity_overlap`) form a **site**; ligands are assigned to the
+sites whose boxes hold them; each structure's cloud at a site is its own cavity.
 See [Pocket extraction](user-guide/pocket-extraction.md).
 
 ### Spectral fingerprinting

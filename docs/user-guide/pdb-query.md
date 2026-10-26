@@ -27,6 +27,6 @@ qpocket run --pdb-id 6HP0 --chain-id A --workdir ./results
 4. All structures are downloaded as `.cif` files to `structures/original/`.
 
 The reference is the structure the others are aligned to. It does not choose the
-pocket: every ligand-occupied site in the hits is found, see
+pocket: sites are built from the cavities of every hit, see
 [Pocket extraction](pocket-extraction.md). Analyse a site with `qpocket explore` or
 `qpocket site …`.
