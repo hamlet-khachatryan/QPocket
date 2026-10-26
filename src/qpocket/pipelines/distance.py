@@ -15,6 +15,8 @@ from qpocket.core.spectral import pad_or_truncate  # noqa: F401  (re-exported)
 from qpocket.io import cache, tables
 from qpocket.io.layout import Workspace
 from qpocket.types import Fingerprint
+from scipy.spatial.distance import pdist, squareform
+
 from qpocket.pipelines.clustering import assign_clusters, write_clustering
 
 
@@ -308,6 +310,59 @@ def build_distance_matrices(
         return sp.distance_matrices(
             [Fingerprint(*fingerprints[pid]) for pid in ids], shape_weight, chem_scale
         )
+
+
+def shape_fingerprints(cfg: QPocketConfig, cache_paths: List[Path]) -> Dict[str, np.ndarray]:
+    """Laplacian eigenvalues of each pocket, from its geodesic cache alone.
+
+    Args:
+        cfg: QPocket configuration.
+        cache_paths: ``geospectral_cache.npz`` files, one per pocket directory.
+
+    Returns:
+        Pocket ID to eigenvalues; pockets over ``distance.max_points`` or too small are left out.
+    """
+    out: Dict[str, np.ndarray] = {}
+    for p in cache_paths:
+        D = cache.load_geodesic(p)
+        if D.shape[0] > cfg.distance.max_points:
+            continue
+        lam = sp.spectral_fingerprint(D, np.zeros((D.shape[0], 0)), cfg.distance.global_k, cfg.distance.sigma)[0]
+        if lam is not None:
+            out[p.parent.name] = lam
+    return out
+
+
+def compute_shape_matrix(cfg: QPocketConfig, ws: Workspace) -> Path:
+    """Write the shape distance matrix of a site's pockets, with no featurisation needed.
+
+    Args:
+        cfg: QPocket configuration.
+        ws: The site's workspace.
+
+    Returns:
+        Path of ``shape_distance_matrix.csv``.
+
+    Raises:
+        ValueError: If fewer than two pockets have a usable point cloud.
+    """
+    pocket_files, _ = pocket_manifest(cfg, ws, require_features=False)
+    # compute_geodesic reuses a current cache and returns None for clouds under 5 points.
+    caches = Parallel(n_jobs=_workers(cfg), verbose=0)(
+        delayed(compute_geodesic)(p, neighbor_radius=cfg.distance.geo_graph_neighbor_radius)
+        for p in pocket_files
+    )
+    lams = shape_fingerprints(cfg, [c for c in caches if c is not None])
+    if len(lams) < 2:
+        raise ValueError(f"{ws.root.name} has fewer than 2 pockets to compare")
+    ids = sorted(lams)
+    d_shape = squareform(pdist(np.array([lams[i] for i in ids], dtype=np.float64), metric="euclidean"))
+    # Matrices of a featurised run would describe other pockets than this one.
+    for stale in ("feature_distance_matrix.csv", "spectral_distance_matrix.csv"):
+        (ws["metadata"] / stale).unlink(missing_ok=True)
+    out_path = ws["metadata"] / "shape_distance_matrix.csv"
+    pd.DataFrame(d_shape, index=ids, columns=ids).to_csv(out_path)
+    return out_path
 
 
 def compute_spectral_distance_matrix(

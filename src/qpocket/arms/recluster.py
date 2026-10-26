@@ -48,17 +48,24 @@ def run(run_dir: Path, settings: ClusteringParams) -> Path:
     """Recluster a run and make the result its clustering; the old one moves to history.
 
     Args:
-        run_dir: Run root (holds metadata/ with the three distance matrices).
+        run_dir: Run root (holds metadata/ with the distance matrices).
         settings: Clustering settings to apply.
 
     Returns:
         Path of the new clustering_metadata.csv.
     """
     meta = Path(run_dir) / "metadata"
-    combined = pd.read_csv(meta / "spectral_distance_matrix.csv", index_col=0)
-    ids = [str(i) for i in combined.index]
-    shape = pd.read_csv(meta / "shape_distance_matrix.csv", index_col=0).loc[combined.index, combined.columns]
-    chem = pd.read_csv(meta / "feature_distance_matrix.csv", index_col=0).loc[combined.index, combined.columns]
+    shape_df = pd.read_csv(meta / "shape_distance_matrix.csv", index_col=0)
+    ids = [str(i) for i in shape_df.index]
+    chem = combined = None
+    if (meta / "feature_distance_matrix.csv").exists():
+        combined = pd.read_csv(meta / "spectral_distance_matrix.csv", index_col=0)
+        shape_df = shape_df.loc[combined.index, combined.columns]
+        ids = [str(i) for i in combined.index]
+        chem = pd.read_csv(meta / "feature_distance_matrix.csv", index_col=0).loc[combined.index, combined.columns]
+    elif settings.mode != "shape_only":
+        raise ValueError("two-stage clustering needs featurised pockets; run Featurise first")
+    shape = shape_df
 
     old = meta / "clustering_metadata.csv"
     file_by_id = {}
@@ -67,7 +74,10 @@ def run(run_dir: Path, settings: ClusteringParams) -> Path:
         if "pocket_file" in previous.columns:
             file_by_id = dict(zip(previous["pdb_id"].astype(str), previous["pocket_file"]))
 
-    assignment = cluster_pockets(settings, shape.to_numpy(float), chem.to_numpy(float), combined.to_numpy(float))
+    # Shape-only measures distance to the exemplar on shape, whatever else exists.
+    chem_m = None if chem is None else chem.to_numpy(float)
+    combined_m = shape.to_numpy(float) if combined is None or settings.mode == "shape_only" else combined.to_numpy(float)
+    assignment = cluster_pockets(settings, shape.to_numpy(float), chem_m, combined_m)
     # min_cluster_size is not part of the stage records; keep it with the rest.
     assignment.params.setdefault("min_cluster_size", int(settings.min_cluster_size))
 
@@ -78,4 +88,4 @@ def run(run_dir: Path, settings: ClusteringParams) -> Path:
         for path in present:
             shutil.copy2(path, archive / path.name)
 
-    return write_clustering(meta, ids, assignment, combined.to_numpy(float), file_by_id)
+    return write_clustering(meta, ids, assignment, combined_m, file_by_id)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import json
-from typing import Dict, List, NamedTuple, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 import numpy as np
 from pathlib import Path
 import pandas as pd
@@ -85,23 +85,57 @@ def assign_clusters(cfg: QPocketConfig, d_shape: np.ndarray, d_chem: np.ndarray,
     return cluster_pockets(cfg.distance.clustering, d_shape, d_chem, combined)
 
 
+def cluster_shape_only(stage, d_shape: np.ndarray) -> ClusterAssignment:
+    """Group the pockets on shape alone, one representative per shape cluster.
+
+    Args:
+        stage: Stage-one settings (StageClustering).
+        d_shape: Shape distance matrix.
+
+    Returns:
+        The assignment; representatives are the medoids on d_shape.
+    """
+    result = stage_labels(d_shape, stage.method, stage.linkage, stage.k, stage.k_range,
+                          getattr(stage, "criterion", "count"), getattr(stage, "threshold", None),
+                          stage.damping, stage.max_iter)
+    zeros = np.zeros(len(result.labels), dtype=int)
+    exemplar_map = cl.exemplars(d_shape, result.labels)
+    log_message(message_type="clustering_result", mode="shape_only", algorithm=result.method,
+                n_clusters=result.n_clusters, silhouette=result.silhouette)
+    return ClusterAssignment(
+        labels=result.labels,
+        shape_labels=result.labels,
+        chem_labels=zeros,
+        exemplar_positions=tuple(exemplar_map[c] for c in sorted(exemplar_map)),
+        params={
+            "mode": "shape_only",
+            "shape": {**_stage_params(stage), "n_clusters": result.n_clusters,
+                      "silhouette": result.silhouette},
+            "n_clusters": result.n_clusters,
+        },
+    )
+
+
 def cluster_pockets(
     settings,
     d_shape: np.ndarray,
-    d_chem: np.ndarray,
-    combined: np.ndarray,
+    d_chem: Optional[np.ndarray],
+    combined: Optional[np.ndarray],
 ) -> ClusterAssignment:
     """Group the pockets, in one pass or two depending on the config.
 
     Args:
         settings: distance.clustering settings (ClusteringParams).
         d_shape: Shape distance matrix.
-        d_chem: Physicochemical distance matrix.
-        combined: The blend, used for representatives and for single-stage mode.
+        d_chem: Physicochemical distance matrix; None in shape-only mode.
+        combined: The blend, used for representatives and for single-stage mode; None in shape-only mode.
 
     Returns:
         The assignment, with a record of what was run.
     """
+    if settings.mode == "shape_only":
+        return cluster_shape_only(settings.shape, d_shape)
+
     if settings.mode == "single":
         stage = settings.single
         # Single mode has never honoured a threshold cut, so it always counts.

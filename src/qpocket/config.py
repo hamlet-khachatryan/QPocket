@@ -141,13 +141,13 @@ class ClusteringParams:
     """How pockets are grouped once the distance matrices exist.
 
     Attributes:
-        mode: ``"two_stage"`` groups on shape, then subdivides each group on physicochemistry.
+        mode: ``"two_stage"`` groups on shape, then subdivides each group on physicochemistry; ``"shape_only"`` stops after the shape stage.
         min_cluster_size: A stage-one cluster with fewer members than this is not subdivided: a split that small cannot be supported by a silhouette.
         single: Settings used when ``mode == "single"``.
         shape: Stage-one settings, applied to the shape distance matrix.
         chem: Stage-two settings, applied to the physicochemical distance submatrix of each stage-one cluster.
     """
-    mode: Literal["two_stage", "single"] = "two_stage"
+    mode: Literal["two_stage", "single", "shape_only"] = "two_stage"
     min_cluster_size: int = 4
     single: StageClustering = field(
         default_factory=lambda: StageClustering(method="affinity")
@@ -702,10 +702,10 @@ def validate_config(cfg: "QPocketConfig") -> None:
             f"distance.clustering.min_cluster_size must be >= 2, "
             f"got: {clust.min_cluster_size}"
         )
-    if clust.mode not in ("two_stage", "single"):
+    if clust.mode not in ("two_stage", "single", "shape_only"):
         raise ValueError(
-            f"distance.clustering.mode must be 'two_stage' or "
-            f"'single', got: {clust.mode!r}"
+            f"distance.clustering.mode must be 'two_stage', "
+            f"'single' or 'shape_only', got: {clust.mode!r}"
         )
 
     for stage_name in ("single", "shape", "chem"):

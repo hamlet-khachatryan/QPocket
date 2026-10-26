@@ -9,7 +9,7 @@ import click
 
 @click.command("recluster")
 @click.argument("run_dir", type=click.Path(exists=True, file_okay=False))
-@click.option("--mode", type=click.Choice(["two_stage", "single"]), default=None)
+@click.option("--mode", type=click.Choice(["two_stage", "single", "shape_only"]), default=None)
 @click.option("--min-cluster-size", type=int, default=None, help="Shape clusters smaller than this are not split.")
 @click.option("--shape-method", type=click.Choice(["hierarchical", "kmedoids", "affinity"]), default=None)
 @click.option("--shape-linkage", type=click.Choice(["average", "complete", "single", "weighted"]), default=None)

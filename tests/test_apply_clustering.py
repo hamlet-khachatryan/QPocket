@@ -5,6 +5,7 @@ Apply persists it, so the sections below read the file rather than an
 in-memory copy that could drift from it.
 """
 import json
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -72,3 +73,25 @@ def test_a_reopened_run_starts_from_what_was_applied(run):
     reloaded = recluster.load_settings(run)
     assert reloaded.mode == "two_stage"
     assert reloaded.shape.threshold == pytest.approx(4.0)
+
+
+def test_load_matrices_shape_only(run):
+    (run / "metadata/feature_distance_matrix.csv").unlink()
+    m = ts.load_matrices(run)
+    assert m.chem is None
+    np.testing.assert_array_equal(m.combined, m.shape)
+
+
+def test_recluster_shape_only_without_chem(run):
+    (run / "metadata/feature_distance_matrix.csv").unlink()
+    settings = replace(recluster.load_settings(run), mode="shape_only")
+    recluster.run(run, settings)
+    assert json.loads((run / "metadata/clustering_params.json").read_text())["mode"] == "shape_only"
+    saved = pd.read_csv(run / "metadata/clustering_metadata.csv")
+    assert saved["is_representative"].sum() == saved["cluster_id"].nunique()
+
+
+def test_recluster_two_stage_without_chem_raises(run):
+    (run / "metadata/feature_distance_matrix.csv").unlink()
+    with pytest.raises(ValueError, match="needs featurised pockets"):
+        recluster.run(run, recluster.load_settings(run))

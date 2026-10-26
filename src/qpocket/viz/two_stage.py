@@ -18,18 +18,18 @@ class RunMatrices(NamedTuple):
     Attributes:
         ids: Pocket IDs.
         shape: Shape distances.
-        chem: Physicochemical distances.
-        combined: Blended distances.
+        chem: Physicochemical distances, None when the pockets were never featurised.
+        combined: Blended distances; the shape distances when chem is None.
     """
 
     ids: List[str]
     shape: np.ndarray
-    chem: np.ndarray
-    combined: np.ndarray
+    chem: Optional[np.ndarray]
+    combined: Optional[np.ndarray]
 
 
 def load_matrices(run_dir: Path) -> Optional[RunMatrices]:
-    """Read shape, chemistry and combined matrices from metadata/.
+    """Read shape, chemistry and combined matrices from metadata/ (the shape matrix alone for an unfeaturised site).
 
     Args:
         run_dir: Run root.
@@ -39,6 +39,9 @@ def load_matrices(run_dir: Path) -> Optional[RunMatrices]:
     """
     meta = Path(run_dir) / "metadata"
     names = ("shape_distance_matrix", "feature_distance_matrix", "spectral_distance_matrix")
+    if (meta / f"{names[0]}.csv").exists() and not (meta / f"{names[1]}.csv").exists():
+        shape = pd.read_csv(meta / f"{names[0]}.csv", index_col=0)
+        return RunMatrices([str(i) for i in shape.index], shape.to_numpy(float), None, shape.to_numpy(float))
     if not all((meta / f"{n}.csv").exists() for n in names):
         return None
     combined = pd.read_csv(meta / "spectral_distance_matrix.csv", index_col=0)
