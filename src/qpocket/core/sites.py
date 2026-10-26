@@ -1,15 +1,13 @@
-"""Binding-site discovery: which ligands a structure holds (pure)."""
+"""Binding-site discovery: ligands a structure holds, and sites built from cavity boxes (pure)."""
 from __future__ import annotations
 
 from typing import List, Sequence, Tuple
 
 import numpy as np
-from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import connected_components
+from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial import cKDTree
 
 from qpocket.constants import BUFFER_RESNAMES
-from qpocket.core.geometry import compute_pocket_bounding_box
 from qpocket.core.types import Ligand
 
 
@@ -66,67 +64,147 @@ def find_ligands(structure, pdb_id: str, allowed_cofactors: Sequence[str],
     return found
 
 
-def group_ligands(coords: Sequence[np.ndarray], cutoff: float) -> np.ndarray:
-    """Single-linkage grouping: ligands join when any heavy-atom pair lies within ``cutoff``.
+def grid_spacing(points: Sequence[np.ndarray]) -> float:
+    """Median nearest-neighbour distance over the given point clouds.
 
     Args:
-        coords: One ``(n_i, 3)`` heavy-atom coordinate array per ligand.
-        cutoff: Linking distance (Å).
+        points: ``(n_i, 3)`` arrays.
 
     Returns:
-        Integer component label per ligand (labels identify groups; they carry no order).
+        The spacing (Å), or 0.0 when there are fewer than two points.
     """
-    n = len(coords)
-    if n == 0:
-        return np.zeros(0, dtype=int)
-    owner = np.repeat(np.arange(n), [len(c) for c in coords])
-    pairs = cKDTree(np.vstack(coords)).query_pairs(cutoff, output_type="ndarray")
-    a, b = owner[pairs[:, 0]], owner[pairs[:, 1]]
-    graph = coo_matrix((np.ones(len(a)), (a, b)), shape=(n, n))
-    return connected_components(graph, directed=False)[1]
+    xyz = np.vstack([p for p in points if len(p)] or [np.zeros((0, 3))])
+    if len(xyz) < 2:
+        return 0.0
+    return float(np.median(cKDTree(xyz).query(xyz, k=2)[0][:, 1]))
 
 
-def site_ids(labels: np.ndarray, pdb_ids: Sequence[str]) -> List[str]:
-    """Name each ligand's site ``site_NN``, the site held by the most distinct structures first.
+def voxel_box(points: np.ndarray, half: float) -> np.ndarray:
+    """Axis-aligned box of a cavity, each point counted as a voxel.
 
     Args:
-        labels: Group label per ligand, from :func:`group_ligands`.
-        pdb_ids: Structure identifier per ligand.
+        points: ``(n, 3)`` cavity points.
+        half: Half the grid spacing (Å), added to every face.
 
     Returns:
-        ``site_NN`` per ligand; ties in structure count go to the label that appears first.
+        ``(6,)`` array: lower corner, then upper corner.
     """
-    holo = {}  # insertion order is first appearance
-    for label, pdb_id in zip(labels.tolist(), pdb_ids):
-        holo.setdefault(label, set()).add(pdb_id)
-    order = sorted(holo, key=lambda label: -len(holo[label]))  # stable sort keeps first appearance on ties
-    width = 3 if len(order) > 99 else 2
-    name = {label: f"site_{i:0{width}d}" for i, label in enumerate(order, 1)}
-    return [name[label] for label in labels.tolist()]
+    return np.concatenate([points.min(axis=0) - half, points.max(axis=0) + half])
 
 
-def site_box(coords: Sequence[np.ndarray], padding: float) -> Tuple[np.ndarray, np.ndarray]:
-    """Axis-aligned box around a site's ligands.
+def box_iou(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Intersection over union of every box in ``a`` with every box in ``b``.
 
     Args:
-        coords: Heavy-atom coordinate arrays of the site's ligands.
-        padding: Expansion (Å) on every face.
+        a: ``(n, 6)`` boxes.
+        b: ``(m, 6)`` boxes.
 
     Returns:
-        ``(min_corner, max_corner)``.
+        ``(n, m)`` IoU, 0 where boxes are disjoint.
     """
-    return compute_pocket_bounding_box(np.vstack(coords), padding)
+    a, b = np.atleast_2d(a)[:, None, :], np.atleast_2d(b)[None, :, :]
+    inter = np.prod(np.clip(np.minimum(a[..., 3:], b[..., 3:]) - np.maximum(a[..., :3], b[..., :3]), 0, None), axis=-1)
+    union = np.prod(a[..., 3:] - a[..., :3], axis=-1) + np.prod(b[..., 3:] - b[..., :3], axis=-1) - inter
+    return np.divide(inter, union, out=np.zeros_like(inter, dtype=float), where=union > 0)
 
 
-def points_in_box(points: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
-    """Points inside the box, bounds included.
+def cavity_cores(boxes: np.ndarray, threshold: float, chunk: int = 512) -> List[List[int]]:
+    """Groups of boxes in which every pair overlaps by at least ``threshold`` (complete linkage).
 
     Args:
-        points: ``(N, 3)`` coordinates.
-        lo: Minimum corner.
-        hi: Maximum corner.
+        boxes: ``(n, 6)`` cavity boxes.
+        threshold: IoU every pair inside a group reaches.
+        chunk: Rows of the distance matrix computed at once.
 
     Returns:
-        ``(M, 3)`` subset of ``points``.
+        Index groups covering every box.
     """
-    return points[np.all((points >= lo) & (points <= hi), axis=1)]
+    n = len(boxes)
+    if n < 2:
+        return [[0]] if n else []
+    condensed = np.empty(n * (n - 1) // 2)
+    pos = 0
+    for start in range(0, n, chunk):
+        block = 1.0 - box_iou(boxes[start:start + chunk], boxes)
+        for row, i in enumerate(range(start, min(start + chunk, n))):
+            condensed[pos:pos + n - i - 1] = block[row, i + 1:]
+            pos += n - i - 1
+    labels = fcluster(linkage(condensed, "complete"), 1.0 - threshold, criterion="distance")
+    groups: dict = {}
+    for i, label in enumerate(labels):
+        groups.setdefault(label, []).append(i)
+    return list(groups.values())
+
+
+def median_box(boxes: np.ndarray) -> np.ndarray:
+    """Element-wise median of boxes, so one outlying member cannot stretch a site."""
+    return np.median(np.atleast_2d(boxes), axis=0)
+
+
+def merge_sites(groups: List[List[int]], boxes: np.ndarray, threshold: float) -> List[List[int]]:
+    """Merge groups whose median boxes overlap by at least ``threshold``, best pair first.
+
+    Args:
+        groups: Index groups, e.g. from :func:`cavity_cores`.
+        boxes: ``(n, 6)`` boxes the indices refer to.
+        threshold: IoU two site boxes need to merge.
+
+    Returns:
+        The merged groups, each sorted.
+    """
+    sites = [sorted(g) for g in groups]
+    while len(sites) > 1:
+        iou = box_iou(np.array([median_box(boxes[g]) for g in sites]), np.array([median_box(boxes[g]) for g in sites]))
+        np.fill_diagonal(iou, 0.0)
+        i, j = np.unravel_index(int(np.argmax(iou)), iou.shape)
+        if iou[i, j] < threshold:
+            break
+        merged = sorted(sites[i] + sites[j])
+        sites = [g for k, g in enumerate(sites) if k not in (i, j)] + [merged]
+    return sites
+
+
+def site_members(site_boxes: np.ndarray, boxes: np.ndarray, threshold: float) -> List[List[int]]:
+    """Per site, every box overlapping the site box by at least ``threshold``; a box may join several.
+
+    Args:
+        site_boxes: ``(k, 6)`` site boxes.
+        boxes: ``(n, 6)`` cavity boxes.
+        threshold: IoU a cavity needs with a site box.
+
+    Returns:
+        One index list per site.
+    """
+    if not len(site_boxes) or not len(boxes):
+        return [[] for _ in range(len(site_boxes))]
+    iou = box_iou(site_boxes, boxes)
+    return [np.flatnonzero(row >= threshold).tolist() for row in iou]
+
+
+def ligand_sites(coords: Sequence[np.ndarray], site_boxes: np.ndarray, fraction: float,
+                 padding: float) -> List[List[int]]:
+    """Per ligand, the sites whose padded box holds at least ``fraction`` of its heavy atoms.
+
+    Args:
+        coords: ``(n_i, 3)`` heavy-atom coordinates per ligand.
+        site_boxes: ``(k, 6)`` site boxes.
+        fraction: Share of atoms that must lie inside (bounds inclusive).
+        padding: Å added to every face of each site box.
+
+    Returns:
+        One site-index list per ligand.
+    """
+    out = []
+    for xyz in coords:
+        if not len(xyz) or not len(site_boxes):
+            out.append([])
+            continue
+        lo, hi = site_boxes[:, None, :3] - padding, site_boxes[:, None, 3:] + padding
+        inside = np.all((xyz[None] >= lo) & (xyz[None] <= hi), axis=2).mean(axis=1)
+        out.append(np.flatnonzero(inside >= fraction).tolist())
+    return out
+
+
+def site_name(rank: int, residue: str) -> str:
+    """Short site name: ``S<rank>-<residue>``, e.g. S1-H21, or ``S<rank>`` without a residue."""
+    return f"S{rank}-{residue}" if residue else f"S{rank}"

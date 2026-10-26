@@ -6,7 +6,8 @@ import pytest
 from Bio.PDB import PDBParser
 
 from qpocket.constants import BUFFER_RESNAMES
-from qpocket.core.sites import find_ligands, group_ligands, points_in_box, site_box, site_ids
+from qpocket.core.sites import (box_iou, cavity_cores, find_ligands, grid_spacing, ligand_sites, median_box,
+                                merge_sites, site_members, site_name, voxel_box)
 from qpocket.core.types import Ligand
 
 # the synthetic residues deliberately carry unidentifiable elements
@@ -149,38 +150,74 @@ def test_biotin_still_found_at_threshold_one():
     assert [l.resname for l, _ in find_ligands(_parse("1STP"), "1STP", [], 1)] == ["BTN"]
 
 
-A = np.array([[0, 0, 0], [1, 0, 0]]); B = A + [4.5, 0, 0]; C = A + [9.0, 0, 0]; FAR = A + [50, 0, 0]
+def _x_boxes(*spans):
+    """Boxes spanning ``(lo, hi)`` along x and the unit interval along y and z."""
+    return np.array([[lo, 0, 0, hi, 1, 1] for lo, hi in spans], float)
 
 
-def test_overlapping_join_far_split():
-    labels = group_ligands([A, A + 0.5, FAR], cutoff=4.0)
-    assert labels[0] == labels[1] != labels[2]
+def test_voxel_box_gives_a_flat_cavity_volume():
+    b = voxel_box(np.array([[0, 0, 0], [1, 0, 0]], float), half=0.35)
+    assert np.allclose(b, [-0.35, -0.35, -0.35, 1.35, 0.35, 0.35])
 
 
-def test_bridge_chains_sites():  # accepted per spec decision 13
-    labels = group_ligands([A, B, C], cutoff=4.0)
-    assert len(set(labels)) == 1
+def test_iou_identical_disjoint_and_third():
+    a = _x_boxes((0, 2))
+    assert box_iou(a, a)[0, 0] == 1.0
+    assert box_iou(a, _x_boxes((5, 7)))[0, 0] == 0.0
+    assert box_iou(a, _x_boxes((1, 3)))[0, 0] == pytest.approx(1 / 3)
 
 
-def test_group_ligands_edge_sizes():
-    assert group_ligands([], cutoff=4.0).tolist() == []
-    assert group_ligands([A], cutoff=4.0).tolist() == [0]
+def test_cores_never_hold_a_pair_below_threshold():
+    rng = np.random.default_rng(0)
+    lo = rng.uniform(0, 6, size=(60, 3))
+    boxes = np.hstack([lo, lo + rng.uniform(2, 5, size=(60, 3))])
+    groups = cavity_cores(boxes, 0.5)
+    assert sorted(i for g in groups for i in g) == list(range(60))
+    assert all(box_iou(boxes[g], boxes[g]).min() >= 0.5 for g in groups if len(g) > 1)
 
 
-def test_site_ids_by_holo_count():
-    ids = site_ids(np.array([0, 1, 1, 1]), ["P1", "P1", "P2", "P3"])
-    assert ids == ["site_02", "site_01", "site_01", "site_01"]
+def test_cores_of_zero_and_one_box():
+    assert cavity_cores(np.zeros((0, 6)), 0.5) == []
+    assert cavity_cores(_x_boxes((0, 1)), 0.5) == [[0]]
 
 
-def test_site_ids_ties_by_appearance_and_wide_padding():
-    assert site_ids(np.array([5, 3]), ["P1", "P2"]) == ["site_01", "site_02"]
-    assert site_ids(np.array([], dtype=int), []) == []
-    ids = site_ids(np.arange(100), [f"P{i}" for i in range(100)])
-    assert ids[0] == "site_001" and ids[99] == "site_100"
+def test_a_b_c_gives_two_sites_with_b_in_both():
+    boxes = _x_boxes((0, 3), (1, 4), (2, 5))     # IoU(A,B) = IoU(B,C) = 0.5, IoU(A,C) = 0.2
+    sites = site_members(np.vstack([median_box(boxes[[0, 1]]), median_box(boxes[[1, 2]])]), boxes, 0.5)
+    assert sorted(map(sorted, sites)) == [[0, 1], [1, 2]]
 
 
-def test_points_in_box():
-    lo, hi = site_box([A], padding=1.0)
-    pts = np.array([[0.5, 0, 0], [5, 0, 0]])
-    assert points_in_box(pts, lo, hi).tolist() == [[0.5, 0, 0]]
-    assert points_in_box(np.array([[2.0, 0, 0]]), lo, hi).shape == (1, 3)  # inclusive bound
+def test_split_pocket_cores_merge_into_one_site():
+    boxes = _x_boxes((0, 10), (0, 10), (2, 12), (-2, 8))   # (2,12) and (-2,8) overlap at 0.43
+    cores = cavity_cores(boxes, 0.5)
+    assert len(cores) == 2
+    assert [sorted(g) for g in merge_sites(cores, boxes, 0.5)] == [[0, 1, 2, 3]]
+
+
+def test_distant_sites_stay_apart():
+    boxes = _x_boxes((0, 10), (30, 40))
+    assert len(merge_sites(cavity_cores(boxes, 0.5), boxes, 0.5)) == 2
+
+
+def test_ligand_fraction_boundary_inclusive():
+    site_boxes = np.array([[0, 0, 0, 10, 10, 10]], float)
+    coords = np.array([[x, 5, 5] for x in (1, 2, 3, 4, 5, 11, 12, 13, 14, 15)], float)
+    assert ligand_sites([coords], site_boxes, 0.5, 0.0) == [[0]]
+    assert ligand_sites([coords], site_boxes, 0.6, 0.0) == [[]]
+
+
+def test_padding_widens_the_box():
+    site_boxes = np.array([[0, 0, 0, 10, 10, 10]], float)
+    outside = np.array([[11, 5, 5], [11, 6, 5]], float)
+    assert ligand_sites([outside], site_boxes, 0.5, 0.0) == [[]]
+    assert ligand_sites([outside], site_boxes, 0.5, 1.5) == [[0]]
+
+
+def test_names_unique_when_residue_repeats():
+    assert [site_name(1, "H21"), site_name(4, "H21"), site_name(2, "")] == ["S1-H21", "S4-H21", "S2"]
+
+
+def test_grid_spacing_of_a_regular_grid():
+    grid = np.array([[i, j, k] for i in range(4) for j in range(4) for k in range(4)], float) * 0.7
+    assert grid_spacing([grid]) == pytest.approx(0.7)
+    assert grid_spacing([np.zeros((1, 3))]) == 0.0
