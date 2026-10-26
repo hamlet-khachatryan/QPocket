@@ -420,3 +420,17 @@ def test_bad_stage_criteria_are_refused(kw):
 ])
 def test_good_stage_criteria_pass(kw):
     validate_config(make_config(distance=_stage(**kw)))
+
+
+# ---------------------------------------------------------------------------
+# Buffers and cryoprotectants
+# ---------------------------------------------------------------------------
+
+def test_buffer_name_as_cofactor_rejected():
+    cfg = evolve(make_config(mode="pdb_query"), "cleaning.allowed_cofactors", "ZN|GOL")
+    with pytest.raises(ValueError, match="sites.keep_ligands"):
+        validate_config(cfg)
+
+
+def test_keep_ligands_defaults_empty():
+    assert list(make_config(mode="pdb_query").sites.keep_ligands) == []

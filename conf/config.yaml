@@ -14,6 +14,7 @@ sites:                        # Every ligand-occupied binding site is discovered
   min_heavy_atoms: 6          # Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites
   link_cutoff: 4.0            # Ligands closer than this (Å, any heavy atoms) join one site
   box_padding: 4.0            # Padding (Å) around the union of a site's ligands
+  keep_ligands: []            # Buffers/cryoprotectants (e.g. CIT) to treat as ligands in this run; never list them as cofactors
 
 fragment_screen:
   input_type: "csv"           # "csv" or "paths"

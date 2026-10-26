@@ -8,6 +8,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from qpocket.constants import BUFFER_RESNAMES
 from qpocket.core.geometry import compute_pocket_bounding_box
 from qpocket.core.types import Ligand
 
@@ -34,7 +35,7 @@ def _element(atom) -> str:
 
 
 def find_ligands(structure, pdb_id: str, allowed_cofactors: Sequence[str],
-                 min_heavy_atoms: int) -> List[Tuple[Ligand, object]]:
+                 min_heavy_atoms: int, keep: Sequence[str] = ()) -> List[Tuple[Ligand, object]]:
     """Every non-water, carbon-containing HET residue of the first model that the run does not clean away.
 
     Args:
@@ -42,15 +43,17 @@ def find_ligands(structure, pdb_id: str, allowed_cofactors: Sequence[str],
         pdb_id: Identifier stamped on each ligand.
         allowed_cofactors: Residue names never reported.
         min_heavy_atoms: Residues with fewer non-hydrogen atoms are skipped.
+        keep: Buffer/cryoprotectant names (BUFFER_RESNAMES, otherwise skipped) to report all the same.
 
     Returns:
         ``(Ligand, residue)`` pairs in chain, then residue, order.
     """
     cofactors = {name.upper() for name in allowed_cofactors}
+    skipped = cofactors | (BUFFER_RESNAMES - {name.upper() for name in keep})
     found: List[Tuple[Ligand, object]] = []
     for chain in next(iter(structure)):
         for res in chain:
-            if res.id[0] in (" ", "W") or res.get_resname().strip().upper() in cofactors:
+            if res.id[0] in (" ", "W") or res.get_resname().strip().upper() in skipped:
                 continue
             elements = [_element(a) for a in res]
             if "C" not in elements:

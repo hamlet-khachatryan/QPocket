@@ -131,6 +131,31 @@ cleaning:
   allowed_cofactors: null   # '|'-separated residues to keep, e.g. "HEM|MG|CL"
 ```
 
+Allowed cofactors stay in the cleaned protein and are parametrised with it
+(pdb2pqr, APBS, the protonated complex). Buffers and cryoprotectants cannot be
+listed here; see `sites.keep_ligands`.
+
+---
+
+## `sites`
+
+```yaml
+sites:
+  min_heavy_atoms: 6
+  link_cutoff: 4.0
+  box_padding: 4.0
+  keep_ligands: []          # buffers/cryoprotectants to treat as ligands in this run
+```
+
+Crystallisation additives are never ligands: glycerol, ethylene glycol, the
+PEGs, MPD, the propanediols, small alcohols, DMSO and DMF, and the common
+buffers (Tris, HEPES, MES, MOPS, Bis-Tris, CAPS, CHES, PIPES, bicine,
+imidazole, citrate, tartrate, malonate, succinate, acetate, formate). The full
+list is `qpocket.constants.BUFFER_RESNAMES`. They never form or join a site and
+never enter the protonated complex. When one is a genuine binder in your
+structures, name it in `keep_ligands` (e.g. `["CIT"]`): it is then an ordinary
+ligand, still not part of the protein.
+
 ---
 
 ## `io`

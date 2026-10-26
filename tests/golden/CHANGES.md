@@ -199,3 +199,11 @@ longer written by the run; they come back as per-site steps. The baseline
 under `tests/golden/expected` must be re-captured with
 `python scripts/make_golden.py tests/golden/expected` on a machine that has
 `experiments/PARG`; it was not re-captured here because that data is absent.
+
+## Buffers and cryoprotectants are never ligands
+
+`find_ligands` skips `qpocket.constants.BUFFER_RESNAMES` (GOL, EDO, PEGs, DMS,
+HEPES, Tris, citrate, …) unless a run lists them in `sites.keep_ligands`. PARG
+holds GOL (e.g. 6HMM), so its sites and ligand tables change. The PARG data is
+not available at the time of writing, so the golden test skips; re-capture the
+baseline when it returns.

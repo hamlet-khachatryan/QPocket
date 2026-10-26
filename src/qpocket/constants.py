@@ -165,3 +165,17 @@ THREE_TO_ONE_MAPPING = {
     'SER':'S','THR':'T','TRP':'W','TYR':'Y','VAL':'V'
 }
 
+
+# Crystallisation additives: never ligands, so they never form a site or enter
+# the protonated complex. Cleaning strips them as non-amino acids; keep them out
+# of cleaning.allowed_cofactors, which would parametrise them with the protein.
+# A run that needs one as a ligand lists it in sites.keep_ligands.
+BUFFER_RESNAMES = frozenset({
+    # cryoprotectants and solvents
+    'GOL', 'EDO', 'PEG', 'PGE', 'PG4', '1PE', 'P6G', '2PE', '12P', '15P',
+    'P33', 'PE4', 'PE8', 'XPE', '7PE', 'MPD', 'MRD', 'PGO', 'PGR', 'IPA',
+    'EOH', 'MOH', 'DMS', 'DMF', 'BU3',
+    # buffers and buffer ions
+    'TRS', 'EPE', 'MES', 'MPO', 'BTB', 'B3P', 'CXS', 'NHE', 'PIN', 'BCN',
+    'IMD', 'CIT', 'FLC', 'TLA', 'TAR', 'MLI', 'SIN', 'ACT', 'ACY', 'FMT',
+})

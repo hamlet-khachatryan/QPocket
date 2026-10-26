@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from Bio.PDB import PDBParser
 
+from qpocket.constants import BUFFER_RESNAMES
 from qpocket.core.sites import find_ligands, group_ligands, points_in_box, site_box, site_ids
 from qpocket.core.types import Ligand
 
@@ -106,6 +107,41 @@ def test_unidentified_elements_fall_back_to_the_atom_name():
 
 def test_cofactor_names_match_case_insensitively():
     assert "BNZ" not in [l.resname for l, _ in find_ligands(_inorganic_structure(), "X", ["bnz"], 1)]
+
+
+def _buffer_structure():
+    """A chain holding glycerol and citrate, both carbon-bearing and big enough to be ligands."""
+    from Bio.PDB.Atom import Atom
+    from Bio.PDB.Chain import Chain
+    from Bio.PDB.Model import Model
+    from Bio.PDB.Residue import Residue
+    from Bio.PDB.Structure import Structure
+
+    chain = Chain("A")
+    for seq, (name, elements) in enumerate((("GOL", "COCOCO"), ("CIT", "CCCCCCOOOOOOO")), start=1):
+        res = Residue(("H_" + name, seq, " "), name, " ")
+        for i, el in enumerate(elements):
+            res.add(Atom(f"{el}{i}", [float(seq), float(i), 0.0], 1.0, 1.0, " ", f"{el}{i}", i, el))
+        chain.add(res)
+    model = Model(0)
+    model.add(chain)
+    structure = Structure("x")
+    structure.add(model)
+    return structure
+
+
+def test_buffers_are_never_ligands():
+    assert [l.resname for l, _ in find_ligands(_buffer_structure(), "X", [], 1)] == []
+
+
+def test_keep_list_turns_a_buffer_back_into_a_ligand():
+    found = find_ligands(_buffer_structure(), "X", [], 1, keep=["cit"])
+    assert [l.resname for l, _ in found] == ["CIT"]
+
+
+def test_buffer_list_holds_the_spec_names():
+    assert {"GOL", "EDO", "PEG", "DMS", "EPE", "TRS", "MES", "CIT", "ACT"} <= BUFFER_RESNAMES
+    assert "ZN" not in BUFFER_RESNAMES and "LIG" not in BUFFER_RESNAMES
 
 
 @needs_fixtures

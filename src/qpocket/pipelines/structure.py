@@ -34,6 +34,7 @@ class StructureParams:
     Attributes:
         allowed_cofactors: "|"-separated residue names kept by cleaning and skipped as ligands.
         min_heavy_atoms: Smaller HET groups are not ligands.
+        keep_ligands: Buffer residue names reported as ligands all the same.
         contacts: CONTACTS plug-in names.
         contact_params: Parameters per contact plug-in.
         min_auxiliary_identity: Interface mode alignment threshold.
@@ -43,6 +44,7 @@ class StructureParams:
 
     allowed_cofactors: str
     min_heavy_atoms: int
+    keep_ligands: Tuple[str, ...]
     contacts: Tuple[str, ...]
     contact_params: Mapping[str, Any]
     min_auxiliary_identity: float
@@ -69,6 +71,7 @@ def structure_params(cfg: QPocketConfig) -> StructureParams:
     return StructureParams(
         allowed_cofactors=cfg.cleaning.allowed_cofactors or "",
         min_heavy_atoms=cfg.sites.min_heavy_atoms,
+        keep_ligands=tuple(cfg.sites.keep_ligands),
         contacts=tuple(cfg.contacts.use),
         contact_params={name: prolif_params if name == "prolif"
                         else plugin_params(CONTACTS, name, cfg.contacts.options)
@@ -218,7 +221,8 @@ def find_ligands_step(p: StructureParams, ws: layout.Workspace, record: Structur
         return record._replace(protein_state="FAILED")
     allowed = p.allowed_cofactors.split("|") if p.allowed_cofactors else []
     ligands = []
-    for ligand, residue in find_ligands(parsed, record.pdb_id, allowed, p.min_heavy_atoms):
+    for ligand, residue in find_ligands(parsed, record.pdb_id, allowed, p.min_heavy_atoms,
+                                         p.keep_ligands):
         out = ws.extracted_ligands / (f"{ligand.pdb_id}_{ligand.chain}_{ligand.resname}_"
                                       f"{ligand.resseq}{ligand.icode.strip()}.pdb")
         out.write_text(pocket.extract_pdb_block(residue, ligand.chain), encoding="utf-8")

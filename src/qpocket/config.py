@@ -318,11 +318,13 @@ class SitesConfig:
         min_heavy_atoms: Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites.
         link_cutoff: Distance (A) between any heavy atoms of two ligands under which they join one site.
         box_padding: Padding (A) added around the union of a site's ligands when boxing the site.
+        keep_ligands: Residue names treated as ligands although they are buffers or cryoprotectants.
     """
 
     min_heavy_atoms: int = 6
     link_cutoff: float = 4.0
     box_padding: float = 4.0
+    keep_ligands: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -587,6 +589,14 @@ def validate_config(cfg: "QPocketConfig") -> None:
         raise ValueError(f"sites.link_cutoff must be > 0, got: {sites.link_cutoff}")
     if sites.box_padding < 0:
         raise ValueError(f"sites.box_padding must be >= 0, got: {sites.box_padding}")
+    from qpocket.constants import BUFFER_RESNAMES
+
+    for name in (cfg.cleaning.allowed_cofactors or "").split("|"):
+        if name.strip().upper() in BUFFER_RESNAMES:
+            raise ValueError(
+                f"cleaning.allowed_cofactors names {name.strip()!r}, a buffer/cryoprotectant; "
+                f"cofactors are parametrised with the protein. List it in sites.keep_ligands "
+                f"to keep it as a ligand instead")
 
     # --- ReferenceParams ---
     ref = cfg.reference
