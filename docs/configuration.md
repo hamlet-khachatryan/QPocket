@@ -53,9 +53,7 @@ reference:
 
 ```yaml
 sites:                        # every ligand-occupied binding site is discovered
-  min_heavy_atoms: 6          # smaller HETATM groups are not ligands
-  include: []                 # residue names always kept as ligands
-  exclude: []                 # residue names never kept as ligands
+  min_heavy_atoms: 6          # smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites
   link_cutoff: 4.0            # Å under which two ligand atoms count as one ligand
   box_padding: 4.0            # Å around a ligand when boxing its site
 ```

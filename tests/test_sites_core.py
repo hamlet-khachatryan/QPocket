@@ -30,29 +30,30 @@ def _two_copies(pdb_id):
 
 
 @needs_fixtures
-def test_builtin_list_hides_biotin_by_default():
-    assert find_ligands(_parse("1STP"), "1STP", [], 6) == []
-
-
-@needs_fixtures
 def test_finds_biotin():
-    found = find_ligands(_parse("1STP"), "1STP", [], 6, include=["BTN"])
+    found = find_ligands(_parse("1STP"), "1STP", [], 6)
     assert [l.resname for l, _ in found] == ["BTN"]
     assert found[0][0].key.startswith("1STP:A:BTN:")
 
 
 @needs_fixtures
-def test_min_heavy_atoms_and_lists():
+def test_size_threshold_and_cofactors():
     s = _parse("3PTB")
-    assert find_ligands(s, "3PTB", [], 10, include=["BEN"]) == []   # BEN has 9 heavy atoms
-    assert [l.resname for l, _ in find_ligands(s, "3PTB", [], 9, include=["BEN"])] == ["BEN"]
-    assert find_ligands(s, "3PTB", [], 6, include=["BEN"], exclude=["BEN"]) == []   # exclude beats include
-    assert find_ligands(s, "3PTB", ["BEN"], 6, include=["BEN"]) == []   # cofactor wins
+    assert [l.resname for l, _ in find_ligands(s, "3PTB", [], 9)] == ["BEN"]
+    assert find_ligands(s, "3PTB", [], 10) == []          # BEN has 9 heavy atoms
+    assert find_ligands(s, "3PTB", ["BEN"], 6) == []
+
+
+@needs_fixtures
+def test_water_and_standard_residues_are_never_reported():
+    found = find_ligands(_parse("3PTB"), "3PTB", [], 1)   # threshold 1 would admit a water
+    assert all(r.id[0] not in (" ", "W") for _, r in found)
+    assert not {"HOH", "SER", "ASP"} & {l.resname for l, _ in found}
 
 
 @needs_fixtures
 def test_same_resname_twice_gives_two_ligands():
-    found = find_ligands(_two_copies("1STP"), "1STP", [], 6, include=["BTN"])
+    found = find_ligands(_two_copies("1STP"), "1STP", [], 6)
     assert len({l.key for l, _ in found}) == 2
 
 
@@ -60,3 +61,38 @@ def test_ligand_json_round_trip():
     lig = Ligand("1ABC", "A", "LIG", 7, "A", 12, "x.pdb", "CC")
     assert Ligand.from_json(lig.to_json()) == lig
     assert lig.key == "1ABC:A:LIG:7A"
+
+
+def _inorganic_structure():
+    """A chain holding Na, Cl and sulfate residues next to a 6-carbon ligand."""
+    from Bio.PDB.Atom import Atom
+    from Bio.PDB.Chain import Chain
+    from Bio.PDB.Model import Model
+    from Bio.PDB.Residue import Residue
+    from Bio.PDB.Structure import Structure
+
+    def residue(name, seq, elements):
+        res = Residue(("H_" + name, seq, " "), name, " ")
+        for i, el in enumerate(elements):
+            res.add(Atom(f"{el}{i}", [float(seq), float(i), 0.0], 1.0, 1.0, " ", f"{el}{i}", i, el))
+        return res
+
+    chain = Chain("A")
+    for res in (residue("NA", 1, ["NA"]), residue("CL", 2, ["CL"]), residue("SO4", 3, ["S", "O", "O", "O", "O"]),
+                residue("BNZ", 4, ["C"] * 6)):
+        chain.add(res)
+    model = Model(0)
+    model.add(chain)
+    structure = Structure("x")
+    structure.add(model)
+    return structure
+
+
+def test_carbon_free_residues_are_never_ligands():
+    found = find_ligands(_inorganic_structure(), "X", [], 1)
+    assert [l.resname for l, _ in found] == ["BNZ"]
+
+
+@needs_fixtures
+def test_biotin_still_found_at_threshold_one():
+    assert [l.resname for l, _ in find_ligands(_parse("1STP"), "1STP", [], 1)] == ["BTN"]

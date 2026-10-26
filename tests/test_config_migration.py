@@ -172,4 +172,3 @@ def test_ligand_id_is_obsolete():
 def test_sites_defaults():
     s = QPocketConfig().sites
     assert (s.min_heavy_atoms, s.link_cutoff, s.box_padding) == (6, 4.0, 4.0)
-    assert s.include == [] and s.exclude == []

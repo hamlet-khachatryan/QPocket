@@ -11,9 +11,7 @@ reference:
   interaction_padding: 5.0   # Padding around interacting residues (Å) — used when pocket_definition == "Interactions"
 
 sites:                        # Every ligand-occupied binding site is discovered
-  min_heavy_atoms: 6          # Smaller HETATM groups are not ligands
-  include: []                 # Residue names always kept as ligands
-  exclude: []                 # Residue names never kept as ligands
+  min_heavy_atoms: 6          # Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites
   link_cutoff: 4.0            # Distance (Å) under which two ligand atoms count as one ligand
   box_padding: 4.0            # Padding (Å) around a ligand when boxing its site
 

@@ -321,16 +321,12 @@ class SitesConfig:
     """Which ligand-occupied binding sites to discover.
 
     Attributes:
-        min_heavy_atoms: Smaller HETATM groups are not ligands.
-        include: Residue names always kept as ligands.
-        exclude: Residue names never kept as ligands.
+        min_heavy_atoms: Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites.
         link_cutoff: Distance (A) under which two ligand atoms count as one ligand.
         box_padding: Padding (A) around a ligand when boxing its site.
     """
 
     min_heavy_atoms: int = 6
-    include: List[str] = field(default_factory=list)
-    exclude: List[str] = field(default_factory=list)
     link_cutoff: float = 4.0
     box_padding: float = 4.0
 
