@@ -1,25 +1,19 @@
-"""The reference: aligned and cleaned once, its pocket located once."""
+"""The reference: aligned and cleaned once."""
 from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
-from Bio.PDB import PDBParser
 from eliot import log_message, start_action
 
 from qpocket.config import QPocketConfig, should_renumber
-from qpocket.core import pocket
 from qpocket.core import structure as st
-from qpocket.core.geometry import compute_pocket_bounding_box
-from qpocket.core.pocket import select_cavity_by_centroid
 from qpocket.core.types import AlignmentContext, RawStructure, Reference, Structure
 from qpocket.io import layout
 from qpocket.io import rcsb as pdb_query
 from qpocket.io import structures as sio
-from qpocket.io.tables import write_points
-from qpocket.io.tools import run_cavfind
 
 
 @lru_cache(maxsize=4)
@@ -162,128 +156,8 @@ def alignment_context(cfg: QPocketConfig, ws: layout.Workspace,
     return context, record
 
 
-def ligand_centroid(ref_pdb_path: Path, ligand_resname: str,
-                    search_chains: Optional[List[str]] = None) -> Optional[np.ndarray]:
-    """Centroid of the reference ligand in a PDB file.
-
-    Args:
-        ref_pdb_path: Aligned reference PDB.
-        ligand_resname: Ligand residue name.
-        search_chains: Chains to search, or None for all.
-
-    Returns:
-        (3,) centroid, or None if absent or unreadable.
-    """
-    try:
-        structure = PDBParser(QUIET=True).get_structure("reference", ref_pdb_path)
-        centroid = pocket.ligand_centroid(structure, ligand_resname, search_chains)
-        if centroid is None:
-            searched = search_chains if search_chains is not None else "all chains"
-            log_message(
-                message_type="warning",
-                stage="get_ref_ligand_centroid",
-                warning=(
-                    f"ligand {ligand_resname!r} not found in {searched} "
-                    f"of {ref_pdb_path}"
-                ),
-            )
-        return centroid
-    except Exception as e:
-        log_message(
-            message_type="error",
-            stage="get_ref_ligand_centroid",
-            error=str(e),
-        )
-        return None
-
-
-def reference_pocket_box(pdb_path: Path, pdb_id: str, ref_centroid: np.ndarray,
-                         pocket_save_dir: Path, save_intermediate: bool = False,
-                         bbox_padding: float = 1.0) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    """Find the reference pocket and derive its bounding box.
-
-    Args:
-        pdb_path: Cleaned reference PDB.
-        pdb_id: Its identifier.
-        ref_centroid: Reference ligand centroid.
-        pocket_save_dir: Where binding_site.csv goes.
-        save_intermediate: Also write binding_site_initial.csv.
-        bbox_padding: Box expansion in Å.
-
-    Returns:
-        (lower, upper), or None when cavity detection fails.
-    """
-    with start_action(
-        action_type="extract_reference_pocket_bbox",
-        pdb_id=pdb_id,
-        bbox_padding=bbox_padding,
-    ):
-        pocket_save_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            found_cavities = run_cavfind(pdb_path, pdb_id)
-        except Exception as e:
-            log_message(
-                message_type="error",
-                stage="extract_reference_pocket_bbox",
-                pdb_id=pdb_id,
-                error=str(e),
-            )
-            return None
-
-        if not found_cavities:
-            log_message(
-                message_type="warning",
-                stage="extract_reference_pocket_bbox",
-                pdb_id=pdb_id,
-                warning="no cavities found in reference structure",
-            )
-            return None
-
-        coords = select_cavity_by_centroid(found_cavities, ref_centroid)
-        if coords is None:
-            log_message(
-                message_type="warning",
-                stage="extract_reference_pocket_bbox",
-                pdb_id=pdb_id,
-                warning="reference centroid does not overlap any cavity",
-            )
-            return None
-
-        n_points = len(coords)
-
-        pocket_csv = pocket_save_dir / "binding_site.csv"
-        write_points(coords, pocket_csv)
-
-        if save_intermediate:
-            write_points(coords, pocket_save_dir / "binding_site_initial.csv")
-
-        bbox_min, bbox_max = compute_pocket_bounding_box(coords, padding=bbox_padding)
-
-        log_message(
-            message_type="reference_bbox_computed",
-            pdb_id=pdb_id,
-            n_points=n_points,
-            bbox_min=bbox_min.tolist(),
-            bbox_max=bbox_max.tolist(),
-        )
-        return bbox_min, bbox_max
-
-
-def _reference_pocket(cfg: QPocketConfig, ws: layout.Workspace,
-                      record: Structure) -> Tuple[Optional[np.ndarray], Optional[Tuple[np.ndarray, np.ndarray]]]:
-    centroid: Optional[np.ndarray] = None
-    box = None
-    if centroid is not None:
-        box = reference_pocket_box(Path(record.cleaned_file), record.pdb_id, centroid,
-                                   ws.pockets / record.pdb_id, cfg.io.save_intermediate, 1.0)
-        if box is not None:
-            log_message(message_type="reference_bbox_ready", pdb_id=record.pdb_id)
-    return centroid, box
-
-
 def build_reference(cfg: QPocketConfig, ws: layout.Workspace, source: RawStructure) -> Reference:
-    """Align and clean the reference, locate its pocket, and persist it.
+    """Align and clean the reference, and persist it.
 
     Args:
         cfg: QPocket configuration.
@@ -294,7 +168,7 @@ def build_reference(cfg: QPocketConfig, ws: layout.Workspace, source: RawStructu
         The reference.
 
     Raises:
-        ValueError: If the reference cannot be cleaned or its ligand is missing.
+        ValueError: If the reference cannot be cleaned.
     """
     from qpocket.pipelines.structure import clean_file
 
@@ -306,8 +180,7 @@ def build_reference(cfg: QPocketConfig, ws: layout.Workspace, source: RawStructu
                         error="the reference structure could not be cleaned")
             raise ValueError(f"the reference structure {source.pdb_id} could not be cleaned")
         record = record._replace(cleaned_file=cleaned)
-        centroid, box = _reference_pocket(cfg, ws, record)
-        ref = Reference(source.pdb_id, context, record, centroid, box)
+        ref = Reference(source.pdb_id, context, record)
         layout.write_reference(ws, ref.to_json())
         return ref
 

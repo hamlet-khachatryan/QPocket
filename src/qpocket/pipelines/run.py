@@ -1,4 +1,4 @@
-"""The conformational run: ingest, reference, every structure, collect, distances."""
+"""The conformational run: ingest, reference, every structure, collect."""
 from functools import partial
 from pathlib import Path
 from typing import List, Optional, Union
@@ -13,7 +13,6 @@ from qpocket.io import layout
 from qpocket.io import logging as qlog
 from qpocket.pipelines import parallel
 from qpocket.pipelines.collect import collect_run
-from qpocket.pipelines.distance import compute_spectral_distance_matrix
 from qpocket.pipelines.reference import build_reference
 from qpocket.pipelines.structure import process, structure_params
 
@@ -73,7 +72,6 @@ def run(cfg: QPocketConfig) -> Path:
             stage="structure", log_dir=ws.root / parallel.WORKER_LOG_DIR, label=_pdb_id)
         records, failures = partition(results)
         collect_run(ws, records, failures, cfg.features.enabled, cfg.io.compression)
-        compute_spectral_distance_matrix(cfg, ws)
         log_message(message_type="stage_complete", stage="prepare_and_featurize")
     return ws.root
 

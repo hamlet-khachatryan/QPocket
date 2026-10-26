@@ -122,11 +122,10 @@ def _clock(minutes: int) -> str:
 
 
 def _plugin_resources(cfg):
-    from qpocket.core.ports import CHARGES, CONTACTS, FEATURES, POCKETS
+    from qpocket.core.ports import CHARGES, CONTACTS, FEATURES
 
-    pocket = "cavities"
     plugins = (list(FEATURES.resolve(list(cfg.features.enabled))) + [CHARGES.get(cfg.charges.use)]
-               + list(CONTACTS.resolve(list(cfg.contacts.use))) + [POCKETS.get(pocket)])
+               + list(CONTACTS.resolve(list(cfg.contacts.use))))
     return [p.resources for p in plugins]
 
 

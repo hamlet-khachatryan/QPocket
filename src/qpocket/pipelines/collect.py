@@ -118,6 +118,12 @@ def write_feature_record(meta_dir: Path, enabled: Sequence[str]) -> Path:
     return path
 
 
+def _observed(record: Structure) -> List[str]:
+    """Union of a structure's ligand contacts (sentinels dropped), or the no-ligand sentinel."""
+    found = sorted({entry for _, entries in record.contacts for entry in entries if "|" in entry})
+    return found or ["no_ligand_found"]
+
+
 def collect_run(ws: "layout.Workspace", records: Sequence[Structure], failures: Sequence[Failure],
                 features: Sequence[str], compression: str) -> None:
     """Write the run-wide tables from the per-structure records.
@@ -139,15 +145,16 @@ def collect_run(ws: "layout.Workspace", records: Sequence[Structure], failures: 
         with open(ws.screening / "actives.smi", "w", encoding="utf-8") as f:
             f.write("SMILES\tPDB_ID\tLigand_Name\n")
             for r in records:
-                if r.smiles:
-                    f.write(f"{r.smiles[0]}\t{r.pdb_id}\t{r.smiles[1]}\n")
+                for ligand in r.ligands:
+                    if ligand.smiles:
+                        f.write(f"{ligand.smiles}\t{r.pdb_id}\t{ligand.resname}\n")
 
         write_feature_record(ws.metadata, features)
         obs_h5 = ws.metadata / "observed_interactions.h5"
         pot_h5 = ws.metadata / "potential_interactions.h5"
-        hdf5.save_interactions({r.pdb_id: list(r.potential) for r in records}, pot_h5,
-                               compression=compression)
-        hdf5.save_interactions({r.pdb_id: list(r.observed) for r in records}, obs_h5,
+        # shortcut: one run-wide archive and no potential contacts; upgrade when sites write their own.
+        hdf5.save_interactions({r.pdb_id: [] for r in records}, pot_h5, compression=compression)
+        hdf5.save_interactions({r.pdb_id: _observed(r) for r in records}, obs_h5,
                                compression=compression)
         log_message(message_type="interaction_data_saved", n_structures=len(records))
         try:

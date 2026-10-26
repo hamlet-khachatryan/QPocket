@@ -21,16 +21,19 @@ class ProlifParams:
 
 
 @CONTACTS.register("prolif", params=ProlifParams)
-def prolif(complex_path: Path, ligand_id: str, params: ProlifParams) -> List[str]:
-    """Interactions between the ligand and its protein.
+def prolif(complex_path: Path, ligand_id: str, params: ProlifParams,
+           ligand_resseq: Optional[int] = None) -> List[str]:
+    """Interactions between one ligand and the rest of the complex.
 
     Args:
         complex_path: Protonated complex.
         ligand_id: Ligand component ID.
         params: What to look for.
+        ligand_resseq: The ligand's residue number, or None for every residue named ligand_id.
 
     Returns:
         RESIDUE|InteractionType strings, or a sentinel.
     """
     enabled = None if params.enabled is None else list(params.enabled)
-    return interactions_for(complex_path, ligand_id, enabled=enabled, parameters=params.parameters)
+    return interactions_for(complex_path, ligand_id, enabled=enabled, parameters=params.parameters,
+                            ligand_resseq=ligand_resseq)

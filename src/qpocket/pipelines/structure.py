@@ -1,4 +1,4 @@
-"""One structure from input file to featurised pocket: a pipe of small steps."""
+"""One structure from input file to its ligands, contacts and cavities: a pipe of small steps."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,21 +9,19 @@ from typing import Any, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 from Bio.PDB import PDBParser
-from biopandas.pdb import PandasPdb
 from eliot import log_message, start_action
 
 from qpocket.config import QPocketConfig, plugin_params
 from qpocket.core import pocket
 from qpocket.core.features import DEFAULT_PROVIDERS, pocket_features
-from qpocket.core.geometry import crop_pocket_by_interactions
-from qpocket.core.ports import CHARGES, CONTACTS, FEATURES, POCKETS
+from qpocket.core.ports import CHARGES, CONTACTS, FEATURES
 from qpocket.core.result import Failure, pipe
+from qpocket.core.sites import find_ligands
 from qpocket.core.types import RawStructure, Reference, Structure
 from qpocket.io import layout, tables, tools
-from qpocket.io.tables import write_points
+from qpocket.io.tools import run_cavfind
 from qpocket.pipelines import align as alignment
 from qpocket.pipelines import clean as cleaning
-from qpocket.pipelines.distance import compute_geodesic
 from qpocket.pipelines.reference import reference_residues
 from qpocket.types import StructureData
 
@@ -34,11 +32,7 @@ class StructureParams:
 
     Attributes:
         allowed_cofactors: "|"-separated residue names kept by cleaning and skipped as ligands.
-        pocket: POCKETS plug-in name.
-        pocket_params: Its parameters.
-        pocket_definition: "Solvent" or "Interactions" (crop to the observed contacts).
-        interaction_padding: Crop radius around interacting residues, Å.
-        reference_ligand_id: The reference ligand, or None.
+        min_heavy_atoms: Smaller HET groups are not ligands.
         save_intermediate: Also write binding_site_initial.csv.
         features: FEATURES plug-in names.
         feature_options: Settings per feature plug-in.
@@ -53,11 +47,7 @@ class StructureParams:
     """
 
     allowed_cofactors: str
-    pocket: str
-    pocket_params: Any
-    pocket_definition: str
-    interaction_padding: float
-    reference_ligand_id: Optional[str]
+    min_heavy_atoms: int
     save_intermediate: bool
     features: Tuple[str, ...]
     feature_options: Mapping[str, Any]
@@ -85,15 +75,11 @@ def structure_params(cfg: QPocketConfig) -> StructureParams:
     Returns:
         Frozen parameters.
     """
-    pocket_name, pocket_params = "cavities", POCKETS.get("cavities").params()
     prolif_params = CONTACTS.get("prolif").params(
         enabled=tuple(cfg.interactions.enabled), parameters=cfg.interactions.parameters)
     return StructureParams(
         allowed_cofactors=cfg.cleaning.allowed_cofactors or "",
-        pocket=pocket_name, pocket_params=pocket_params,
-        pocket_definition=cfg.reference.pocket_definition,
-        interaction_padding=cfg.reference.interaction_padding,
-        reference_ligand_id=None,
+        min_heavy_atoms=cfg.sites.min_heavy_atoms,
         save_intermediate=bool(cfg.io.save_intermediate),
         features=tuple(cfg.features.enabled), feature_options=dict(cfg.features.options or {}),
         charges=cfg.charges.use,
@@ -185,24 +171,6 @@ def featurize(csv_path: Path, pdb_path: Path, features: Sequence[str] = DEFAULT_
         log_message(message_type="success", output=str(out_path))
 
 
-def _write_ligand(record: Structure, ws: layout.Workspace, points: np.ndarray, allowed: str,
-                  unbound: str, error: str) -> Tuple[Optional[str], str, Optional[str]]:
-    """(ligand file, state, ligand id) for the largest ligand in the pocket."""
-    try:
-        structure = PDBParser(QUIET=True).get_structure(record.pdb_id, str(record.aligned_file))
-    except Exception:
-        return None, error, None
-    choice = pocket.pick_ligand(structure, points, allowed.split("|") if allowed else [])
-    if choice is None:
-        return None, unbound, None
-    res_name = choice.residue.get_resname().strip()
-    lig_out = ws.extracted_ligands / f"{record.pdb_id}_{res_name}.pdb"
-    lig_out.write_text(pocket.extract_pdb_block(choice.residue, choice.chain_id), encoding="utf-8")
-    log_message(message_type="ligand_extracted", pdb_id=record.pdb_id, ligand=res_name,
-                n_atoms=choice.n_atoms, n_candidates=choice.n_candidates)
-    return str(lig_out), "BOUND_STATE", res_name
-
-
 # ── steps ────────────────────────────────────────────────────────────────────
 
 def align(ref: Reference, p: StructureParams, ws: layout.Workspace, raw: RawStructure):
@@ -251,66 +219,51 @@ def clean(p: StructureParams, ws: layout.Workspace, record: Structure):
     return record._replace(cleaned_file=cleaned)
 
 
-def _detect(p: StructureParams, record: Structure, ref: Reference):
-    plugin = POCKETS.get(p.pocket)
-    return plugin.fn(record, ref, p.pocket_params)
-
-
-def locate(ref: Reference, p: StructureParams, ws: layout.Workspace, record: Structure) -> Structure:
-    """Find the pocket and write binding_site.csv.
+def find_ligands_step(p: StructureParams, ws: layout.Workspace, record: Structure) -> Structure:
+    """Extract every ligand of the aligned structure, with its SMILES.
 
     Returns:
-        The record with points, or with a pocket state and no points.
+        The record with ligands and BOUND_STATE, UNBOUND_STATE or FAILED.
     """
-    if not Path(record.cleaned_file).exists():
+    from qpocket.io import interactions
+
+    try:
+        parsed = PDBParser(QUIET=True).get_structure(record.pdb_id, str(record.aligned_file))
+    except Exception as e:
+        log_message(message_type="error", stage="find_ligands", pdb_id=record.pdb_id, error=str(e))
         return record._replace(protein_state="FAILED")
-    pocket_dir = ws.pockets / record.pdb_id
-    pocket_dir.mkdir(parents=True, exist_ok=True)
-    points, state = _detect(p, record, ref)
-    if points is None:
-        return record._replace(protein_state=state)
-    if p.save_intermediate:
-        write_points(points, pocket_dir / "binding_site_initial.csv")
-    write_points(points, pocket_dir / "binding_site.csv")
-    return record._replace(points=points)
+    allowed = p.allowed_cofactors.split("|") if p.allowed_cofactors else []
+    ligands = []
+    for ligand, residue in find_ligands(parsed, record.pdb_id, allowed, p.min_heavy_atoms):
+        out = ws.extracted_ligands / (f"{ligand.pdb_id}_{ligand.chain}_{ligand.resname}_"
+                                      f"{ligand.resseq}{ligand.icode.strip()}.pdb")
+        out.write_text(pocket.extract_pdb_block(residue, ligand.chain), encoding="utf-8")
+        ligands.append(ligand._replace(file=str(out), smiles=interactions.ligand_smiles(out)))
+    log_message(message_type="ligands_found", pdb_id=record.pdb_id,
+                ligands=[ligand.key for ligand in ligands])
+    return record._replace(ligands=tuple(ligands),
+                           protein_state="BOUND_STATE" if ligands else "UNBOUND_STATE")
 
 
-def _reference_branch(ref: Reference, record: Structure) -> bool:
-    # The reference's own pocket came from its ligand; others are matched to its box.
-    return record.pdb_id == ref.pdb_id and ref.box is not None
+def _protonated_ligand(path: str):
+    from qpocket.io.interactions import protonated_ligand
 
-
-def first_ligand(ref: Reference, p: StructureParams, ws: layout.Workspace, record: Structure) -> Structure:
-    """Pick the ligand in the uncropped pocket.
-
-    Returns:
-        The record with a state and, when bound, its ligand.
-    """
-    if record.protein_state is not None:
-        return record
-    if _reference_branch(ref, record):
-        if not p.reference_ligand_id:
-            return record._replace(protein_state="REFERENCE")
-        # Today's reference branch picks from binding_site.csv as written (rounded), not the
-        # in-memory cloud; reading it back keeps a boundary atom on the same side.
-        cloud = pd.read_csv(ws.pockets / record.pdb_id / "binding_site.csv")[["x", "y", "z"]].to_numpy()
-        lf, state, lig = _write_ligand(record, ws, cloud, p.allowed_cofactors,
-                                       unbound="REFERENCE", error="REFERENCE")
-    else:
-        lf, state, lig = _write_ligand(record, ws, record.points, p.allowed_cofactors,
-                                       unbound="UNBOUND_STATE", error="FAILED")
-    return record._replace(protein_state=state, ligand_file=lf, ligand_id=lig)
+    try:
+        return protonated_ligand(Path(path))
+    except Exception as e:
+        # One unreadable ligand leaves a gap in the complex, not a structure without contacts.
+        log_message(message_type="error", stage="ligand_protonation", ligand=path, error=str(e))
+        return None
 
 
 def protonate(ws: layout.Workspace, record: Structure) -> Structure:
-    """Write the docking-ready protonated complex (protein only when apo).
+    """Write the docking-ready protonated complex holding every ligand (protein only when apo).
 
     Returns:
         The record with protonated_file, or None in it when protonation failed.
     """
     from qpocket.core.hydroxyl import optimise_hydroxyls
-    from qpocket.io.interactions import (load_molecule, protonated_ligand,
-                                         write_complex, write_molecule)
+    from qpocket.io.interactions import load_molecule, write_complex, write_molecule
     from qpocket.io.tools import protonate_for_interactions
 
     pdb_id = record.pdb_id
@@ -326,14 +279,10 @@ def protonate(ws: layout.Workspace, record: Structure) -> Structure:
 
     try:
         pqr = protonate_for_interactions(Path(cleaned), out_dir / f"{pdb_id}.pqr")
-        ligand_mol = None
-        ligand_id = record.ligand_id
-        ligand_file = record.ligand_file
-        if ligand_id and ligand_file and Path(ligand_file).exists():
-            ligand_mol = protonated_ligand(Path(ligand_file))
-        write_complex(destination, pqr, ligand_mol, ligand_id)
-        # pdb2pqr placed the hydroxyl hydrogens before the ligand existed, so
-        # their rotamers are re-chosen now that it is present.
+        write_complex(destination, pqr,
+                      [(_protonated_ligand(ligand.file), ligand.resname) for ligand in record.ligands])
+        # pdb2pqr placed the hydroxyl hydrogens before the ligands existed, so
+        # their rotamers are re-chosen now that they are present.
         write_molecule(destination, optimise_hydroxyls(load_molecule(destination)))
     except Exception as error:
         log_message(message_type="error", stage="protonation",
@@ -342,123 +291,51 @@ def protonate(ws: layout.Workspace, record: Structure) -> Structure:
     return record._replace(protonated_file=str(destination))
 
 
-def _potential(record: Structure, ws: layout.Workspace) -> Tuple[str, ...]:
-    cav_csv = ws.pockets / record.pdb_id / "binding_site.csv"
-    if not cav_csv.exists() or not record.cleaned_file or not Path(record.cleaned_file).exists():
-        return ()
-    try:
-        from scipy.spatial.distance import cdist
-
-        atoms = PandasPdb().read_pdb(str(record.cleaned_file)).df["ATOM"]
-        cloud = pd.read_csv(cav_csv)[["x", "y", "z"]].to_numpy()
-        dists = cdist(atoms[["x_coord", "y_coord", "z_coord"]].to_numpy(), cloud)
-        nearby = atoms[dists.min(axis=1) <= 4.0]
-        # Chain ID included so potential and observed keys intersect in utilisation.
-        unique = (nearby["residue_name"] + "_" + nearby["residue_number"].astype(str)
-                  + "_" + nearby["chain_id"]).unique()
-        found = tuple(sorted(unique.tolist()))
-        log_message(message_type="potential_interactions", pdb_id=record.pdb_id, n_residues=len(found))
-        return found
-    except Exception as e:
-        log_message(message_type="error", stage="potential_interactions", pdb_id=record.pdb_id,
-                    error=str(e))
-        return ()
-
-
 def read_contacts(p: StructureParams, ws: layout.Workspace, record: Structure) -> Structure:
-    """Potential contacts from the pocket cloud; observed ones from the contact plug-ins.
+    """Each ligand's observed contacts, from the contact plug-ins.
 
     Returns:
-        The record with potential and observed.
+        The record with contacts, one entry per ligand.
     """
     with start_action(action_type="analyse_interactions", pdb_id=record.pdb_id):
-        potential = _potential(record, ws)
-        ligand = record.ligand_id
-        if record.protein_state == "BOUND_STATE" and ligand and str(ligand).strip():
-            # The protonated complex: interactions are read from the hydrogens the pipeline placed.
-            source = Path(record.protonated_file or record.aligned_file)
-            observed: list = []
+        # The protonated complex: interactions are read from the hydrogens the pipeline placed.
+        source = Path(record.protonated_file or record.aligned_file or "")
+        contacts = []
+        for index, ligand in enumerate(record.ligands):
+            # write_complex numbers ligand i as 900 + i; the aligned file keeps the original number.
+            resseq = 900 + index if record.protonated_file else ligand.resseq
+            found: list = []
             for name in p.contacts:
-                observed += CONTACTS.get(name).fn(source, str(ligand), p.contact_params[name])
-        else:
-            observed = ["no_ligand_found"]
-        return record._replace(potential=potential, observed=tuple(observed))
+                found += CONTACTS.get(name).fn(source, ligand.resname, p.contact_params[name],
+                                               ligand_resseq=resseq)
+            contacts.append((ligand.key, tuple(found)))
+        return record._replace(contacts=tuple(contacts))
 
 
-def _interacting_coords(aligned: str, observed: Sequence[str]) -> Optional[np.ndarray]:
+def detect_cavities(ws: layout.Workspace, record: Structure) -> Structure:
+    """Detect every cavity of the cleaned protein and write structures/cavities/<pdb_id>.csv.
+
+    Returns:
+        The record with cavities_file, or with NO_ANY_CAVITY_FOUND / FAILED and none.
+    """
+    if not record.cleaned_file or not Path(record.cleaned_file).exists():
+        return record._replace(protein_state="FAILED")
     try:
-        atoms = PandasPdb().read_pdb(str(aligned)).df["ATOM"]
-        return pocket.interacting_residue_coords(atoms, list(observed))
+        found = run_cavfind(Path(record.cleaned_file), record.pdb_id)
     except Exception as e:
-        log_message(message_type="error", stage="get_interacting_residues_coords", error=str(e))
-        return None
-
-
-def refine_and_featurize(ref: Reference, p: StructureParams, ws: layout.Workspace,
-                         record: Structure) -> Structure:
-    """Crop to the observed contacts when asked, re-pick the ligand there, then featurise once.
-
-    Returns:
-        The record, with the cropped pocket's ligand when the crop ran.
-    """
-    pocket_dir = ws.pockets / record.pdb_id
-    crop = (p.pocket_definition == "Interactions" and record.observed
-            and record.protein_state not in ("FAILED", "NO_ANY_CAVITY_FOUND"))
-    if record.points is None:
-        return record
-    if not crop:
-        if (pocket_dir / "featurized.csv").exists():
-            log_message(message_type="skip", stage="featurise", pdb_id=record.pdb_id,
-                        reason="already featurised")
-        else:
-            featurize(pocket_dir / "binding_site.csv", Path(record.cleaned_file), p.features, p.charges,
-                      options=p.feature_options, charge_params=p.charge_params)
-        return record
-
-    points = record.points
-    interacting = _interacting_coords(record.aligned_file, record.observed)
-    if interacting is not None:
-        cropped = crop_pocket_by_interactions(points, interacting, padding=p.interaction_padding)
-        if len(cropped) > 0:
-            log_message(message_type="pocket_cropped", pdb_id=record.pdb_id,
-                        n_before=len(points), n_after=len(cropped))
-            points = cropped
-    write_points(points, pocket_dir / "binding_site.csv")
-    (pocket_dir / "featurized.csv").unlink(missing_ok=True)  # the cloud changed
-    featurize(pocket_dir / "binding_site.csv", Path(record.cleaned_file), p.features, p.charges,
-                      options=p.feature_options, charge_params=p.charge_params)
-    lf, state, lig = _write_ligand(record, ws, points, p.allowed_cofactors,
-                                   unbound="UNBOUND_STATE", error="FAILED")
-    if state == "FAILED":
-        return record
-    return record._replace(protein_state=state, ligand_file=lf, ligand_id=lig)
-
-
-def geodesics(p: StructureParams, ws: layout.Workspace, record: Structure) -> Structure:
-    """Cache the pocket's geodesic distances while it is warm.
-
-    Returns:
-        The record, unchanged.
-    """
-    featurized = ws.pockets / record.pdb_id / "featurized.csv"
-    if featurized.exists():
-        compute_geodesic(featurized, p.geodesic_radius)
-    return record
-
-
-def finish(record: Structure) -> Structure:
-    """Attach the ligand's SMILES and drop the point cloud.
-
-    Returns:
-        The finished record.
-    """
-    smiles = None
-    if record.ligand_file and record.ligand_id and Path(record.ligand_file).exists():
-        from qpocket.io.interactions import ligand_smiles
-
-        found = ligand_smiles(Path(record.ligand_file))
-        smiles = (found, str(record.ligand_id)) if found else None
-    return record._replace(smiles=smiles, points=None)
+        log_message(message_type="warning", stage="detect_cavities", pdb_id=record.pdb_id,
+                    warning=f"cavity detection failed: {e}")
+        return record._replace(protein_state="FAILED")
+    if not found:
+        return record._replace(protein_state="NO_ANY_CAVITY_FOUND")
+    table = pd.DataFrame(np.vstack(found), columns=["x", "y", "z"])
+    table["cavity"] = np.repeat(np.arange(len(found)), [len(c) for c in found])
+    out = ws.cavities / f"{record.pdb_id}.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(out, index=False)
+    log_message(message_type="cavities_detected", pdb_id=record.pdb_id, n_cavities=len(found),
+                n_points=len(table))
+    return record._replace(cavities_file=str(out))
 
 
 def fingerprint(ref: Reference, p: StructureParams, raw: RawStructure) -> str:
@@ -508,13 +385,10 @@ def process(ref: Reference, p: StructureParams, ws: layout.Workspace, raw: RawSt
             raw,
             partial(align, ref, p, ws),
             partial(clean, p, ws),
-            partial(locate, ref, p, ws),
-            partial(first_ligand, ref, p, ws),
+            partial(find_ligands_step, p, ws),
             partial(protonate, ws),
             partial(read_contacts, p, ws),
-            partial(refine_and_featurize, ref, p, ws),
-            partial(geodesics, p, ws),
-            finish,
+            partial(detect_cavities, ws),
         )
         layout.write_part(ws, raw.pdb_id, {**result.to_json(), "fingerprint": key})
         log_message(message_type="structure_processed", pdb_id=raw.pdb_id,

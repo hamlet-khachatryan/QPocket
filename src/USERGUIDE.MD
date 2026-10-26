@@ -35,7 +35,6 @@ config value:
 | Registry | Config | Built-ins |
 |---|---|---|
 | `SOURCES` | `mode` | `pdb_query`, `local` |
-| `POCKETS` | `reference.pocket_mode` | `cavities`, `box` |
 | `CHARGES` | `charges.use` | `pdb2pqr` |
 | `FEATURES` | `features.enabled` | `apbs`, `cp_lp`, `hbond`, `aromatic`, `template` |
 | `CONTACTS` | `contacts.use` | `prolif` |

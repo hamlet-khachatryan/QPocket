@@ -67,7 +67,7 @@ def test_every_bound_structure_reaches_actives_smi(tmp_path_factory):
          "--reference-path", str(source / "7KG6.cif"),
          "--structure-paths", str(source / "7KG6.cif"),
          "--structure-paths", str(source / "4B1H.cif"),
-         "--ligand-id", "WDG", "--chain-id", "A", "--workdir", str(workdir)],
+         "--chain-id", "A", "--workdir", str(workdir)],
         cwd=REPO, capture_output=True, text=True, timeout=2400,
     )
     run = workdir / "7KG6"
@@ -75,4 +75,4 @@ def test_every_bound_structure_reaches_actives_smi(tmp_path_factory):
     bound = set(master.loc[master["protein_state"] == "BOUND_STATE", "pdb_id"].astype(str))
     actives = pd.read_csv(run / "screening/actives.smi", sep="\t")
     assert set(actives["PDB_ID"].astype(str)) == bound, "a bound structure is missing"
-    assert all("=O" in s for s in actives["SMILES"]), "bond orders lost"
+    assert all("=O" in s for s in actives.loc[actives["Ligand_Name"] == "WDG", "SMILES"]), "bond orders lost"

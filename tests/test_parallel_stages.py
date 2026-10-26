@@ -25,8 +25,8 @@ def test_the_run_fans_out_with_run_map():
 
 def test_the_chain_covers_every_step():
     body = _function("pipelines/structure.py", "process")
-    for step in ("align", "clean", "locate", "first_ligand", "protonate", "read_contacts",
-                 "refine_and_featurize", "geodesics", "finish"):
+    for step in ("align", "clean", "find_ligands_step", "protonate", "read_contacts",
+                 "detect_cavities"):
         assert step in body, step
 
 
@@ -47,7 +47,6 @@ def test_every_structure_is_processed_once_and_collected_in_order(tmp_path, monk
     monkeypatch.setattr(run, "collect_run",
                         lambda ws, records, failures, features, compression:
                         collected.update(ids=[r.pdb_id for r in records], failures=failures))
-    monkeypatch.setattr(run, "compute_spectral_distance_matrix", lambda cfg, ws: None)
     cfg = evolve(make_config(), "paths.workdir", str(tmp_path))
     cfg = evolve(cfg, "compute.workers", workers)
     cfg = evolve(cfg, "compute.backend", "thread")  # the fakes above are not picklable
@@ -63,7 +62,7 @@ def test_the_reference_pickles_for_worker_processes():
     from qpocket.core.types import AlignmentContext, Reference, Structure
 
     ctx = AlignmentContext("a.pdb", "A", "ACD", None, {}, {}, {}, False, False)
-    ref = Reference("R", ctx, Structure("R", "r.pdb"), None, None)
+    ref = Reference("R", ctx, Structure("R", "r.pdb"))
     assert pickle.loads(pickle.dumps(ref)) == ref
 
 

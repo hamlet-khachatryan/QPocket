@@ -107,12 +107,14 @@ def ligand_smiles(pdb_path: Path) -> str:
     return Chem.MolToSmiles(Chem.RemoveHs(out))
 
 
-def split_complex(mol: Chem.Mol, ligand_id: str) -> Tuple[Chem.Mol, Chem.Mol]:
-    """Separate a perceived complex into its ligand and its protein.
+def split_complex(mol: Chem.Mol, ligand_id: str,
+                  ligand_resseq: Optional[int] = None) -> Tuple[Chem.Mol, Chem.Mol]:
+    """Separate a perceived complex into one ligand and everything else.
 
     Args:
         mol: The perceived complex.
         ligand_id: Residue name of the ligand.
+        ligand_resseq: Its residue number, to tell same-named ligands apart; None takes them all.
 
     Returns:
         The ligand molecule and the protein molecule.
@@ -122,7 +124,8 @@ def split_complex(mol: Chem.Mol, ligand_id: str) -> Tuple[Chem.Mol, Chem.Mol]:
     """
     wanted = ligand_id.strip().upper()
     ligand_indices = {atom.GetIdx() for atom in mol.GetAtoms()
-                      if atom.GetPDBResidueInfo().GetResidueName().strip().upper() == wanted}
+                      if atom.GetPDBResidueInfo().GetResidueName().strip().upper() == wanted
+                      and ligand_resseq in (None, atom.GetPDBResidueInfo().GetResidueNumber())}
     if not ligand_indices:
         raise ValueError(f"ligand {ligand_id!r} is not present in the structure")
 
@@ -141,14 +144,16 @@ def split_complex(mol: Chem.Mol, ligand_id: str) -> Tuple[Chem.Mol, Chem.Mol]:
 
 def interactions_for(pdb_path: Path, ligand_id: Optional[str],
                      enabled: Optional[Sequence[str]] = None,
-                     parameters: Optional[Mapping[str, Mapping]] = None) -> List[str]:
-    """Interactions between a structure's ligand and its protein.
+                     parameters: Optional[Mapping[str, Mapping]] = None,
+                     ligand_resseq: Optional[int] = None) -> List[str]:
+    """Interactions between one ligand of a structure and the rest of it.
 
     Args:
         pdb_path: Path to the protonated complex.
         ligand_id: Chemical-component ID of the ligand, or None for an apo structure.
         enabled: ProLIF interaction names to request.
         parameters: Per-interaction parameter overrides.
+        ligand_resseq: The ligand's residue number; None takes every residue named ligand_id.
 
     Returns:
         Interaction strings, or one of no_ligand_found, file_not_found, analysis_error.
@@ -161,7 +166,7 @@ def interactions_for(pdb_path: Path, ligand_id: Optional[str],
     if not path.exists():
         return ["file_not_found"]
     try:
-        ligand_mol, protein_mol = split_complex(load_molecule(path), str(ligand_id))
+        ligand_mol, protein_mol = split_complex(load_molecule(path), str(ligand_id), ligand_resseq)
     except ValueError:
         return ["no_ligand_found"]
     except MissingComponentError as error:
@@ -219,15 +224,14 @@ def write_molecule(path: Path, mol: Chem.Mol) -> Path:
     return Path(path)
 
 
-def write_complex(path: Path, protein_pqr: Path, ligand_mol: Optional[Chem.Mol],
-                  ligand_id: Optional[str]) -> Path:
-    """Write the docking-ready structure: protonated protein plus protonated ligand.
+def write_complex(path: Path, protein_pqr: Path,
+                  ligands: Sequence[Tuple[Optional[Chem.Mol], str]] = ()) -> Path:
+    """Write the docking-ready structure: protonated protein plus protonated ligands.
 
     Args:
         path: Destination PDB path.
         protein_pqr: PQR written by pdb2pqr.
-        ligand_mol: Protonated ligand, or None for an apo structure.
-        ligand_id: Chemical-component ID of the ligand, or None.
+        ligands: (protonated ligand or None, component ID); ligand i is chain A, residue 900 + i.
 
     Returns:
         The path written.
@@ -248,14 +252,16 @@ def write_complex(path: Path, protein_pqr: Path, ligand_mol: Optional[Chem.Mol],
                               float(x), float(y), float(z), element))
         serial += 1
 
-    if ligand_mol is not None and ligand_id:
+    for index, (ligand_mol, ligand_id) in enumerate(ligands):
+        if ligand_mol is None:
+            continue
         conformer = ligand_mol.GetConformer()
         serial_of = {}
         for atom in ligand_mol.GetAtoms():
             position = conformer.GetAtomPosition(atom.GetIdx())
             info = atom.GetPDBResidueInfo()
             name = info.GetName().strip() if info else f"{atom.GetSymbol()}{atom.GetIdx()}"
-            lines.append(pdb_line("HETATM", serial, name, ligand_id.upper(), "A", 900,
+            lines.append(pdb_line("HETATM", serial, name, ligand_id.upper(), "A", 900 + index,
                                   position.x, position.y, position.z, atom.GetSymbol()))
             serial_of[atom.GetIdx()] = serial
             serial += 1

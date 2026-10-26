@@ -1,5 +1,4 @@
 """The reference is built once and survives the trip to disk."""
-import numpy as np
 import pytest
 
 from qpocket.core.types import RawStructure
@@ -12,10 +11,10 @@ def test_load_reference_reads_what_build_wrote(tmp_path, monkeypatch):
 
     ws = layout.create(str(tmp_path), "run")
     ref = Reference("7KG6", AlignmentContext("a", "A", "M", None, {}, {}, {}, False, False),
-                    Structure("7KG6", "x.cif"), np.ones(3), None)
+                    Structure("7KG6", "x.cif"))
     layout.write_reference(ws, ref.to_json())
     back = reference.load_reference(ws)
-    assert back.pdb_id == "7KG6" and np.array_equal(back.centroid, np.ones(3))
+    assert back == ref
 
 
 def test_a_reference_that_cannot_be_cleaned_stops_the_run(tmp_path, monkeypatch):

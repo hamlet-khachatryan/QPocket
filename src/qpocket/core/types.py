@@ -241,90 +241,6 @@ class Sources(NamedTuple):
     structures: Tuple[RawStructure, ...]
 
 
-def _array(value) -> Optional[list]:
-    return None if value is None else np.asarray(value, dtype=float).tolist()
-
-
-class Structure(NamedTuple):
-    """One structure as it moves through the chain; each step fills more fields.
-
-    Attributes:
-        pdb_id: Identifier.
-        source: Ingested file.
-        rmsd_to_ref: RMSD to the reference after superposition.
-        aligned_file: Superposed structure.
-        aux_chain_mapping: Auxiliary-chain mapping, interface mode only.
-        cleaned_file: Protein and allowed cofactors only.
-        points: Pocket cloud before the contact crop; never written to a sidecar.
-        protein_state: BOUND_STATE, UNBOUND_STATE, REFERENCE, CAVITY_CLOSED, NO_ANY_CAVITY_FOUND or FAILED.
-        ligand_file: Extracted ligand.
-        ligand_id: Its chemical-component ID.
-        protonated_file: Docking-ready protonated complex.
-        potential: Residues within reach of the pocket cloud.
-        observed: RESIDUE|InteractionType entries.
-        smiles: (SMILES, ligand ID) when a ligand was extracted.
-    """
-
-    pdb_id: str
-    source: str
-    rmsd_to_ref: Optional[float] = None
-    aligned_file: Optional[str] = None
-    aux_chain_mapping: Optional[str] = None
-    cleaned_file: Optional[str] = None
-    points: Optional[np.ndarray] = None
-    protein_state: Optional[str] = None
-    ligand_file: Optional[str] = None
-    ligand_id: Optional[str] = None
-    protonated_file: Optional[str] = None
-    potential: Tuple[str, ...] = ()
-    observed: Tuple[str, ...] = ()
-    smiles: Optional[Tuple[str, str]] = None
-
-    def master_row(self) -> Dict[str, Any]:
-        """This structure's master.csv row, in today's column order.
-
-        Returns:
-            Column name to value.
-        """
-        row: Dict[str, Any] = {"pdb_id": self.pdb_id, "rmsd_to_ref": self.rmsd_to_ref,
-                               "aligned_file": self.aligned_file}
-        if self.aux_chain_mapping is not None:
-            row["aux_chain_mapping"] = self.aux_chain_mapping
-        row.update(cleaned_file=self.cleaned_file, ligand_file=self.ligand_file,
-                   ligand_id=self.ligand_id, protein_state=self.protein_state or "FAILED")
-        return row
-
-    def to_json(self) -> Dict[str, Any]:
-        """Plain form for a sidecar, without the point cloud.
-
-        Returns:
-            JSON-serialisable dict.
-        """
-        payload = self._asdict()
-        payload.pop("points")
-        payload["potential"] = list(self.potential)
-        payload["observed"] = list(self.observed)
-        payload["smiles"] = None if self.smiles is None else list(self.smiles)
-        return payload
-
-    @classmethod
-    def from_json(cls, payload: Dict[str, Any]) -> "Structure":
-        """Rebuild from :meth:`to_json`; absent fields take their defaults.
-
-        Args:
-            payload: Output of to_json.
-
-        Returns:
-            The record.
-        """
-        known = {k: v for k, v in payload.items() if k in cls._fields and k != "points"}
-        known["potential"] = tuple(known.get("potential") or ())
-        known["observed"] = tuple(known.get("observed") or ())
-        smiles = known.get("smiles")
-        known["smiles"] = None if smiles is None else (smiles[0], smiles[1])
-        return cls(**known)
-
-
 class Ligand(NamedTuple):
     """One ligand residue found in a structure.
 
@@ -378,6 +294,77 @@ class Ligand(NamedTuple):
         return cls(**{k: v for k, v in payload.items() if k in cls._fields})
 
 
+class Structure(NamedTuple):
+    """One structure as it moves through the chain; each step fills more fields.
+
+    Attributes:
+        pdb_id: Identifier.
+        source: Ingested file.
+        rmsd_to_ref: RMSD to the reference after superposition.
+        aligned_file: Superposed structure.
+        aux_chain_mapping: Auxiliary-chain mapping, interface mode only.
+        cleaned_file: Protein and allowed cofactors only.
+        protein_state: BOUND_STATE, UNBOUND_STATE, NO_ANY_CAVITY_FOUND or FAILED.
+        protonated_file: Docking-ready protonated complex holding every ligand.
+        ligands: Every ligand found, in chain then residue order.
+        contacts: (ligand key, RES_NUM_CHAIN|Type entries) per ligand.
+        cavities_file: Every cavity point of the structure (x, y, z, cavity).
+    """
+
+    pdb_id: str
+    source: str
+    rmsd_to_ref: Optional[float] = None
+    aligned_file: Optional[str] = None
+    aux_chain_mapping: Optional[str] = None
+    cleaned_file: Optional[str] = None
+    protein_state: Optional[str] = None
+    protonated_file: Optional[str] = None
+    ligands: Tuple[Ligand, ...] = ()
+    contacts: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()
+    cavities_file: Optional[str] = None
+
+    def master_row(self) -> Dict[str, Any]:
+        """This structure's master.csv row.
+
+        Returns:
+            Column name to value.
+        """
+        row: Dict[str, Any] = {"pdb_id": self.pdb_id, "rmsd_to_ref": self.rmsd_to_ref,
+                               "aligned_file": self.aligned_file}
+        if self.aux_chain_mapping is not None:
+            row["aux_chain_mapping"] = self.aux_chain_mapping
+        row.update(cleaned_file=self.cleaned_file, protonated_file=self.protonated_file,
+                   cavities_file=self.cavities_file, n_ligands=len(self.ligands),
+                   protein_state=self.protein_state or "FAILED")
+        return row
+
+    def to_json(self) -> Dict[str, Any]:
+        """Plain form for a sidecar.
+
+        Returns:
+            JSON-serialisable dict.
+        """
+        payload = self._asdict()
+        payload["ligands"] = [ligand.to_json() for ligand in self.ligands]
+        payload["contacts"] = [[key, list(entries)] for key, entries in self.contacts]
+        return payload
+
+    @classmethod
+    def from_json(cls, payload: Dict[str, Any]) -> "Structure":
+        """Rebuild from :meth:`to_json`; absent fields take their defaults.
+
+        Args:
+            payload: Output of to_json.
+
+        Returns:
+            The record.
+        """
+        known = {k: v for k, v in payload.items() if k in cls._fields}
+        known["ligands"] = tuple(Ligand.from_json(x) for x in known.get("ligands") or ())
+        known["contacts"] = tuple((key, tuple(entries)) for key, entries in known.get("contacts") or ())
+        return cls(**known)
+
+
 class Reference(NamedTuple):
     """The structure every other one is aligned to and measured against.
 
@@ -385,15 +372,11 @@ class Reference(NamedTuple):
         pdb_id: Its identifier.
         alignment: What a worker needs to align onto it.
         record: Its own aligned and cleaned record.
-        centroid: Reference ligand centroid, or None.
-        box: (lower, upper) corners of its pocket, or None.
     """
 
     pdb_id: str
     alignment: AlignmentContext
     record: Structure
-    centroid: Optional[np.ndarray]
-    box: Optional[Tuple[np.ndarray, np.ndarray]]
 
     def to_json(self) -> Dict[str, Any]:
         """Plain form, for metadata/reference.json.
@@ -403,9 +386,7 @@ class Reference(NamedTuple):
         """
         alignment = self.alignment._asdict()
         alignment["aux_centroids"] = {k: list(v) for k, v in self.alignment.aux_centroids.items()}
-        return {"pdb_id": self.pdb_id, "alignment": alignment, "record": self.record.to_json(),
-                "centroid": _array(self.centroid),
-                "box": None if self.box is None else [_array(self.box[0]), _array(self.box[1])]}
+        return {"pdb_id": self.pdb_id, "alignment": alignment, "record": self.record.to_json()}
 
     @classmethod
     def from_json(cls, payload: Dict[str, Any]) -> "Reference":
@@ -419,10 +400,5 @@ class Reference(NamedTuple):
         """
         alignment = dict(payload["alignment"])
         alignment["aux_centroids"] = {k: tuple(v) for k, v in alignment["aux_centroids"].items()}
-        box = payload.get("box")
-        centroid = payload.get("centroid")
         return cls(payload["pdb_id"], AlignmentContext(**alignment),
-                   Structure.from_json(payload["record"]),
-                   None if centroid is None else np.asarray(centroid, dtype=float),
-                   None if box is None else (np.asarray(box[0], dtype=float),
-                                             np.asarray(box[1], dtype=float)))
+                   Structure.from_json(payload["record"]))

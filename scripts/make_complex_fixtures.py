@@ -49,7 +49,7 @@ def prepare(pdb_id: str, ligand_id: str, chain: str) -> Path:
     ligand_pdb = OUT / f"{pdb_id}_ligand.pdb"
     ligand_pdb.write_text("\n".join(ligand) + "\nEND\n", encoding="utf-8")
     ligand_mol = protonated_ligand(ligand_pdb)
-    complex_pdb = write_complex(OUT / f"{pdb_id}_complex.pdb", pqr, ligand_mol, ligand_id)
+    complex_pdb = write_complex(OUT / f"{pdb_id}_complex.pdb", pqr, [(ligand_mol, ligand_id)])
     # pdb2pqr placed the hydroxyl hydrogens before the ligand existed, so their
     # rotamers are re-chosen now that it is present.
     return write_molecule(complex_pdb, optimise_hydroxyls(load_molecule(complex_pdb)))

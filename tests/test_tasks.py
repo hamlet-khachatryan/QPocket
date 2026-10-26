@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 from qpocket.config import QPocketConfig
-from qpocket.core.types import AlignmentContext, Reference, Structure
+from qpocket.core.types import AlignmentContext, Ligand, Reference, Structure
 from qpocket.io import layout
 from qpocket.pipelines import collect as collecting
 from qpocket.pipelines import tasks
@@ -52,13 +52,12 @@ def manifest(tmp_path):
 
 
 def write_part(dirs, pdb_id, **kw):
+    smiles, name = kw.get("smiles", ("", "LIG"))
+    ligand = Ligand(pdb_id, "A", name, 900, " ", 6, smiles=smiles)
     record = Structure(
         pdb_id, f"{pdb_id}.pdb", 0.1, f"/aligned/{pdb_id}.pdb", cleaned_file=f"/cleaned/{pdb_id}.pdb",
-        ligand_file=kw.get("ligand_file"), ligand_id=kw.get("ligand_id"),
-        protein_state=kw.get("protein_state", "BOUND_STATE"),
-        potential=tuple(kw.get("potential", ["ARG_1_A"])),
-        observed=tuple(kw.get("observed", ["ARG_1_A|Hydrophobic"])),
-        smiles=kw.get("smiles"),
+        protein_state=kw.get("protein_state", "BOUND_STATE"), cavities_file=kw.get("cavities_file"),
+        ligands=(ligand,), contacts=((ligand.key, ("ARG_1_A|Hydrophobic",)),),
     )
     layout.write_part(dirs, pdb_id, record.to_json())
     return record
@@ -114,21 +113,13 @@ def test_the_unimplemented_apbs_split_says_so(cfg, dirs, manifest):
 # --- reference round trip -------------------------------------------------
 
 
-def _reference(box):
-    ctx = AlignmentContext("/r/1ABC_aligned.pdb", "A", "MKV", None, {}, {}, {}, False, False)
-    return Reference("1ABC", ctx, Structure("1ABC", "1ABC.pdb", 0.0, "/r/1ABC_aligned.pdb"),
-                     np.array([1.0, 2.0, 3.0]), box)
-
-
-def test_the_reference_geometry_survives_a_round_trip_to_disk(dirs):
-    """Array tasks read this back; a lossy round trip would silently move pockets."""
-    layout.write_reference(dirs, _reference((np.zeros(3), np.array([4.0, 5.0, 6.0]))).to_json())
-    assert np.allclose(load_reference(dirs).box[1], [4.0, 5.0, 6.0])
-
-
-def test_a_reference_with_no_pocket_round_trips_as_none(dirs):
-    layout.write_reference(dirs, _reference(None).to_json())
-    assert load_reference(dirs).box is None
+def test_the_reference_survives_a_round_trip_to_disk(dirs):
+    """Array tasks read this back."""
+    ctx = AlignmentContext("/r/1ABC_aligned.pdb", "A", "MKV", None, {}, {"B": (1.0, 2.0, 3.0)}, {},
+                           False, False)
+    ref = Reference("1ABC", ctx, Structure("1ABC", "1ABC.pdb", 0.0, "/r/1ABC_aligned.pdb"))
+    layout.write_reference(dirs, ref.to_json())
+    assert load_reference(dirs) == ref
 
 
 def test_a_task_before_prepare_says_to_run_prepare(cfg, dirs, manifest):
@@ -146,20 +137,20 @@ def test_collect_refuses_when_no_structure_succeeded(cfg, dirs):
 
 def test_collect_fills_master_from_the_sidecars(cfg, dirs):
     for pid in PDB_IDS:
-        write_part(dirs, pid, ligand_file=f"/lig/{pid}.pdb")
+        write_part(dirs, pid, cavities_file=f"/cav/{pid}.csv")
     collect(dirs)
     df = pd.read_csv(dirs["metadata"] / "master.csv")
-    assert list(df["ligand_file"]) == [f"/lig/{p}.pdb" for p in PDB_IDS]
+    assert list(df["cavities_file"]) == [f"/cav/{p}.csv" for p in PDB_IDS]
 
 
 def test_a_missing_structure_does_not_shift_the_other_rows(cfg, dirs):
     """Rows are matched by pdb_id. Assigning a short list positionally, which is
     what the old code did, would slide 3GHI's result onto 2DEF."""
-    write_part(dirs, "1ABC", ligand_file="/lig/1ABC.pdb")
-    write_part(dirs, "3GHI", ligand_file="/lig/3GHI.pdb")
+    write_part(dirs, "1ABC", cavities_file="/cav/1ABC.csv")
+    write_part(dirs, "3GHI", cavities_file="/cav/3GHI.csv")
     collect(dirs)
     df = pd.read_csv(dirs["metadata"] / "master.csv").set_index("pdb_id")
-    assert df.loc["3GHI", "ligand_file"] == "/lig/3GHI.pdb"
+    assert df.loc["3GHI", "cavities_file"] == "/cav/3GHI.csv"
 
 
 def test_a_structure_with_no_sidecar_is_reported_as_failed(cfg, dirs):

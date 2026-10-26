@@ -1,4 +1,10 @@
 """Reading a complex, splitting it, and writing a docking-ready structure."""
+from pathlib import Path
+
+import pytest
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
 from qpocket.io import interactions as interactions_io
 
 TWO_GLYCINES = """\
@@ -51,3 +57,38 @@ def test_ligand_absent_from_the_file_reports_the_sentinel(tmp_path):
     path = tmp_path / "apo.pdb"
     path.write_text(TWO_GLYCINES, encoding="utf-8")
     assert interactions_io.interactions_for(path, "LIG") == ["no_ligand_found"]
+
+
+GLYCINE_PQR = "ATOM      1  N   GLY     1       0.000   0.000   0.000  0.0000 1.8240\n"
+
+
+def test_each_ligand_gets_its_own_residue_number(tmp_path):
+    pqr = tmp_path / "p.pqr"
+    pqr.write_text(GLYCINE_PQR, encoding="utf-8")
+    mol = Chem.AddHs(Chem.MolFromSmiles("CO"))
+    AllChem.EmbedMolecule(mol, randomSeed=1)
+    out = interactions_io.write_complex(tmp_path / "c.pdb", pqr, [(mol, "lig"), (None, "BAD"), (mol, "LIG")])
+    het = [l for l in out.read_text().splitlines() if l.startswith("HETATM")]
+    assert {(l[17:20], l[21], int(l[22:26])) for l in het} == {("LIG", "A", 900), ("LIG", "A", 902)}
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures/complexes"
+
+
+@pytest.mark.skipif(not (FIXTURES / "1STP.pqr").exists(), reason="run scripts/make_complex_fixtures.py first")
+def test_two_same_name_ligands_keep_separate_contacts(tmp_path):
+    from rdkit.Geometry import Point3D
+
+    mol_a = interactions_io.protonated_ligand(FIXTURES / "1STP_ligand.pdb")
+    mol_b = Chem.Mol(mol_a)
+    conf = mol_b.GetConformer()
+    for i in range(mol_b.GetNumAtoms()):  # far from the protein: no contacts
+        p = conf.GetAtomPosition(i)
+        conf.SetAtomPosition(i, Point3D(p.x + 80.0, p.y, p.z))
+    out = interactions_io.write_complex(tmp_path / "c.pdb", FIXTURES / "1STP.pqr",
+                                        [(mol_a, "BTN"), (mol_b, "BTN")])
+    a = interactions_io.interactions_for(out, "BTN", ligand_resseq=900)
+    b = interactions_io.interactions_for(out, "BTN", ligand_resseq=901)
+    assert a != b
+    assert {e.split("|")[0].rsplit("_", 1)[0] for e in a} >= {"ASN_23", "ASP_128"}  # hydroxyls unoptimised here
+    assert b == ["no_ligand_found"]
