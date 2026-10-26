@@ -79,3 +79,15 @@ def test_reference_residues_are_loaded_once_per_process(tmp_path):
     first = reference.reference_residues(str(pdb), "A")
     assert reference.reference_residues(str(pdb), "A") is first
     assert reference.reference_residues.cache_info().hits == 1
+
+
+def test_the_sites_task_runs_the_same_steps_as_the_serial_run():
+    """One implementation of the science, two ways of scheduling it."""
+    body = _function("pipelines/tasks.py", "task_sites")
+    for step in ("collect_from_parts", "discover_sites", "extract_all_sites", "save_run_config"):
+        assert step in body, step
+
+
+def test_the_site_featurize_task_reuses_the_site_featuriser():
+    assert "featurize_pocket" in _function("arms/sites.py", "run_site_task")
+    assert "_featurize_pocket" in _function("arms/sites.py", "featurize_pocket")

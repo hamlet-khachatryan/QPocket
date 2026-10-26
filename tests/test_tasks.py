@@ -12,8 +12,6 @@ failed structure shifting every later row of ``master.csv``.
 from __future__ import annotations
 
 
-import h5py
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -101,12 +99,27 @@ def test_an_unknown_stage_is_refused(cfg, dirs):
 
 def test_a_per_structure_stage_needs_a_manifest(cfg, dirs):
     with pytest.raises(TaskError, match="needs --manifest"):
-        run_task("featurize", cfg, dirs)
+        run_task("structure", cfg, dirs)
 
 
-def test_the_unimplemented_apbs_split_says_so(cfg, dirs, manifest):
-    """Better a clear refusal than silently doing the same work twice."""
-    with pytest.raises(TaskError, match="split_apbs_stage"):
+@pytest.mark.parametrize("stage", tasks.SITE_TASKS)
+def test_a_site_stage_needs_a_site(stage, dirs, manifest):
+    from qpocket.arms.sites import run_site_task
+
+    with pytest.raises(TaskError, match="needs --site"):
+        run_site_task(stage, dirs.root, None, manifest=manifest, index=0)
+
+
+def test_a_site_featurize_task_on_an_unknown_run_is_a_task_error(dirs, manifest):
+    """A site error must surface as a TaskError, so the CLI exits 1 rather than tracing back."""
+    from qpocket.arms.sites import run_site_task
+
+    with pytest.raises(TaskError, match="not a QPocket run"):
+        run_site_task("site_featurize", dirs.root, "site_01", manifest=manifest, index=0)
+
+
+def test_apbs_is_no_longer_a_task(cfg, dirs, manifest):
+    with pytest.raises(TaskError, match="unknown stage"):
         run_task("apbs", cfg, dirs, manifest=manifest, index=0)
 
 
@@ -124,15 +137,15 @@ def test_the_reference_survives_a_round_trip_to_disk(dirs):
 
 def test_a_task_before_prepare_says_to_run_prepare(cfg, dirs, manifest):
     with pytest.raises(TaskError, match="prepare"):
-        run_task("featurize", cfg, dirs, manifest=manifest, index=1)
+        run_task("structure", cfg, dirs, manifest=manifest, index=1)
 
 
 # --- collect ---------------------------------------------------------------
 
 
-def test_collect_refuses_when_no_structure_succeeded(cfg, dirs):
+def test_sites_refuses_when_no_structure_succeeded(cfg, dirs):
     with pytest.raises(TaskError, match="no per-structure sidecars"):
-        run_task("collect", cfg, dirs)
+        run_task("sites", cfg, dirs)
 
 
 def test_collect_fills_master_from_the_sidecars(cfg, dirs):
@@ -161,36 +174,6 @@ def test_a_structure_with_no_sidecar_is_reported_as_failed(cfg, dirs):
     assert list(pd.read_csv(dirs["metadata"] / "master.csv")["pdb_id"]) == ["1ABC"]
 
 
-@pytest.mark.skip(reason="run-level archives moved per site; SLURM per-site collect is Task 13")
-def test_collect_writes_the_interaction_archives(cfg, dirs):
-    for pid in PDB_IDS:
-        write_part(dirs, pid)
-    collect(dirs)
-    with h5py.File(dirs["metadata"] / "observed_interactions.h5", "r") as hf:
-        assert sorted(hf.keys()) == sorted(PDB_IDS)
-
-
-@pytest.mark.skip(reason="run-level archives moved per site; SLURM per-site collect is Task 13")
-def test_archive_key_order_follows_master_not_the_glob(cfg, dirs):
-    """HDF5 keeps insertion order and the frequency tables break ties on it, so
-    globbing the sidecars would make the output depend on the scheduling."""
-    for pid in reversed(PDB_IDS):
-        write_part(dirs, pid)
-    collect(dirs)
-    with h5py.File(dirs["metadata"] / "observed_interactions.h5", "r") as hf:
-        # h5py lists keys alphabetically; insertion order is what we control.
-        assert set(hf.keys()) == set(PDB_IDS)
-
-
-@pytest.mark.skip(reason="run-level archives moved per site; SLURM per-site collect is Task 13")
-def test_actives_are_written_in_master_order(cfg, dirs):
-    write_part(dirs, "3GHI", smiles=("CCO", "LIG"))
-    write_part(dirs, "1ABC", smiles=("CCN", "LGB"))
-    collect(dirs)
-    lines = (dirs["screening"] / "actives.smi").read_text().splitlines()
-    assert [ln.split("\t")[1] for ln in lines[1:]] == ["1ABC", "3GHI"]
-
-
 def test_an_unreadable_sidecar_does_not_abort_the_merge(cfg, dirs):
     write_part(dirs, "1ABC")
     (layout.parts_dir(dirs) / "2DEF.json").write_text("{ not json")
@@ -202,30 +185,11 @@ def test_an_unreadable_sidecar_does_not_abort_the_merge(cfg, dirs):
 # --- per-structure stages --------------------------------------------------
 
 
-def test_featurize_skips_a_structure_that_already_has_a_sidecar(cfg, dirs, manifest):
+def test_structure_skips_a_structure_that_already_has_a_sidecar(cfg, dirs, manifest):
     """A resubmitted array must re-run only what is missing."""
     write_part(dirs, "1ABC")
-    run_task("featurize", cfg, dirs, manifest=manifest, index=0)  # must not raise
+    run_task("structure", cfg, dirs, manifest=manifest, index=0)  # must not raise
     assert (layout.parts_dir(dirs) / "1ABC.json").exists()
-
-
-def test_geodesic_refuses_a_structure_without_a_pocket(cfg, dirs, tmp_path):
-    path = tmp_path / "geodesic.txt"
-    path.write_text("1ABC\n")
-    with pytest.raises(TaskError, match="has no pocket"):
-        run_task("geodesic", cfg, dirs, manifest=path, index=0)
-
-
-def test_geodesic_builds_a_cache_for_a_real_pocket(cfg, dirs, tmp_path):
-    pocket = dirs["pockets"] / "1ABC"
-    pocket.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(0)
-    points = rng.random((40, 3)) * 3.0
-    pd.DataFrame({"x": points[:, 0], "y": points[:, 1], "z": points[:, 2]}).to_csv(pocket / "binding_site.csv", index=False)
-    path = tmp_path / "geodesic.txt"
-    path.write_text("1ABC\n")
-    run_task("geodesic", cfg, dirs, manifest=path, index=0)
-    assert (pocket / "geospectral_cache.npz").exists()
 
 
 def test_a_record_survives_its_sidecar(dirs):
@@ -233,8 +197,21 @@ def test_a_record_survives_its_sidecar(dirs):
     assert Structure.from_json(layout.read_part(dirs, "1ABC")) == original
 
 
-def test_featurize_manifest_lists_the_ingested_structures(cfg, dirs):
-    assert tasks.manifest_ids(cfg, dirs, "featurize") == PDB_IDS
+def test_structure_manifest_lists_the_ingested_structures(cfg, dirs):
+    assert tasks.manifest_ids(cfg, dirs, "structure") == PDB_IDS
+
+
+def test_site_featurize_manifest_lists_only_the_pocketed_structures(cfg, dirs):
+    site = layout.site_workspace(dirs, "site_01")
+    pd.DataFrame({"pdb_id": PDB_IDS}).to_csv(site.metadata / "master.csv", index=False)
+    for pid in ("3GHI", "1ABC"):
+        (site.pockets / pid).mkdir()
+        (site.pockets / pid / "binding_site.csv").write_text("x,y,z\n")
+    assert tasks.manifest_ids(cfg, dirs, "site_featurize", site="site_01") == ["1ABC", "3GHI"]
+
+
+def test_a_site_without_a_master_has_an_empty_manifest(cfg, dirs):
+    assert tasks.manifest_ids(cfg, dirs, "site_featurize", site="site_09") == []
 
 
 @pytest.mark.parametrize("stage", tasks.TASK_NAMES)
@@ -244,12 +221,17 @@ def test_every_task_command_wires_up(stage, tmp_path, monkeypatch):
 
     from qpocket.cli import cli
 
+    from qpocket.arms import sites
+
     called = {}
     monkeypatch.setattr(tasks, "run_task",
                         lambda name, cfg, dirs, **kw: called.update(name=name, kw=kw))
+    monkeypatch.setattr(sites, "run_site_task",
+                        lambda name, run_dir, site, **kw: called.update(name=name, kw=dict(kw, site=site)))
     config = tmp_path / "cfg.yaml"
     config.write_text("mode: pdb_query\nreference:\n  pdb_id: 1ABC\n  chain_id: A\n"
                       f"paths:\n  workdir: {tmp_path}\n", encoding="utf-8")
-    result = CliRunner().invoke(cli, ["task", stage, "--config", str(config)])
+    result = CliRunner().invoke(cli, ["task", stage, "--config", str(config), "--site", "site_01"])
     assert result.exit_code == 0, result.output
     assert called["name"] == stage
+    assert called["kw"].get("site") == ("site_01" if stage in tasks.SITE_TASKS else None)

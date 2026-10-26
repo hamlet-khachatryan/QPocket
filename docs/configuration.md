@@ -294,7 +294,6 @@ slurm:
   max_concurrent: 20      # simultaneously running array tasks (the %N)
   max_array_size: 1000    # cluster MaxArraySize; larger stages are split
   dependency: "afterany"  # "afterany" or "afterok"
-  split_apbs_stage: false # not yet implemented
 
   environment: []         # shell lines injected verbatim into every script
   # environment:
@@ -306,20 +305,26 @@ slurm:
     mem: "4G"
     time: "01:00:00"
 
-  stages:                 # keys: prepare, apbs, featurize, collect, geodesic, distance
-    featurize:
+  stages:                 # keys: prepare, structure, sites, site_featurize, site_cluster
+    structure:
+      cpus: 1
+      mem: "4G"
+      time: "02:00:00"
+    site_featurize:       # APBS runs here
       cpus: 1
       mem: "8G"
       time: "04:00:00"
-    geodesic:
-      cpus: 1
-      mem: "8G"
-      time: "02:00:00"
-    distance:
+    site_cluster:
       cpus: 16
       mem: "32G"
       time: "06:00:00"
 ```
+
+The run's stages are `prepare`, `structure` (one task per structure) and
+`sites`; `qpocket slurm generate --site site_01` writes that site's
+`site_featurize` (one task per cloud) and `site_cluster`. The old stage keys
+`apbs`, `featurize`, `collect`, `geodesic` and `distance`, and
+`split_apbs_stage`, are ignored with a warning; move their values to the new keys.
 
 `dependency: afterany` lets later stages start once an array finishes and skip
 whatever is missing; `afterok` blocks the whole chain if any single task fails.

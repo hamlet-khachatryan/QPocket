@@ -128,9 +128,10 @@ distance:
       max_iter: 300               # affinity propagation only
 
 slurm:
-  # Cluster submission for `qpocket slurm generate`. APBS dominates the runtime
-  # (216s of a 366s 21-structure run), so featurisation runs one task per
-  # structure. Nothing here is read unless you use the slurm commands.
+  # Cluster submission for `qpocket slurm generate`. Each structure is one array
+  # task in the run, and each cloud one array task when a site is featurised —
+  # APBS, the costliest step, runs there. Nothing here is read unless you use the
+  # slurm commands.
   account: null                 # --account; null omits the directive
   partition: "compute"          # --partition
   qos: null                     # --qos; null omits the directive
@@ -138,7 +139,6 @@ slurm:
   max_array_size: 1000          # cluster MaxArraySize; larger stages are split
   dependency: "afterany"        # "afterany" survives one bad structure;
                                 # "afterok" blocks the chain if any task fails
-  split_apbs_stage: false       # give APBS its own array stage and cache the grid
 
   environment: []
   # environment:
@@ -153,16 +153,16 @@ slurm:
     mem: "4G"
     time: "01:00:00"
 
-  stages:                       # per-stage overrides; keys: prepare, apbs,
-    featurize:                  # featurize, collect, geodesic, distance
+  stages:                       # per-stage overrides; keys: prepare, structure,
+    structure:                  # sites, site_featurize, site_cluster
+      cpus: 1
+      mem: "4G"
+      time: "02:00:00"          # protonation, contacts and cavities
+    site_featurize:
       cpus: 1
       mem: "8G"
-      time: "04:00:00"          # APBS runs here unless split_apbs_stage is true
-    geodesic:
-      cpus: 1
-      mem: "8G"
-      time: "02:00:00"
-    distance:
+      time: "04:00:00"          # APBS runs here
+    site_cluster:
       cpus: 16                  # joblib parallelism, not an array
       mem: "32G"
       time: "06:00:00"

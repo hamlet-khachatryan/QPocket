@@ -146,7 +146,7 @@ slurm:
     - "module load python/3.11"                # only if you used one in step 3
     - "source /home/<user>/QPocket/.venv/bin/activate"
   stages:
-    featurize: {cpus: 1, mem: "8G", time: "04:00:00"}   # APBS runs here
+    site_featurize: {cpus: 1, mem: "8G", time: "04:00:00"}   # APBS runs here
 ```
 
 Use **absolute paths** in `environment` and `workdir`: every job starts in a
@@ -199,7 +199,7 @@ Look at what was generated before spending allocation on it:
 
 ```bash
 ls   "$QP_RUNS/7KG6/slurm/"
-less "$QP_RUNS/7KG6/slurm/20_featurize.sbatch"
+less "$QP_RUNS/7KG6/slurm/10_structure.sbatch"
 ```
 
 Then submit the whole chain. Each stage waits for the previous one:
@@ -215,18 +215,22 @@ bash "$QP_RUNS/7KG6/slurm/submit_all.sh"
 ```bash
 squeue -u "$USER"                                  # what SLURM is doing
 qpocket slurm status --config my_target.yaml       # what is actually finished
-tail -f "$QP_RUNS/7KG6/slurm/logs/featurize_"*.err # one task's output
+tail -f "$QP_RUNS/7KG6/slurm/logs/structure_"*.err # one task's output
 ```
 
 `slurm status` reads the files on disk, so it still answers after the jobs have
 left `squeue`:
 
 ```
-stage               done   missing
-prepare              1/1   -
-featurize          19/21   4B1J, 6O9Y
-collect              0/1   metadata/observed_interactions.h5
+stage                   done   missing
+prepare                  1/1   -
+structure              19/21   4B1J, 6O9Y
+sites                    0/1   sites/sites.csv
 ```
+
+When `sites` is done, featurise and cluster a site the same way:
+`qpocket slurm generate --config my_target.yaml --site site_01`, then
+`bash "$QP_RUNS/7KG6/slurm/submit_site_01.sh"`.
 
 ---
 
@@ -241,18 +245,18 @@ bash "$QP_RUNS/7KG6/slurm/submit_all.sh"
 Rerun a single structure by hand, to see its error directly:
 
 ```bash
-qpocket task featurize --config my_target.yaml \
-  --manifest "$QP_RUNS/7KG6/slurm/manifests/featurize.txt" --index 3 --force
+qpocket task structure --config my_target.yaml \
+  --manifest "$QP_RUNS/7KG6/slurm/manifests/structure.txt" --index 3 --force
 ```
 
 | symptom | cause | fix |
 |---|---|---|
 | `qpocket: command not found` in a job log | `environment` does not activate the venv | absolute path to `.venv/bin/activate` in `slurm.environment`, then regenerate |
 | `apbs runs FAILED` from `qpocket doctor` | the wheel's binary cannot load its libraries on this OS | check step 2's table; this node needs a container or site modules |
-| featurize tasks hit `TIME LIMIT` | a large protein makes APBS slow | raise `slurm.stages.featurize.time`, regenerate, resubmit |
-| featurize tasks `OUT_OF_MEMORY` | APBS grid grows with protein size | raise `slurm.stages.featurize.mem` |
+| site_featurize tasks hit `TIME LIMIT` | a large protein makes APBS slow | raise `slurm.stages.site_featurize.time`, regenerate, resubmit |
+| site_featurize tasks `OUT_OF_MEMORY` | APBS grid grows with protein size | raise `slurm.stages.site_featurize.mem` |
 | `prepare` hangs or fails on network | compute nodes are offline | run `qpocket task prepare` on the login node (step 5) |
-| everything after featurize is empty | every featurize task failed | `slurm status`, then read one `featurize_*.err` |
+| `sites` finds no sidecars | every structure task failed | `slurm status`, then read one `structure_*.err` |
 | `index N is outside manifest` | scripts older than the manifest | `qpocket slurm generate` again |
 
 After changing anything under `slurm:` in the config, **regenerate** — the job

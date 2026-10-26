@@ -113,7 +113,7 @@ def test_the_command_group_is_registered(group):
 
 
 @pytest.mark.parametrize(
-    "stage", ["prepare", "apbs", "featurize", "collect", "geodesic", "distance"]
+    "stage", ["prepare", "structure", "sites", "site_featurize", "site_cluster"]
 )
 def test_every_array_stage_has_a_task_command(stage):
     """The generated sbatch scripts invoke these by name."""

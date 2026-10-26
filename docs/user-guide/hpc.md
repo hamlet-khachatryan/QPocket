@@ -5,11 +5,12 @@ The pipeline's cost is almost entirely APBS: on a 21-structure run it is 216 s o
 each one becomes its own array task.
 
 ```
-00_prepare     1 job       fetch, align, clean, locate the reference pocket
-20_featurize   array N     cavity -> APBS -> features -> PLIP, one per structure
-30_collect     1 job       merge per-structure results into the run-wide tables
-40_geodesic    array N     geodesic graph, one per pocket
-50_distance    1 job       fingerprints, distance matrices, clustering
+00_prepare               1 job     fetch the structures, build the reference
+10_structure             array N   align, clean, protonate, ligands, contacts, cavities
+20_sites                 1 job     collect, discover the sites, cut every site's clouds
+
+site_01_30_site_featurize  array M   features -> APBS, one per cloud of the site
+site_01_40_site_cluster    1 job     fingerprints, distance matrices, clustering
 ```
 
 ## 1. Install on the cluster
@@ -41,7 +42,7 @@ scratch directory inside the run, not the directory you submitted from.
 
 ## 3. Prepare, then generate
 
-The array stages are sized from `master.csv`, which `prepare` writes, so run it
+The structure stage is sized from the structures `prepare` ingests, so run it
 first:
 
 ```bash
@@ -71,17 +72,31 @@ qpocket slurm status --config run.yaml
 ```
 
 ```
-stage               done   missing
-prepare              1/1   -
-featurize          19/21   4B1J, 6O9Y
-collect              0/1   metadata/observed_interactions.h5
+stage                   done   missing
+prepare                  1/1   -
+structure              19/21   4B1J, 6O9Y
+sites                    0/1   sites/sites.csv
 ```
 
 Progress is read from the files on disk, not from `sacct`, so it keeps working
 after the scheduler has forgotten the jobs. Per-task logs are in
 `<run>/slurm/logs/`.
 
-## 5. Re-running
+## 5. Per-site analysis
+
+Once `sites` has finished, featurise and cluster a site on the cluster — one task
+per cloud, with APBS inside:
+
+```bash
+qpocket slurm generate --config run.yaml --site site_01
+bash <workdir>/<run>/slurm/submit_site_01.sh
+qpocket slurm status --config run.yaml --site site_01
+```
+
+A site's scripts, manifests and logs carry its id, so several sites can be
+generated and run side by side.
+
+## 6. Re-running
 
 Every task skips work whose output already exists. Resubmitting the same chain
 re-runs only what failed, and finishes in seconds when nothing did. Add `--force`
@@ -95,5 +110,5 @@ skip it. Set `slurm.dependency: afterok` for all-or-nothing.
 
 Per-stage requests live in `slurm.stages`; see the
 [configuration reference](../configuration.md#slurm). The defaults give
-featurisation 8 GB and 4 hours per structure — APBS memory grows with the grid,
+`site_featurize` 8 GB and 4 hours per cloud — APBS memory grows with the grid,
 so raise `mem` for very large proteins.

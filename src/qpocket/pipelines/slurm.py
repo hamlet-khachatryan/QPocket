@@ -1,27 +1,32 @@
 """Turning the pipeline into SLURM job arrays."""
 
-# The pipeline is one serial process, and profiling says almost all of it is one
-# call: on a 21-structure run, ``calculate_apbs_potential`` accounts for 216s of a
-# 366s wall clock, invoked once per structure inside a ``for`` loop. Nothing about
-# that loop is sequential — each structure reads its own cleaned PDB and writes its
-# own pocket directory — so the fix is to hand each structure to its own array task.
+# The pipeline is one serial process, and almost all of its time is spent per
+# structure: protonation, contacts and cavities in the run, and the APBS potential
+# when a site is featurised (216s of a 366s 21-structure run). Nothing about those
+# loops is sequential — each structure reads its own files and writes its own
+# results — so each structure is handed to its own array task.
 #
-# Three stages split that way: featurisation (optionally with APBS broken out into
-# a stage of its own), and the geodesic graph. The rest cannot:
+# A run is three stages, and each site is two more, generated per site once the
+# run has found its sites (``qpocket slurm generate --site site_01``):
 #
 # ``prepare``
 #     PyMOL's ``cmd`` is a module-level singleton holding one loaded reference
-#     object, so alignment cannot share a process. The reference pocket bounding
-#     box is also a hard dependency of every other structure's cavity selection.
+#     object, so alignment cannot share a process, and every structure aligns to
+#     the reference.
 #
-# ``collect``
-#     The HDF5 files, ``master.csv`` and the frequency tables each need every
-#     structure's result, and none of them tolerates concurrent writers.
+# ``structure``
+#     One task per structure, writing its own sidecar.
 #
-# ``distance``
-#     The feature scaler is fitted across all pockets at once, and the distance
-#     matrix is N x N. Measured at 4.2s for 21 structures, so it is given cores
-#     rather than tasks.
+# ``sites``
+#     Discovering the sites needs every structure's ligands, and master.csv, the
+#     site tables and each site's archives tolerate no concurrent writers.
+#
+# ``site_featurize``
+#     One task per cloud of the site; APBS runs here.
+#
+# ``site_cluster``
+#     The feature scaler is fitted across all of a site's pockets at once and the
+#     distance matrix is N x N, so it is given cores rather than tasks.
 #
 # What this module writes is plain sbatch text — no scheduler library, no daemon.
 # You can read every script before spending an hour of cluster time on it, which is
@@ -48,7 +53,7 @@ class StageSpec(NamedTuple):
         name: Stage name, used for the config key, manifest and log prefix.
         order: Two-digit prefix that sorts the generated scripts.
         array: Whether this stage runs one task per structure.
-        artifact: Path of the file a finished task leaves behind, relative to the run root.
+        artifact: Path of the file a finished task leaves behind, relative to the run root, with ``{pdb_id}`` and ``{site}`` placeholders.
         summary: One line describing the stage, written into the script.
     """
 
@@ -59,34 +64,42 @@ class StageSpec(NamedTuple):
     summary: str
 
 
-#: The pipeline as SLURM sees it, in dependency order.
+#: The run as SLURM sees it, in dependency order.
 STAGES: Tuple[StageSpec, ...] = (
     StageSpec("prepare", 0, False, "metadata/reference.json",
               "fetch the structures and build the reference"),
-    StageSpec("apbs", 10, True, "pockets/{pdb_id}/apbs/mol.dx",
-              "Poisson-Boltzmann potential grid, one task per structure"),
-    StageSpec("featurize", 20, True, "pockets/{pdb_id}/featurized.csv",
-              "align, clean, pocket, contacts and features, one task per structure"),
-    StageSpec("collect", 30, False, "metadata/observed_interactions.h5",
-              "merge per-structure results into master.csv, HDF5 and frequencies"),
-    StageSpec("distance", 50, False, "metadata/spectral_distance_matrix.csv",
-              "spectral fingerprints, distance matrices and clustering"),
+    StageSpec("structure", 10, True, "structures/cavities/{pdb_id}.csv",
+              "align, clean, protonate, ligands, contacts and cavities, one task per structure"),
+    StageSpec("sites", 20, False, "sites/sites.csv",
+              "collect the structures, discover the sites, cut every site's clouds and snapshot the config"),
 )
 
-STAGES_BY_NAME: Dict[str, StageSpec] = {s.name: s for s in STAGES}
+#: One binding site's stages, generated with ``--site``, in dependency order.
+SITE_STAGES: Tuple[StageSpec, ...] = (
+    StageSpec("site_featurize", 30, True, "sites/{site}/pockets/{pdb_id}/featurized.csv",
+              "features and APBS potential, one task per cloud of the site"),
+    StageSpec("site_cluster", 40, False, "sites/{site}/metadata/spectral_distance_matrix.csv",
+              "spectral fingerprints, distance matrices and two-stage clustering of the site"),
+)
+
+STAGES_BY_NAME: Dict[str, StageSpec] = {s.name: s for s in STAGES + SITE_STAGES}
 
 
-def active_stages(cfg) -> Tuple[StageSpec, ...]:
-    """The stages to generate, honouring ``slurm.split_apbs_stage``.
+def stages_for(site: Optional[str]) -> Tuple[StageSpec, ...]:
+    """The stages to generate: the run's, or one site's.
 
     Args:
-        cfg: A loaded :class:`~qpocket.config.QPocketConfig`.
+        site: The site, such as ``site_01``, or None for the run.
 
     Returns:
         Stage specs in dependency order.
     """
-    split = bool(getattr(cfg.slurm, "split_apbs_stage", False))
-    return tuple(s for s in STAGES if split or s.name != "apbs")
+    return SITE_STAGES if site else STAGES
+
+
+def _prefix(site: Optional[str]) -> str:
+    """File-name prefix keeping a site's scripts, manifests and logs apart from the run's."""
+    return f"{site}_" if site else ""
 
 
 class _Request(NamedTuple):
@@ -121,11 +134,16 @@ def _clock(minutes: int) -> str:
     return f"{days}-{text}" if days else text
 
 
-def _plugin_resources(cfg):
+def _plugin_resources(cfg, stage_name: str):
+    """Resources the plug-ins running inside a stage declare: contacts in structure, features and charges in site_featurize."""
     from qpocket.core.ports import CHARGES, CONTACTS, FEATURES
 
-    plugins = (list(FEATURES.resolve(list(cfg.features.enabled))) + [CHARGES.get(cfg.charges.use)]
-               + list(CONTACTS.resolve(list(cfg.contacts.use))))
+    if stage_name == "structure":
+        plugins = list(CONTACTS.resolve(list(cfg.contacts.use)))
+    elif stage_name == "site_featurize":
+        plugins = list(FEATURES.resolve(list(cfg.features.enabled))) + [CHARGES.get(cfg.charges.use)]
+    else:
+        plugins = []
     return [p.resources for p in plugins]
 
 
@@ -134,7 +152,7 @@ def stage_resources(cfg, stage_name: str):
 
     Args:
         cfg: A loaded config.
-        stage_name: One of the names in :data:`STAGES`.
+        stage_name: One of the names in :data:`STAGES_BY_NAME`.
 
     Returns:
         An object carrying ``cpus``, ``mem``, ``time`` and ``gpu``.
@@ -143,9 +161,9 @@ def stage_resources(cfg, stage_name: str):
     base = overrides[stage_name] if stage_name in overrides else cfg.slurm.defaults
     request = _Request(int(base.cpus), str(base.mem), str(base.time),
                        int(getattr(base, "gpu", 0) or 0))
-    if stage_name != "featurize" or stage_name in overrides:
+    needs = [] if stage_name in overrides else _plugin_resources(cfg, stage_name)
+    if not needs:
         return request
-    needs = _plugin_resources(cfg)
     mem = max([_mem_gb(request.mem)] + [r.mem_gb for r in needs])
     minutes = max([_minutes(request.time)] + [r.walltime_min for r in needs])
     return _Request(
@@ -164,18 +182,25 @@ def slurm_dir(dirs: Dict[str, Path]) -> Path:
     return root
 
 
-def write_manifest(dirs: Dict[str, Path], stage: StageSpec, pdb_ids: Sequence[str]) -> Path:
+def manifest_path(dirs: Dict[str, Path], stage: StageSpec, site: Optional[str] = None) -> Path:
+    """Where a stage's manifest lives; a site's carries the site id in its name."""
+    return slurm_dir(dirs) / "manifests" / f"{_prefix(site)}{stage.name}.txt"
+
+
+def write_manifest(dirs: Dict[str, Path], stage: StageSpec, pdb_ids: Sequence[str],
+                   site: Optional[str] = None) -> Path:
     """Write one PDB ID per line for an array stage to index into.
 
     Args:
         dirs: Directory map from ``layout.create``.
         stage: The stage this manifest belongs to.
         pdb_ids: Structures to process, in order.
+        site: The site, for a per-site stage.
 
     Returns:
         Path to the manifest.
     """
-    path = slurm_dir(dirs) / "manifests" / f"{stage.name}.txt"
+    path = manifest_path(dirs, stage, site)
     path.write_text("".join(f"{pid}\n" for pid in pdb_ids), encoding="utf-8")
     return path
 
@@ -202,7 +227,7 @@ def chunk_bounds(n_tasks: int, max_array_size: int) -> List[Tuple[int, int]]:
 
 
 def _directives(cfg, stage: StageSpec, log_dir: Path, job_name: str,
-                n_tasks: Optional[int]) -> List[str]:
+                n_tasks: Optional[int], site: Optional[str] = None) -> List[str]:
     """The ``#SBATCH`` block for one script."""
     res = stage_resources(cfg, stage.name)
     sl = cfg.slurm
@@ -216,8 +241,8 @@ def _directives(cfg, stage: StageSpec, log_dir: Path, job_name: str,
         f"#SBATCH --time={res.time}",
         *([f"#SBATCH --gres=gpu:{res.gpu}"] if res.gpu else []),
         # Absolute, so logs land beside the run and not in the submit directory.
-        f"#SBATCH --output={log_dir}/{stage.name}_{pattern}.out",
-        f"#SBATCH --error={log_dir}/{stage.name}_{pattern}.err",
+        f"#SBATCH --output={log_dir}/{_prefix(site)}{stage.name}_{pattern}.out",
+        f"#SBATCH --error={log_dir}/{_prefix(site)}{stage.name}_{pattern}.err",
     ]
     if sl.account:
         lines.insert(1, f"#SBATCH --account={sl.account}")
@@ -237,6 +262,7 @@ def render_sbatch(
     offset: int = 0,
     manifest: Optional[Path] = None,
     chunk: Optional[int] = None,
+    site: Optional[str] = None,
 ) -> str:
     """Render one sbatch script.
 
@@ -249,6 +275,7 @@ def render_sbatch(
         offset: Added to ``SLURM_ARRAY_TASK_ID`` to index the manifest, for a stage split across several scripts.
         manifest: Manifest path, required for an array stage.
         chunk: Chunk number, appended to the job name when a stage is split.
+        site: The site a per-site stage works on, passed to the task as ``--site``.
 
     Returns:
         The script text.
@@ -260,12 +287,13 @@ def render_sbatch(
         raise ValueError(f"array stage {stage.name!r} needs a manifest")
 
     root = slurm_dir(dirs)
-    job_name = f"qp_{stage.name}" + (f"_{chunk}" if chunk is not None else "")
+    job_name = f"qp_{_prefix(site)}{stage.name}" + (f"_{chunk}" if chunk is not None else "")
 
     command = [
         "qpocket", "task", stage.name,
         "--config", str(Path(config_path).resolve()),
         "--workdir", str(Path(dirs["root"]).resolve().parent),
+        *(["--site", site] if site else []),
     ]
     if n_tasks is not None:
         command += [
@@ -289,7 +317,7 @@ def render_sbatch(
 
     return "\n".join([
         "#!/usr/bin/env bash",
-        *_directives(cfg, stage, root / "logs", job_name, n_tasks),
+        *_directives(cfg, stage, root / "logs", job_name, n_tasks, site),
         # --chdir keeps stray writes (APBS drops an io.mc beside the process) out
         # of the directory you submitted from.
         f"#SBATCH --chdir={root / 'scratch'}",
@@ -312,6 +340,7 @@ def write_scripts(
     config_path: Path,
     pdb_ids: Sequence[str],
     stages: Optional[Sequence[str]] = None,
+    site: Optional[str] = None,
 ) -> Dict[str, List[Path]]:
     """Write every stage's sbatch script and manifest.
 
@@ -319,8 +348,9 @@ def write_scripts(
         cfg: A loaded config.
         dirs: Directory map for the run.
         config_path: Config the workers should load.
-        pdb_ids: Structures to process in the array stages.
+        pdb_ids: Structures to process in the array stage.
         stages: Restrict to these stage names.
+        site: Write this site's stages instead of the run's.
 
     Returns:
         Stage name to the scripts written for it, in submission order.
@@ -329,28 +359,29 @@ def write_scripts(
     wanted = None if stages is None else set(stages)
     written: Dict[str, List[Path]] = {}
 
-    for stage in active_stages(cfg):
+    for stage in stages_for(site):
         if wanted is not None and stage.name not in wanted:
             continue
+        stem = f"{_prefix(site)}{stage.order:02d}_{stage.name}"
 
         if not stage.array:
-            path = root / f"{stage.order:02d}_{stage.name}.sbatch"
-            path.write_text(render_sbatch(cfg, dirs, stage, config_path), encoding="utf-8")
+            path = root / f"{stem}.sbatch"
+            path.write_text(render_sbatch(cfg, dirs, stage, config_path, site=site), encoding="utf-8")
             path.chmod(0o755)
             written[stage.name] = [path]
             continue
 
-        manifest = write_manifest(dirs, stage, pdb_ids)
+        manifest = write_manifest(dirs, stage, pdb_ids, site)
         bounds = chunk_bounds(len(pdb_ids), cfg.slurm.max_array_size)
         paths: List[Path] = []
         for index, (offset, size) in enumerate(bounds):
             suffix = "" if len(bounds) == 1 else f"_{index}"
-            path = root / f"{stage.order:02d}_{stage.name}{suffix}.sbatch"
+            path = root / f"{stem}{suffix}.sbatch"
             path.write_text(
                 render_sbatch(
                     cfg, dirs, stage, config_path,
                     n_tasks=size, offset=offset, manifest=manifest,
-                    chunk=None if len(bounds) == 1 else index,
+                    chunk=None if len(bounds) == 1 else index, site=site,
                 )
             , encoding="utf-8")
             path.chmod(0o755)
@@ -360,22 +391,25 @@ def write_scripts(
     log_message(
         message_type="slurm_scripts_written",
         directory=str(root),
+        site=site,
         n_structures=len(pdb_ids),
         stages={k: len(v) for k, v in written.items()},
     )
     return written
 
 
-def write_submit_all(cfg, dirs: Dict[str, Path], scripts: Dict[str, List[Path]]) -> Path:
+def write_submit_all(cfg, dirs: Dict[str, Path], scripts: Dict[str, List[Path]],
+                     site: Optional[str] = None) -> Path:
     """Write the driver that submits every stage with the right dependencies.
 
     Args:
         cfg: A loaded config.
         dirs: Directory map for the run.
         scripts: Output of :func:`write_scripts`.
+        site: The site the scripts belong to, or None for the run.
 
     Returns:
-        Path to ``submit_all.sh``.
+        Path to ``submit_all.sh``, or ``submit_<site>.sh`` for a site.
     """
     root = slurm_dir(dirs)
     dependency = cfg.slurm.dependency
@@ -390,7 +424,7 @@ def write_submit_all(cfg, dirs: Dict[str, Path], scripts: Dict[str, List[Path]])
         "",
     ]
 
-    for stage in active_stages(cfg):
+    for stage in stages_for(site):
         paths = scripts.get(stage.name) or []
         if not paths:
             lines += [f"# stage '{stage.name}': nothing to submit", ""]
@@ -412,20 +446,21 @@ def write_submit_all(cfg, dirs: Dict[str, Path], scripts: Dict[str, List[Path]])
 
     lines += ['echo "All stages submitted."', ""]
 
-    path = root / "submit_all.sh"
+    path = root / (f"submit_{site}.sh" if site else "submit_all.sh")
     path.write_text("\n".join(lines), encoding="utf-8")
     path.chmod(0o755)
     return path
 
 
 def submit(dirs: Dict[str, Path], scripts: Dict[str, List[Path]],
-           dependency: str = "afterany") -> Dict[str, List[str]]:
+           dependency: str = "afterany", site: Optional[str] = None) -> Dict[str, List[str]]:
     """Submit the stages with ``sbatch --parsable`` and record the job IDs.
 
     Args:
         dirs: Directory map for the run.
         scripts: Output of :func:`write_scripts`.
         dependency: ``afterany`` or ``afterok``.
+        site: The site the scripts belong to, which names the record.
 
     Returns:
         Stage name to the job IDs submitted for it.
@@ -467,39 +502,40 @@ def submit(dirs: Dict[str, Path], scripts: Dict[str, List[Path]],
             if ids:
                 previous = ids
 
-    record = slurm_dir(dirs) / SUBMISSION_RECORD
+    record = slurm_dir(dirs) / f"{_prefix(site)}{SUBMISSION_RECORD}"
     record.write_text(json.dumps(submitted, indent=2) + "\n", encoding="utf-8")
     return submitted
 
 
-def stage_progress(cfg, dirs: Dict[str, Path]) -> List[Dict[str, object]]:
+def stage_progress(cfg, dirs: Dict[str, Path], site: Optional[str] = None) -> List[Dict[str, object]]:
     """How far each stage has got, judged by the files on disk.
 
     Args:
         cfg: A loaded config.
         dirs: Directory map for the run.
+        site: Report this site's stages instead of the run's.
 
     Returns:
         One record per stage with ``stage``, ``expected``, ``complete`` and ``missing`` (the first few incomplete PDB IDs).
     """
     root = Path(dirs["root"])
-    manifest_dir = slurm_dir(dirs) / "manifests"
     out: List[Dict[str, object]] = []
 
-    for stage in active_stages(cfg):
+    for stage in stages_for(site):
         if not stage.array:
-            done = (root / stage.artifact).exists()
+            artifact = stage.artifact.format(site=site)
+            done = (root / artifact).exists()
             out.append({
                 "stage": stage.name, "expected": 1,
-                "complete": int(done), "missing": [] if done else [stage.artifact],
+                "complete": int(done), "missing": [] if done else [artifact],
             })
             continue
 
-        manifest = manifest_dir / f"{stage.name}.txt"
+        manifest = manifest_path(dirs, stage, site)
         pdb_ids = read_manifest(manifest) if manifest.exists() else []
         missing = [
             pid for pid in pdb_ids
-            if not (root / stage.artifact.format(pdb_id=pid)).exists()
+            if not (root / stage.artifact.format(pdb_id=pid, site=site)).exists()
         ]
         out.append({
             "stage": stage.name,

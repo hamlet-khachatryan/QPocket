@@ -19,6 +19,7 @@ from qpocket.pipelines import parallel, structure
 from qpocket.pipelines.clustering import archive_clustering, cluster_shape_only, write_clustering
 from qpocket.pipelines.distance import compute_shape_matrix, compute_spectral_distance_matrix, pocket_manifest
 from qpocket.pipelines.sites import discover_sites, extract_all_sites, read_sites
+from qpocket.pipelines.tasks import TaskError, resolve_pdb_id
 
 PARKED = ".regroup_"
 NEEDS_FEATURES = "two-stage clustering needs featurised pockets; run Featurise first"
@@ -70,6 +71,15 @@ def _job_pdb(job: Tuple[Path, str]) -> str:
     return job[0].parent.name
 
 
+def _cleaned(ws: Workspace) -> Dict[str, str]:
+    return dict(pd.read_csv(ws.metadata / "master.csv", dtype=str, keep_default_na=False)[["pdb_id", "cleaned_file"]].values)
+
+
+def _stale(cloud: Path) -> bool:
+    done = cloud.with_name("featurized.csv")
+    return not done.exists() or done.stat().st_mtime < cloud.stat().st_mtime
+
+
 def featurize_site(run_dir: Path, site_id: str, workers: Optional[int] = None) -> List[str]:
     """Featurise every cloud of a site that is not already featurised.
 
@@ -85,11 +95,9 @@ def featurize_site(run_dir: Path, site_id: str, workers: Optional[int] = None) -
         SiteError: If the directory is not a run or the site is not in sites.csv.
     """
     cfg, ws = _site(run_dir, site_id)
-    cleaned = dict(pd.read_csv(ws.metadata / "master.csv", dtype=str, keep_default_na=False)[["pdb_id", "cleaned_file"]].values)
+    cleaned = _cleaned(ws)
     clouds, _ = pocket_manifest(cfg, ws, require_features=False)
-    done = [p.with_name("featurized.csv") for p in clouds]
-    jobs = [(p, cleaned[p.parent.name]) for p, f in zip(clouds, done)
-            if not f.exists() or f.stat().st_mtime < p.stat().st_mtime]
+    jobs = [(p, cleaned[p.parent.name]) for p in clouds if _stale(p)]
     results = parallel.run_map(
         guarded("featurize", partial(_featurize_pocket, cfg), _job_pdb), jobs,
         workers=cfg.compute.workers if workers is None else workers, backend=cfg.compute.backend,
@@ -97,6 +105,64 @@ def featurize_site(run_dir: Path, site_id: str, workers: Optional[int] = None) -
     # featurize logs and returns on a failed pocket, so the file is the evidence.
     return [job[0].parent.name for job, res in zip(jobs, results)
             if not isinstance(res, Failure) and job[0].with_name("featurized.csv").exists()]
+
+
+def featurize_pocket(run_dir: Path, site_id: str, pdb_id: str, force: bool = False) -> bool:
+    """Featurise one cloud of a site, the unit of a SLURM array task.
+
+    Args:
+        run_dir: The run directory.
+        site_id: The site.
+        pdb_id: The structure whose cloud to featurise.
+        force: Featurise even when featurized.csv is newer than the cloud.
+
+    Returns:
+        Whether the cloud was featurised now; False when it was already up to date.
+
+    Raises:
+        SiteError: If the run or site is unknown, or the structure has no cloud at this site.
+    """
+    cfg, ws = _site(run_dir, site_id)
+    cloud = ws.pockets / pdb_id / "binding_site.csv"
+    if not cloud.is_file():
+        raise SiteError(f"{pdb_id} has no cloud at {site_id} ({cloud} not found)")
+    if not (force or _stale(cloud)):
+        return False
+    _featurize_pocket(cfg, (cloud, _cleaned(ws)[pdb_id]))
+    return True
+
+
+def run_site_task(name: str, run_dir: Path, site_id: Optional[str], manifest: Optional[Path] = None,
+                  index: Optional[int] = None, force: bool = False) -> None:
+    """One per-site SLURM stage: featurise one cloud, or cluster the site.
+
+    Args:
+        name: ``site_featurize`` or ``site_cluster``.
+        run_dir: The run directory.
+        site_id: The site.
+        manifest: Manifest path, required for ``site_featurize``.
+        index: Row within the manifest, required for ``site_featurize``.
+        force: Featurise even when featurized.csv is up to date; clustering always reruns.
+
+    Raises:
+        TaskError: On a missing site, manifest or index, a site error, or a featurisation that wrote nothing.
+    """
+    if not site_id:
+        raise TaskError(f"stage {name!r} needs --site")
+    try:
+        if name == "site_cluster":
+            two_stage_site(run_dir, site_id)
+            return
+        if manifest is None or index is None:
+            raise TaskError(f"stage {name!r} needs --manifest and --index")
+        pdb_id = resolve_pdb_id(manifest, index)
+        featurize_pocket(run_dir, site_id, pdb_id, force=force)
+    except SiteError as e:
+        raise TaskError(str(e)) from e
+    # featurize logs and returns on a failed pocket; an array task must fail loudly instead.
+    out = _site_ws(run_dir, site_id).pockets / pdb_id / "featurized.csv"
+    if not out.exists():
+        raise TaskError(f"featurisation of {pdb_id} at {site_id} wrote no {out}")
 
 
 def shape_cluster_site(run_dir: Path, site_id: str) -> Path:

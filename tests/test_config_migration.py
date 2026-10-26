@@ -169,6 +169,18 @@ def test_ligand_id_is_obsolete():
     assert any("reference.pocket_mode is obsolete" in w for w in warnings)
 
 
+def test_the_old_slurm_stages_load_with_a_warning(tmp_path):
+    """A config written for the apbs/featurize/distance stages must still load, not fail validation."""
+    path = tmp_path / "old.yaml"
+    path.write_text("reference:\n  pdb_id: 1ABC\nslurm:\n  split_apbs_stage: true\n  stages:\n"
+                    "    featurize: {cpus: 1, mem: 8G, time: '04:00:00'}\n"
+                    "    distance: {cpus: 16, mem: 32G, time: '06:00:00'}\n", encoding="utf-8")
+    cfg, notices = load_with_notices(str(path))
+    assert set(cfg.slurm.stages) == {"structure", "site_featurize", "site_cluster"}
+    for key in ("slurm.split_apbs_stage", "slurm.stages.featurize", "slurm.stages.distance"):
+        assert any(f"{key} is obsolete" in n for n in notices), key
+
+
 def test_sites_defaults():
     s = QPocketConfig().sites
     assert (s.min_heavy_atoms, s.link_cutoff, s.box_padding) == (6, 4.0, 4.0)

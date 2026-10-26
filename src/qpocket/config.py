@@ -185,10 +185,9 @@ class SlurmConfig:
         max_concurrent: Simultaneously running array tasks, the ``%N`` in ``--array``.
         max_array_size: Cluster's ``MaxArraySize``.
         dependency: ``"afterany"`` lets later stages start once an array has finished and skip whatever is missing; ``"afterok"`` blocks the whole chain if any single task fails.
-        split_apbs_stage: Give APBS its own array stage, caching the potential grid per structure, instead of running it inside featurisation.
         environment: Shell lines injected verbatim at the top of every script, for ``module load`` / ``conda activate`` / ``source .../activate``.
         defaults: Resources for any stage without an entry in ``stages``.
-        stages: Per-stage resource overrides, keyed by stage name.
+        stages: Per-stage resource overrides, keyed by stage name: prepare, structure, sites, site_featurize, site_cluster.
     """
     account: Optional[str] = None
     partition: str = "compute"
@@ -196,7 +195,6 @@ class SlurmConfig:
     max_concurrent: int = 20
     max_array_size: int = 1000
     dependency: Literal["afterany", "afterok"] = "afterany"
-    split_apbs_stage: bool = False
     environment: List[str] = field(default_factory=list)
     defaults: SlurmStageResources = field(default_factory=SlurmStageResources)
     stages: Dict[str, SlurmStageResources] = field(default_factory=dict)
@@ -392,6 +390,14 @@ LEGACY_KEYS: Dict[str, Optional[str]] = {
     "reference.ligand_chain_id": None,
     "reference.pocket_mode": None,
     "reference.bounding_box": None,
+    # The SLURM stages were rebuilt around sites. featurize, collect and distance
+    # have no 1:1 successor whose base default would not mask the user's value.
+    "slurm.split_apbs_stage": None,
+    "slurm.stages.apbs": None,
+    "slurm.stages.featurize": None,
+    "slurm.stages.collect": None,
+    "slurm.stages.geodesic": None,
+    "slurm.stages.distance": None,
 }
 
 
@@ -842,7 +848,7 @@ def validate_config(cfg: "QPocketConfig") -> None:
             f"slurm.max_array_size must be >= 1, got: {sl.max_array_size}"
         )
 
-    known_stages = ("prepare", "apbs", "featurize", "collect", "geodesic", "distance")
+    known_stages = ("prepare", "structure", "sites", "site_featurize", "site_cluster")
     for stage_name in (sl.stages or {}):
         if stage_name not in known_stages:
             raise ValueError(
