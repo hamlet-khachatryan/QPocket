@@ -16,9 +16,9 @@ reference ligand. It stops there; analyse a site next:
 
 ```bash
 uv run qpocket explore RUNS                          # pick a site, press the step buttons
-uv run qpocket site list --workdir RUNS/7KG6
-uv run qpocket site featurize --workdir RUNS/7KG6 --site site_01
-uv run qpocket site cluster   --workdir RUNS/7KG6 --site site_01
+uv run qpocket site list RUNS/7KG6
+uv run qpocket site featurize RUNS/7KG6 --site site_01
+uv run qpocket site cluster   RUNS/7KG6 --site site_01
 ```
 
 A run uses half the cores by default; `--workers N` changes that, `--workers 1`

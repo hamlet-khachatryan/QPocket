@@ -28,9 +28,9 @@ in the explorer or from the command line:
 
 ```bash
 qpocket explore ./results                              # pick a site, press the step buttons
-qpocket site list --workdir ./results/6HP0             # the sites and the steps each has done
-qpocket site featurize --workdir ./results/6HP0 --site site_01
-qpocket site cluster   --workdir ./results/6HP0 --site site_01
+qpocket site list ./results/6HP0             # the sites and the steps each has done
+qpocket site featurize ./results/6HP0 --site site_01
+qpocket site cluster   ./results/6HP0 --site site_01
 ```
 
 `qpocket site shape` clusters on shape alone, without featurising.
@@ -80,7 +80,6 @@ cfg = load_qpocket_config(overrides=[
     "paths.workdir=./results", "pdb_query.sequence_identity=0.9",
     "pdb_query.resolution_limit=2.5",
     "io.log_format=text",            # human-readable console output
-    "io.save_intermediate=true",     # keep pre-crop pocket CSVs
 ])
 run(cfg)  # returns the run directory
 ```

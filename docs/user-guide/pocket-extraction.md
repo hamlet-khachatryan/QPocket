@@ -43,7 +43,7 @@ If the sites are too coarse or too fine, regroup at another cutoff without
 recomputing the structures. Unchanged sites keep their analysis:
 
 ```bash
-qpocket site regroup --workdir runs/7KG6 --cutoff 5.0
+qpocket site regroup runs/7KG6 --cutoff 5.0
 ```
 
 The explorer has the same action (**Regroup sites**).

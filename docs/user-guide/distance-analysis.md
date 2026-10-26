@@ -12,11 +12,11 @@ picker, a status line and three buttons: **Shape clustering**, **Featurise** and
 From the command line:
 
 ```bash
-qpocket site list      --workdir runs/7KG6
-qpocket site shape     --workdir runs/7KG6 --site site_01   # shape only, no features
-qpocket site featurize --workdir runs/7KG6 --site site_01
-qpocket site cluster   --workdir runs/7KG6 --site site_01   # shape, then chemistry
-qpocket site regroup   --workdir runs/7KG6 --cutoff 5.0
+qpocket site list      runs/7KG6
+qpocket site shape     runs/7KG6 --site site_01   # shape only, no features
+qpocket site featurize runs/7KG6 --site site_01
+qpocket site cluster   runs/7KG6 --site site_01   # shape, then chemistry
+qpocket site regroup   runs/7KG6 --cutoff 5.0
 ```
 
 Shape clustering (clustering mode `shape_only`) needs no featurisation, so it is the

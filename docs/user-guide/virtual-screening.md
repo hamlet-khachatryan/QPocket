@@ -15,8 +15,8 @@ qpocket screen prepare --workdir runs/7KG6 --site site_01
 
 This builds the box, prepares receptors (from each pocket's `protein.pqr`, so the
 run's protonation states and charges carry into docking) and ligands, and writes
-`sites/site_01/screening/docking_jobs.csv` — one row per receptor × ligand. It prints the command
-to run them and stops.
+`sites/site_01/screening/docking_jobs.csv`, one row per receptor × ligand. It prints
+the command to run them and stops.
 
 ## Run
 

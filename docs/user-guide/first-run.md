@@ -51,7 +51,7 @@ sites; you do not name one. It stops once each site has a point cloud in each
 structure. Check what it found:
 
 ```bash
-uv run qpocket site list --workdir runs/parg-minimal/7KG6
+uv run qpocket site list runs/parg-minimal/7KG6
 cat runs/parg-minimal/7KG6/structures/ligands.csv
 ```
 
@@ -62,7 +62,7 @@ site, gets its protonated protein anyway, and the run continues.
 Then analyse a site, here by shape alone, which needs no featurisation:
 
 ```bash
-uv run qpocket site shape --workdir runs/parg-minimal/7KG6 --site site_01
+uv run qpocket site shape runs/parg-minimal/7KG6 --site site_01
 ```
 
 With many structures, use a CSV instead of repeating `--structure-paths`:
@@ -178,10 +178,10 @@ To reconsider a site's clustering without recomputing anything, adjust the two-s
 thresholds in the notebook and save, or from the command line:
 
 ```bash
-uv run qpocket recluster ./runs/parg-minimal/7KG6 --shape-threshold 0.25
+uv run qpocket recluster ./runs/parg-minimal/7KG6/sites/site_01 --shape-threshold 0.25
 ```
 
-The previous clustering is archived under `metadata/clustering_history/` rather
+The previous clustering is archived under `sites/site_NN/metadata/clustering_history/` rather
 than overwritten.
 
 ---

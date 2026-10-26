@@ -132,7 +132,7 @@ cleaning:
 ```yaml
 io:
   log_format: "json"        # "json" or "text"
-  save_intermediate: false  # also write the pre-crop pocket cloud
+  save_intermediate: false  # currently has no effect: site runs write no pre-crop cloud
   compression: "gzip"       # HDF5 compression: "gzip" or "none"
 ```
 
