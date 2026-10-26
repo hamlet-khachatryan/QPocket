@@ -23,13 +23,19 @@ websockets = pytest.importorskip("websockets", reason="needs the websockets clie
 
 
 def _site_run(tmp_path, monkeypatch, shape_clustered: bool) -> Path:
-    """The site-steps fixture run: clouds only, or with site_01 shape-clustered."""
+    """The site-steps fixture run: clouds only, or with site_01 shape-clustered.
+
+    The shape-clustered run also carries a link cutoff beyond the regroup control's range.
+    """
     from qpocket.arms import sites
+    from qpocket.config import evolve, load_run_config, save_run_config
+    from qpocket.io import layout
     from tests.test_site_steps import _finished_run
 
     root = _finished_run(tmp_path, monkeypatch)
     if shape_clustered:
         sites.shape_cluster_site(root, "site_01")
+        save_run_config(evolve(load_run_config(root), "sites.link_cutoff", 25.0), layout.workspace(root))
     return root
 
 
@@ -40,11 +46,11 @@ def _free_port() -> int:
 
 
 def _cell_errors(port: int, seconds: float = 90.0):
-    """Every error the kernel reports while the app runs its cells."""
+    """Every error the kernel reports while the app runs its cells, and every output it sends."""
     import asyncio
 
     async def listen():
-        found, finished = [], set()
+        found, finished, outputs = [], set(), []
         url = f"ws://127.0.0.1:{port}/ws?session_id={uuid.uuid4()}"
         async with websockets.connect(url, max_size=None) as ws:
             try:
@@ -55,6 +61,7 @@ def _cell_errors(port: int, seconds: float = 90.0):
                         if message.get("op") != "cell-op":
                             continue
                         output = data.get("output") or {}
+                        outputs.append(json.dumps(output, ensure_ascii=False))
                         if output.get("channel") == "marimo-error":
                             # `mo.stop` is how a marimo cell says "nothing to
                             # show"; it marks descendants, and that is expected.
@@ -64,7 +71,7 @@ def _cell_errors(port: int, seconds: float = 90.0):
                             finished.add(data.get("cell_id"))
             except (asyncio.TimeoutError, TimeoutError):
                 pass
-        return found, finished
+        return found, finished, "\n".join(outputs)
 
     return asyncio.run(listen())
 
@@ -91,7 +98,7 @@ def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered
         else:
             pytest.fail("marimo did not start")
 
-        errors, finished = _cell_errors(port)
+        errors, finished, shown = _cell_errors(port)
     finally:
         server.terminate()
         server.wait(timeout=60)
@@ -99,3 +106,6 @@ def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered
     assert finished, "no cell ran at all"
     assert not errors, "cells left showing errors: " + "; ".join(
         str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
+    for text in ("Binding sites", "Steps for site_01", "site_01 · "):
+        assert text in shown, f"{text!r} never rendered"
+    assert ("No distance matrix for this site yet" in shown) is not shape_clustered

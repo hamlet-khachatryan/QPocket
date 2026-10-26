@@ -46,6 +46,26 @@ def is_complete(path: Path) -> bool:
     return (Path(path) / "sites" / "sites.csv").is_file()
 
 
+def site_link_cutoff(run_dir: Path, lo: float, hi: float) -> float:
+    """The run's ``sites.link_cutoff``, clamped into a control's range.
+
+    Args:
+        run_dir: The run directory.
+        lo: Smallest value the control takes.
+        hi: Largest value the control takes.
+
+    Returns:
+        The cutoff, or the default one when the run's config cannot be read.
+    """
+    from qpocket.config import QPocketConfig, load_run_config
+
+    try:
+        cutoff = float(load_run_config(run_dir).sites.link_cutoff)
+    except Exception:  # a broken config must not hide the site table
+        cutoff = QPocketConfig().sites.link_cutoff
+    return min(max(cutoff, lo), hi)
+
+
 def find_runs(roots: Iterable[Path], max_depth: int = MAX_DEPTH) -> List[Path]:
     """Every run at or below ``roots``, without walking into runs themselves.
 

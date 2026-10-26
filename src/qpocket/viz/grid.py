@@ -70,6 +70,8 @@ def panel_values(pockets: Sequence, mode: str, feat: str, rep_row: Optional[pd.S
     from qpocket import viz as qviz
 
     panel_values = {}
+    if mode == "difference from representative" and not all(feat in p.columns for _, _, p in pockets):
+        mode = "feature value"  # a pocket not yet featurised has nothing to difference
     if mode == "consensus occupancy":
         _occ = qviz.occupancy([p[["x", "y", "z"]].to_numpy(dtype=float) for _, _, p in pockets], grid_spacing)
         for pid, _, pocket in pockets:

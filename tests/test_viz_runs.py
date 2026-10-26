@@ -22,6 +22,7 @@ from qpocket.viz.runs import (
     is_run,
     resolve_location,
     run_label,
+    site_link_cutoff,
 )
 
 
@@ -146,3 +147,28 @@ def test_the_environment_variable_adds_search_roots(tmp_path, monkeypatch):
 
 def test_command_line_roots_are_included(tmp_path):
     assert tmp_path / "cli" in default_roots(tmp_path, extra=[str(tmp_path / "cli")])
+
+
+# --- the regroup control's starting cutoff --------------------------------
+
+
+def test_the_cutoff_starts_at_the_runs_own(tmp_path):
+    from qpocket.config import QPocketConfig, evolve, save_run_config
+
+    ws = layout.create(str(tmp_path), "r")
+    save_run_config(evolve(evolve(QPocketConfig(), "reference.pdb_id", "1ABC"), "sites.link_cutoff", 6.5), ws)
+    assert site_link_cutoff(ws.root, 0.5, 20.0) == 6.5
+
+
+def test_a_cutoff_outside_the_control_is_clamped(tmp_path):
+    from qpocket.config import QPocketConfig, evolve, save_run_config
+
+    ws = layout.create(str(tmp_path), "r")
+    save_run_config(evolve(evolve(QPocketConfig(), "reference.pdb_id", "1ABC"), "sites.link_cutoff", 25.0), ws)
+    assert site_link_cutoff(ws.root, 0.5, 20.0) == 20.0
+
+
+def test_an_unreadable_config_falls_back_to_the_default(tmp_path):
+    from qpocket.config import QPocketConfig
+
+    assert site_link_cutoff(tmp_path, 0.5, 20.0) == QPocketConfig().sites.link_cutoff

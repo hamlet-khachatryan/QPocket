@@ -116,8 +116,8 @@ def _(mo, pd, qsites, regrouped, run_dir):
 
 @app.cell
 def _(mo):
-    # A site step rewrites the site's files; bumping this re-reads them below.
-    get_site_steps, set_site_steps = mo.state("")
+    # The last site step's outcome; setting it re-reads the files that step rewrote.
+    get_site_steps, set_site_steps = mo.state(None)
     return get_site_steps, set_site_steps
 
 
@@ -141,9 +141,10 @@ def _(Path, get_site_steps, mo, pd, run_dir, site_picker):
     actives_df = _read_csv(site_dir / "screening" / "actives.smi", sep="\t")
 
     # A site clustered on shape alone has no spectral matrix; its shape matrix stands in.
+    dist_kind = "spectral"
     dist_path = meta / "spectral_distance_matrix.csv"
     if not dist_path.exists():
-        dist_path = meta / "shape_distance_matrix.csv"
+        dist_kind, dist_path = "shape", meta / "shape_distance_matrix.csv"
     dist_df = pd.read_csv(dist_path, index_col=0) if dist_path.exists() else None
 
     #per-structure metadata
@@ -184,25 +185,26 @@ def _(Path, get_site_steps, mo, pd, run_dir, site_picker):
         `{', '.join(FEATURE_COLS) or 'none found'}`
         """
     )
-    return FEATURE_COLS, actives_df, cloud_path, dist_df, info, site_dir
+    return FEATURE_COLS, actives_df, cloud_path, dist_df, dist_kind, info, site_dir
 
 
 @app.cell
-def _(Path, info, mo, qviz, site_dir, sites_df):
+def _(info, mo, qviz, run_dir, site_dir, sites_df):
     # The site's ligands over the frame protein, every site's centre as a sphere
     # (this one dark, the others faint), through the pocket grid's own page.
     _centres = sites_df[["centre_x", "centre_y", "centre_z"]].to_numpy(dtype=float)
     _here = (sites_df["site_id"] == site_dir.name).to_numpy(dtype=float)
     _ligands = site_dir / "ligands.pdb"
     # shortcut: the first aligned structure stands in for the frame; every one is superposed onto it.
-    _frame = next((f for f in info.get("aligned_file", []) if isinstance(f, str) and Path(f).exists()), None)
+    _frame = next((run_dir / f for f in info.get("aligned_file", [])
+                   if isinstance(f, str) and f and (run_dir / f).exists()), None)
     _ramp = qviz.RampSpec("sequential", "Blues", ("other sites", "this site"))
     _domain = qviz.ColourDomain(0.15, 1.0, None)
     _stops = qviz.ramp_stops(_ramp.scale)
     _panel = {
         "id": site_dir.name, "title": f"{site_dir.name} · ligands of every holo structure",
         "cloud": qviz.pseudo_atom_pdb(_centres, b=qviz.scale_to_percent(_here, _domain)),
-        "cartoon": Path(_frame).read_text(encoding="utf-8") if _frame else "",
+        "cartoon": _frame.read_text(encoding="utf-8") if _frame else "",
         "side": "", "highlights": {}, "n_forced": 0,
         "ligand": qviz.ligand_pdb(str(_ligands)) if _ligands.exists() else "",
         "vals": [round(float(v), 3) for v in _here], "n_points": len(_centres), "n_ctx": 0,
@@ -220,8 +222,9 @@ def _(Path, info, mo, qviz, site_dir, sites_df):
 def _(get_site_steps, mo, qsites, run_dir, site_dir):
     _sid = site_dir.name
     site_steps = qsites.site_status(run_dir, _sid)
-    shape_button = mo.ui.run_button(label="Shape clustering")
-    featurise_button = mo.ui.run_button(label="Featurise")
+    _no_clouds = " (needs clouds)" if not site_steps["clouds"] else ""
+    shape_button = mo.ui.run_button(label="Shape clustering" + _no_clouds, disabled=bool(_no_clouds))
+    featurise_button = mo.ui.run_button(label="Featurise" + _no_clouds, disabled=bool(_no_clouds))
     two_stage_button = mo.ui.run_button(
         label="Two-stage clustering" if site_steps["featurised"] else "Two-stage clustering (needs Featurise)",
         disabled=not site_steps["featurised"])
@@ -237,7 +240,7 @@ def _(get_site_steps, mo, qsites, run_dir, site_dir):
     mo.vstack([
         mo.md(f"### Steps for {_sid}\n{_done}"),
         mo.hstack([shape_button, featurise_button, two_stage_button], justify="start"),
-        mo.md(get_site_steps()),
+        get_site_steps() or mo.md(""),
         mo.accordion({"Run them from a terminal instead": mo.plain_text(_commands)}),
     ])
     return featurise_button, shape_button, two_stage_button
@@ -246,6 +249,8 @@ def _(get_site_steps, mo, qsites, run_dir, site_dir):
 @app.cell
 def _(featurise_button, mo, qsites, run_dir, set_site_steps, shape_button, site_dir, two_stage_button):
     mo.stop(not (shape_button.value or featurise_button.value or two_stage_button.value))
+    import traceback as _traceback
+
     _name, _step = next((n, f) for n, f, b in [
         ("Shape clustering", qsites.shape_cluster_site, shape_button),
         ("Featurise", qsites.featurize_site, featurise_button),
@@ -254,19 +259,21 @@ def _(featurise_button, mo, qsites, run_dir, set_site_steps, shape_button, site_
     with mo.status.spinner(title=f"{_name} for {site_dir.name}…"):
         try:
             _step(run_dir, site_dir.name)
-            _message = f"_{_name} finished for {site_dir.name}._"
+            _message = mo.md(f"_{_name} finished for {site_dir.name}._")
         except Exception as _e:
-            _message = f"_{_name} failed: {type(_e).__name__}: {_e}_"
+            _message = mo.vstack([
+                mo.md(f"_{_name} failed: {type(_e).__name__}: {_e}_"),
+                mo.accordion({"Traceback": mo.plain_text(_traceback.format_exc())}),
+            ])
     set_site_steps(_message)
     return
 
 
 @app.cell
-def _(mo, run_dir):
-    from qpocket.config import load_run_config as _load_run_config
-
+def _(mo, qviz, run_dir):
+    # This cell feeds the site table, so an odd config must not stop it.
     regroup_cutoff = mo.ui.number(start=0.5, stop=20.0, step=0.5,
-                                  value=float(_load_run_config(run_dir).sites.link_cutoff),
+                                  value=qviz.site_link_cutoff(run_dir, 0.5, 20.0),
                                   label="Link cutoff (Å)")
     regroup_button = mo.ui.run_button(label="Regroup sites")
     mo.accordion({"Regroup sites": mo.vstack([
@@ -295,9 +302,15 @@ def _(mo, qsites, regroup_button, regroup_cutoff, run_dir):
 
 @app.cell
 def _(lru_cache, pd):
+    import os
+
     @lru_cache(maxsize=512)
-    def load_pocket(path: str) -> pd.DataFrame:
+    def _read_pocket(path: str, mtime: float) -> pd.DataFrame:
         return pd.read_csv(path)
+
+    def load_pocket(path: str) -> pd.DataFrame:
+        # Keyed on mtime too, so a cloud Featurise rewrites is read afresh.
+        return _read_pocket(path, os.path.getmtime(path))
 
     return (load_pocket,)
 
@@ -580,10 +593,10 @@ def _(active_info, mo):
 
 
 @app.cell
-def _(mo):
-    mo.md("""
+def _(dist_kind, mo):
+    mo.md(f"""
     ## Pocket landscape
-    One point per structure, placed by spectral distance alone. **PCA** is the honest
+    One point per structure, placed by {dist_kind} distance alone. **PCA** is the honest
     default; UMAP and t-SNE separate groups, but their gaps are not distances. Lasso
     points to open their cluster below.
     """)
@@ -669,7 +682,7 @@ def _(
 
 
 @app.cell
-def _(color_by, emb_df, layout, mo, px, qviz):
+def _(color_by, dist_kind, emb_df, layout, mo, px, qviz):
     _cb = color_by.value
     _hover = [
         c
@@ -698,7 +711,7 @@ def _(color_by, emb_df, layout, mo, px, qviz):
     )
     _fig.update_traces(marker=dict(size=15, line=dict(width=1, color="white")), textposition="top center")
     _fig.update_layout(
-        title=f"{layout.method} of spectral distances · coloured by {_cb}",
+        title=f"{layout.method} of {dist_kind} distances · coloured by {_cb}",
         dragmode="lasso",
     )
 
