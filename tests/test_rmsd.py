@@ -40,3 +40,29 @@ def test_symmetric_ligand_is_not_penalised_for_atom_order():
     order = list(range(crystal.GetNumAtoms()))
     random.Random(0).shuffle(order)
     assert compute_rmsd_mcs(Chem.RenumberAtoms(crystal, order), crystal) == pytest.approx(0.0, abs=1e-3)
+
+
+def test_partial_mcs_scores_only_the_mapped_atoms_in_place():
+    crystal = _mol("CC(=O)Nc1ccccc1CCCl")
+    part = Chem.RWMol(crystal)
+    for idx in (12, 11, 10):  # drop CCCl: the acetanilide left keeps the crystal's coordinates
+        part.RemoveAtom(idx)
+    docked = part.GetMol()
+    Chem.SanitizeMol(docked)
+    assert Chem.MolToSmiles(docked) == Chem.MolToSmiles(Chem.MolFromSmiles("CC(=O)Nc1ccccc1"))
+    assert compute_rmsd_mcs(docked, crystal) == pytest.approx(0.0, abs=1e-6)
+    assert compute_rmsd_mcs(_translated(docked, (5.0, 0, 0)), crystal) == pytest.approx(5.0, abs=1e-3)
+
+
+def test_no_common_substructure_gives_none():
+    assert compute_rmsd_mcs(_mol("O"), _mol("c1ccccc1")) is None
+
+
+def test_match_cap_is_reported(monkeypatch):
+    from qpocket.arms.screen import analysis
+
+    logged = []
+    monkeypatch.setattr(analysis, "log_message", lambda **kw: logged.append(kw))
+    crystal = _mol("CC(C)(C)C(C(C)(C)C)(C(C)(C)C)C(C)(C)C")  # 6^4 * 24 automorphisms > the cap
+    assert compute_rmsd_mcs(Chem.Mol(crystal), crystal) == pytest.approx(0.0, abs=1e-3)
+    assert any("maxMatches" in str(kw) for kw in logged)

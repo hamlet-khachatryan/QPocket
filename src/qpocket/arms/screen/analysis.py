@@ -76,7 +76,11 @@ def compute_rmsd_mcs(docked_mol: Chem.Mol, crystal_mol: Chem.Mol) -> Optional[fl
             return None
 
         query = Chem.MolFromSmarts(mcs.smartsString)
-        docked_matches = docked_mol.GetSubstructMatches(query, uniquify=False, maxMatches=1000)
+        max_matches = 10000
+        docked_matches = docked_mol.GetSubstructMatches(query, uniquify=False, maxMatches=max_matches)
+        if len(docked_matches) >= max_matches:  # the symmetry-equivalent map giving the lowest RMSD may be missed
+            log_message(message_type="warning", stage="compute_rmsd_mcs",
+                        notice=f"maxMatches={max_matches} reached; RMSD may be overestimated")
         crystal_match = crystal_mol.GetSubstructMatch(query)
 
         if not docked_matches or not crystal_match:

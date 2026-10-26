@@ -246,7 +246,7 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
 
 ```yaml
   clustering:
-    mode: "two_stage"       # "two_stage" or "single"
+    mode: "two_stage"       # "two_stage", "single" or "shape_only"
     min_cluster_size: 4     # stage-one clusters smaller than this are not subdivided
 
     shape:                  # stage one: shape distances
@@ -273,6 +273,7 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
 |---|---|
 | `two_stage` | Group on shape, then subdivide each group on physicochemistry. `clustering_metadata.csv` gains `shape_cluster_id` and `chem_cluster_id`. |
 | `single` | Cluster the blended matrix in one pass. Reproduces pre-0.2 runs exactly. |
+| `shape_only` | Run stage one only: group on shape, with no physicochemical subdivision. |
 
 A stage ignores the settings its method does not use: `linkage` applies only to
 `hierarchical`, `k` only to `hierarchical` and `kmedoids`, and
@@ -295,9 +296,14 @@ run with `qpocket recluster RUN_DIR --shape-criterion relative --shape-threshold
 !!! warning "Removed: `k_range` and the silhouette choice"
     The number of clusters is no longer chosen by silhouette. `k_range` is
     obsolete; a config that still sets it gets a warning and the key is ignored.
-    A run saved by an older version with `k: null` and `criterion: "count"` cannot
-    be reclustered as it is: pass `--shape-criterion relative --chem-criterion
-    relative` (threshold defaults to 0.5) or an explicit `--shape-k`/`--chem-k`.
+    A config, or a run's saved `metadata/config.yaml`, from an older version
+    with `k: null` and `criterion: "count"` is converted automatically to a
+    hierarchical relative cut at 0.5, with a warning naming the stage; set `k` or
+    a threshold to choose otherwise. A setting that gives `k` but no `criterion`
+    means `criterion: "count"`. Reclustering such a run's saved
+    `clustering_params.json` still needs `--shape-criterion relative
+    --chem-criterion relative` (threshold defaults to 0.5) or an explicit
+    `--shape-k`/`--chem-k`.
 
 ---
 

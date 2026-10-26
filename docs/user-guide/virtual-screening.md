@@ -58,6 +58,10 @@ large RMSD. Symmetric ligands are scored against their best equivalent atom
 matching. Values for misplaced poses are therefore larger than in earlier
 versions, which fitted the pose onto the ligand first.
 
+RMSD scores, and success rates at `rmsd_threshold`, from runs scored before this
+change are not comparable with new ones: in-place RMSD is never smaller than the
+old best-fit RMSD.
+
 ## Cross-docking
 
 Cross-docking snapshots the representatives it used, under
