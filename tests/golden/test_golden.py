@@ -13,14 +13,15 @@ EXPECTED_ROOT = REPO / "tests/golden/expected"
 EXPECTED = EXPECTED_ROOT / "7KG6"
 COMPARED = [
     "metadata/master.csv",
-    # observed_interactions_freq.csv and binding_pocket_utilization.csv are left
-    # out: PLIP returns different H-bonds for the same file between processes.
+    "metadata/failures.csv",
+    "structures/ligands.csv",
+    "sites/sites.csv",
+]
+# Per site. observed_interactions_freq.csv and binding_pocket_utilization.csv are
+# left out: PLIP returns different H-bonds for the same file between processes.
+SITE_COMPARED = [
+    "metadata/master.csv",
     "metadata/potential_interactions_freq.csv",
-    "metadata/spectral_distance_matrix.csv",
-    "metadata/shape_distance_matrix.csv",
-    "metadata/feature_distance_matrix.csv",
-    "metadata/clustering_metadata.csv",
-    "metadata/clustering_params.json",
     "screening/actives.smi",
 ]
 
@@ -62,7 +63,6 @@ def _same_file(got_root: Path, rel: str) -> None:
 
 
 @pytest.mark.golden
-@pytest.mark.skip(reason="layout 3: per-site pockets arrive in Task 7/8")
 @pytest.mark.skipif(not EXPECTED.exists(), reason="run scripts/make_golden.py tests/golden/expected first")
 @pytest.mark.skipif(not (REPO / "experiments/PARG/7KG6/structures/original").exists(),
                     reason="needs the bundled PARG structures")
@@ -77,5 +77,10 @@ def test_outputs_are_numerically_equal(tmp_path, workers):
         for f in sorted((EXPECTED / "structures" / folder).iterdir()):
             rel = f"structures/{folder}/{f.name}"
             assert (got / rel).read_bytes() == f.read_bytes(), rel
-    for pocket in sorted(p for p in (EXPECTED / "pockets").iterdir() if p.is_dir()):
-        _same_file(tmp_path, f"pockets/{pocket.name}/featurized.csv")
+    for site in sorted(p for p in (EXPECTED / "sites").iterdir() if p.is_dir()):
+        for rel in SITE_COMPARED:
+            _same_file(tmp_path, f"sites/{site.name}/{rel}")
+        for pocket in sorted(p for p in (site / "pockets").iterdir() if p.is_dir()):
+            _same_file(tmp_path, f"sites/{site.name}/pockets/{pocket.name}/binding_site.csv")
+    # layout 3: the run stops after the clouds; features and matrices are per-site steps.
+    assert not list(got.rglob("featurized.csv")) and not list(got.rglob("*distance_matrix.csv"))

@@ -171,11 +171,11 @@ def task_collect(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False)
                 "nothing, so there is nothing to collect"
             )
         ids = [p.stem for p in layout.structure_files(dirs)]
-        collecting.collect_from_parts(dirs, ids, cfg.features.enabled, cfg.io.compression)
+        collecting.collect_from_parts(dirs, ids)
 
-        obs_h5 = dirs["metadata"] / "observed_interactions.h5"
-        if not obs_h5.exists():
-            raise TaskError(f"collect wrote no {obs_h5.name}")
+        master = dirs["metadata"] / "master.csv"
+        if not master.exists():
+            raise TaskError(f"collect wrote no {master.name}")
 
 
 def task_geodesic(

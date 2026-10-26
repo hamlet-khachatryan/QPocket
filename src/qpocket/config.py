@@ -946,6 +946,7 @@ def load_qpocket_config(
         mode=cfg.mode,
         paths=cfg.paths,
         reference=cfg.reference,
+        sites=cfg.get("sites", SitesConfig()),
         fragment_screen=cfg.fragment_screen,
         pdb_query=cfg.pdb_query,
         alignment=cfg.alignment,
@@ -965,6 +966,36 @@ def load_qpocket_config(
 
     validate_config(final_cfg)
     return final_cfg
+
+
+RUN_CONFIG = "config.yaml"
+
+
+def save_run_config(cfg: QPocketConfig, ws) -> Path:
+    """Snapshot the config a run used, so later per-site steps reuse it.
+
+    Args:
+        cfg: The run's configuration.
+        ws: The run's Workspace.
+
+    Returns:
+        Path of ``metadata/config.yaml``.
+    """
+    path = Path(ws.metadata) / RUN_CONFIG
+    path.write_text(str(cfg), encoding="utf-8")
+    return path
+
+
+def load_run_config(run_dir: Union[str, Path]) -> QPocketConfig:
+    """The config a run saved, loaded and validated like a user's config file.
+
+    Args:
+        run_dir: The run directory.
+
+    Returns:
+        The validated configuration.
+    """
+    return load_qpocket_config(config_path=Path(run_dir) / "metadata" / RUN_CONFIG)
 
 
 

@@ -1,19 +1,20 @@
-"""The conformational run: ingest, reference, every structure, collect."""
+"""The conformational run: ingest, reference, every structure, then every binding site's clouds."""
 from functools import partial
 from pathlib import Path
 from typing import List, Optional, Union
 
 from eliot import log_message, start_action
 
-from qpocket.config import QPocketConfig, load_qpocket_config, run_id
+from qpocket.config import QPocketConfig, load_qpocket_config, run_id, save_run_config
 from qpocket.core.ports import SOURCES
 from qpocket.core.result import guarded, partition
 from qpocket.core.types import Sources
 from qpocket.io import layout
 from qpocket.io import logging as qlog
 from qpocket.pipelines import parallel
-from qpocket.pipelines.collect import collect_run
+from qpocket.pipelines.collect import collect_structures
 from qpocket.pipelines.reference import build_reference
+from qpocket.pipelines.sites import discover_sites, extract_all_sites
 from qpocket.pipelines.structure import process, structure_params
 
 
@@ -49,7 +50,7 @@ def _pdb_id(raw) -> str:
 
 
 def run(cfg: QPocketConfig) -> Path:
-    """Run the whole conformational pipeline.
+    """Run the conformational pipeline up to one cloud per site per structure.
 
     Args:
         cfg: Validated config.
@@ -71,8 +72,10 @@ def run(cfg: QPocketConfig) -> Path:
             sources.structures, workers=cfg.compute.workers, backend=cfg.compute.backend,
             stage="structure", log_dir=ws.root / parallel.WORKER_LOG_DIR, label=_pdb_id)
         records, failures = partition(results)
-        collect_run(ws, records, failures, cfg.features.enabled, cfg.io.compression)
-        log_message(message_type="stage_complete", stage="prepare_and_featurize")
+        collect_structures(ws, records, failures)
+        extract_all_sites(cfg, ws, discover_sites(cfg, ws, records), records)
+        save_run_config(cfg, ws)
+        log_message(message_type="stage_complete", stage="sites")
     return ws.root
 
 

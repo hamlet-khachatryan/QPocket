@@ -1,5 +1,4 @@
 """The chain: step semantics that keep today's numbers, and collection."""
-import json
 from pathlib import Path
 
 import numpy as np
@@ -189,25 +188,21 @@ def test_chain_records_all_ligands_and_cavities(ws, monkeypatch, tmp_path):
     assert Structure.from_json(layout.read_part(ws, "1STP")) == rec
 
 
-def test_collect_writes_master_actives_failures_and_archives(ws):
+def test_run_level_collect_writes_master_and_failures_only(ws):
     lig = Ligand("A", "A", "L", 300, " ", 6, smiles="CC")
     a = Structure("A", "a", 0.0, "a_al.pdb", cleaned_file="a_c.pdb", protein_state="BOUND_STATE",
                   ligands=(lig, lig._replace(resseq=301, smiles="")),
                   contacts=((lig.key, ("R_1_A|X",)), ("A:A:L:301", ("R_2_A|Y", "R_1_A|X"))))
     b = Structure("B", "b", 0.5, "b_al.pdb", cleaned_file="b_c.pdb", protein_state="UNBOUND_STATE")
-    collect.collect_run(ws, [a, b], [Failure("C", "align", "x")], ["hbond"], "gzip")
+    collect.collect_structures(ws, [a, b], [Failure("C", "align", "x")])
     master = pd.read_csv(ws.metadata / "master.csv")
     assert list(master["pdb_id"]) == ["A", "B"] and list(master["n_ligands"]) == [2, 0]
     assert list(master.columns) == ["pdb_id", "rmsd_to_ref", "aligned_file", "cleaned_file",
                                     "protonated_file", "cavities_file", "n_ligands", "protein_state"]
-    assert (ws.screening / "actives.smi").read_text() == "SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCC\tA\tL\t\n"
     assert pd.read_csv(ws.metadata / "failures.csv").to_dict("records") == [
         {"pdb_id": "C", "stage": "align", "reason": "x"}]
-    from qpocket.io import hdf5
-
-    observed = hdf5.read_interactions(ws.metadata / "observed_interactions.h5")
-    assert sorted(observed["A"]) == ["R_1_A|X", "R_2_A|Y"] and list(observed["B"]) == ["no_ligand_found"]
-    assert json.loads((ws.metadata / "features.json").read_text())["enabled"] == ["hbond"]
+    assert not (ws.screening / "actives.smi").exists()
+    assert not list(ws.metadata.glob("*.h5")) and not (ws.metadata / "features.json").exists()
 
 
 def test_collect_from_parts_keeps_order_and_reports_gaps(ws):
@@ -215,7 +210,7 @@ def test_collect_from_parts_keeps_order_and_reports_gaps(ws):
                                          protein_state="UNBOUND_STATE").to_json())
     layout.write_part(ws, "A", Failure("A", "align", "x").to_json())
     (layout.parts_dir(ws) / "D.json").write_text("{not json")
-    records, failures = collect.collect_from_parts(ws, ["A", "B", "C", "D"], ["hbond"], "gzip")
+    records, failures = collect.collect_from_parts(ws, ["A", "B", "C", "D"])
     assert [r.pdb_id for r in records] == ["B"]
     assert [(f.pdb_id, f.stage) for f in failures] == [("A", "align"), ("C", "featurize"),
                                                       ("D", "featurize")]

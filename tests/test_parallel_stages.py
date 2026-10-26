@@ -44,8 +44,8 @@ def test_every_structure_is_processed_once_and_collected_in_order(tmp_path, monk
     monkeypatch.setattr(run, "structure_params", lambda cfg: None)
     monkeypatch.setattr(run, "process",
                         lambda ref, p, ws, raw: seen.append(raw.pdb_id) or Structure(raw.pdb_id, "x"))
-    monkeypatch.setattr(run, "collect_run",
-                        lambda ws, records, failures, features, compression:
+    monkeypatch.setattr(run, "collect_structures",
+                        lambda ws, records, failures:
                         collected.update(ids=[r.pdb_id for r in records], failures=failures))
     cfg = evolve(make_config(), "paths.workdir", str(tmp_path))
     cfg = evolve(cfg, "compute.workers", workers)

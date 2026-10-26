@@ -1,4 +1,4 @@
-"""Collect stage: interaction frequency and utilisation tables for a run."""
+"""Collect stage: the run's structure tables, and each site's interaction tables."""
 from __future__ import annotations
 
 import json
@@ -118,23 +118,34 @@ def write_feature_record(meta_dir: Path, enabled: Sequence[str]) -> Path:
     return path
 
 
-def collect_run(ws: "layout.Workspace", records: Sequence[Any], failures: Sequence[Failure],
-                features: Sequence[str], compression: str) -> None:
-    """Write the master, actives and interaction tables of a run or a site.
+def collect_structures(ws: "layout.Workspace", records: Sequence[Any], failures: Sequence[Failure]) -> None:
+    """Write master.csv and failures.csv, the run-level tables.
 
     Args:
         ws: The run or the site.
+        records: Records with master_row(), in input order.
+        failures: Structures that dropped out.
+    """
+    master_csv = ws.metadata / "master.csv"
+    pd.DataFrame([r.master_row() for r in records]).to_csv(master_csv, index=False)
+    log_message(message_type="master_csv_saved", path=str(master_csv), n_structures=len(records))
+    pd.DataFrame([f._asdict() for f in failures], columns=list(Failure._fields)).to_csv(
+        ws.metadata / "failures.csv", index=False)
+
+
+def collect_run(ws: "layout.Workspace", records: Sequence[Any], failures: Sequence[Failure],
+                features: Sequence[str], compression: str) -> None:
+    """Write the master, actives and interaction tables of a site.
+
+    Args:
+        ws: The site.
         records: Records with pdb_id, master_row(), potential, observed and actives, in input order.
         failures: Structures that dropped out.
         features: Feature plug-in names.
         compression: HDF5 compression.
     """
     with start_action(action_type="collect_structure_results"):
-        master_csv = ws.metadata / "master.csv"
-        pd.DataFrame([r.master_row() for r in records]).to_csv(master_csv, index=False)
-        log_message(message_type="master_csv_saved", path=str(master_csv), n_structures=len(records))
-        pd.DataFrame([f._asdict() for f in failures], columns=list(Failure._fields)).to_csv(
-            ws.metadata / "failures.csv", index=False)
+        collect_structures(ws, records, failures)
 
         with open(ws.screening / "actives.smi", "w", encoding="utf-8") as f:
             f.write("SMILES\tPDB_ID\tLigand_Name\tLigand_File\n")
@@ -161,15 +172,12 @@ def collect_run(ws: "layout.Workspace", records: Sequence[Any], failures: Sequen
             log_message(message_type="error", stage="frequency_analysis", error=str(e))
 
 
-def collect_from_parts(ws: "layout.Workspace", pdb_ids: Sequence[str], features: Sequence[str],
-                       compression: str) -> Tuple[List[Structure], List[Failure]]:
+def collect_from_parts(ws: "layout.Workspace", pdb_ids: Sequence[str]) -> Tuple[List[Structure], List[Failure]]:
     """Collect a run whose structures were processed as separate tasks.
 
     Args:
         ws: The run.
         pdb_ids: Every ingested structure, in input order.
-        features: Feature plug-in names.
-        compression: HDF5 compression.
 
     Returns:
         (records, failures) as written.
@@ -194,5 +202,5 @@ def collect_from_parts(ws: "layout.Workspace", pdb_ids: Sequence[str], features:
         log_message(message_type="warning", stage="collect_structure_results",
                     warning="structures with no sidecar",
                     pdb_ids=[f.pdb_id for f in failures][:20], n_missing=len(failures))
-    collect_run(ws, records, failures, features, compression)
+    collect_structures(ws, records, failures)
     return records, failures
