@@ -10,15 +10,12 @@ from qpocket.constants import HET_TO_REMOVE
 from qpocket.core.geometry import check_overlap, compute_volumetric_overlap, crop_pocket_by_interactions
 
 
-def is_residue_ligand(residue, allowed_cofactors: Sequence[str],
-                      include: Sequence[str] = (), exclude: Sequence[str] = ()) -> bool:
+def is_residue_ligand(residue, allowed_cofactors: List[str]) -> bool:
     """Determines whether a residue is a candidate ligand.
 
     Args:
         residue: BioPython residue object.
         allowed_cofactors: List of cofactor residue names to exclude.
-        include: Names kept even though they are in ``HET_TO_REMOVE``; never overrides cofactors.
-        exclude: Names always rejected.
 
     Returns:
         ``True`` if the residue is a potential drug-like ligand.
@@ -28,9 +25,11 @@ def is_residue_ligand(residue, allowed_cofactors: Sequence[str],
     if residue.id[0] == "W":
         return False  # water
     resname = residue.get_resname().strip().upper()
-    if resname in allowed_cofactors or resname in {n.upper() for n in exclude}:
+    if resname in allowed_cofactors:
         return False
-    return resname not in HET_TO_REMOVE or resname in {n.upper() for n in include}
+    if resname in HET_TO_REMOVE:
+        return False
+    return True
 
 
 def extract_pdb_block(residue, chain_id: str) -> str:

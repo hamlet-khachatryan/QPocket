@@ -7,6 +7,8 @@ from Bio.PDB import PDBParser
 from qpocket.core.sites import find_ligands
 from qpocket.core.types import Ligand
 
+# the synthetic residues deliberately carry unidentifiable elements
+pytestmark = pytest.mark.filterwarnings("ignore::Bio.PDB.PDBExceptions.PDBConstructionWarning")
 FIXTURES = Path(__file__).resolve().parent / "fixtures/complexes"
 needs_fixtures = pytest.mark.skipif(
     not (FIXTURES / "1STP.pdb").exists() or not (FIXTURES / "3PTB.pdb").exists(),
@@ -71,15 +73,18 @@ def _inorganic_structure():
     from Bio.PDB.Residue import Residue
     from Bio.PDB.Structure import Structure
 
-    def residue(name, seq, elements):
+    def residue(name, seq, elements, names=None):
         res = Residue(("H_" + name, seq, " "), name, " ")
         for i, el in enumerate(elements):
-            res.add(Atom(f"{el}{i}", [float(seq), float(i), 0.0], 1.0, 1.0, " ", f"{el}{i}", i, el))
+            atom_name = names[i] if names else f"{el}{i}"
+            res.add(Atom(atom_name, [float(seq), float(i), 0.0], 1.0, 1.0, " ", atom_name, i, el))
         return res
 
     chain = Chain("A")
     for res in (residue("NA", 1, ["NA"]), residue("CL", 2, ["CL"]), residue("SO4", 3, ["S", "O", "O", "O", "O"]),
-                residue("BNZ", 4, ["C"] * 6)):
+                residue("BNZ", 4, ["C"] * 6),
+                residue("UNK", 5, ["X"] * 6, [f"C{i}" for i in range(1, 7)]),
+                residue("BLK", 6, [""] * 6, [f"C{i}" for i in range(1, 7)])):
         chain.add(res)
     model = Model(0)
     model.add(chain)
@@ -90,7 +95,16 @@ def _inorganic_structure():
 
 def test_carbon_free_residues_are_never_ligands():
     found = find_ligands(_inorganic_structure(), "X", [], 1)
-    assert [l.resname for l, _ in found] == ["BNZ"]
+    assert [l.resname for l, _ in found if l.resname in ("NA", "CL", "SO4", "BNZ")] == ["BNZ"]
+
+
+def test_unidentified_elements_fall_back_to_the_atom_name():
+    found = {l.resname: l for l, _ in find_ligands(_inorganic_structure(), "X", [], 6)}
+    assert {"UNK", "BLK"} <= set(found) and found["UNK"].n_heavy == found["BLK"].n_heavy == 6
+
+
+def test_cofactor_names_match_case_insensitively():
+    assert "BNZ" not in [l.resname for l, _ in find_ligands(_inorganic_structure(), "X", ["bnz"], 1)]
 
 
 @needs_fixtures

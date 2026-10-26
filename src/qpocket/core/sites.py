@@ -6,6 +6,14 @@ from typing import List, Sequence, Tuple
 from qpocket.core.types import Ligand
 
 
+def _element(atom) -> str:
+    """Upper-case element symbol, read from the atom name when the element is blank or unidentified."""
+    element = (atom.element or "").strip().upper()
+    if element in ("", "X"):
+        element = next((c for c in atom.name.upper() if c.isalpha()), "")
+    return element
+
+
 def find_ligands(structure, pdb_id: str, allowed_cofactors: Sequence[str],
                  min_heavy_atoms: int) -> List[Tuple[Ligand, object]]:
     """Every non-water, carbon-containing HET residue of the first model that the run does not clean away.
@@ -19,14 +27,16 @@ def find_ligands(structure, pdb_id: str, allowed_cofactors: Sequence[str],
     Returns:
         ``(Ligand, residue)`` pairs in chain, then residue, order.
     """
+    cofactors = {name.upper() for name in allowed_cofactors}
     found: List[Tuple[Ligand, object]] = []
     for chain in next(iter(structure)):
         for res in chain:
-            if res.id[0] in (" ", "W") or res.get_resname().strip().upper() in allowed_cofactors:
+            if res.id[0] in (" ", "W") or res.get_resname().strip().upper() in cofactors:
                 continue
-            if not any((a.element or "").strip().upper() == "C" for a in res):
+            elements = [_element(a) for a in res]
+            if "C" not in elements:
                 continue  # ions and inorganic species such as SO4 are never ligands
-            n_heavy = sum(1 for a in res if (a.element or "").strip().upper() not in ("H", "D"))
+            n_heavy = sum(1 for e in elements if e not in ("H", "D"))
             if n_heavy < min_heavy_atoms:
                 continue
             _, resseq, icode = res.id
