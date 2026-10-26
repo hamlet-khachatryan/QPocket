@@ -2,17 +2,13 @@
 from __future__ import annotations
 
 import json
-import shutil
 from dataclasses import fields
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
 from qpocket.config import ClusteringParams, StageClustering
-from qpocket.pipelines.clustering import cluster_pockets, write_clustering
-
-CLUSTERING_FILES = ("clustering_metadata.csv", "selected_representatives.csv", "clustering_params.json")
+from qpocket.pipelines.clustering import archive_clustering, cluster_pockets, write_clustering
 
 
 def _stage(payload: dict, default: StageClustering) -> StageClustering:
@@ -79,11 +75,5 @@ def run(run_dir: Path, settings: ClusteringParams) -> Path:
     # min_cluster_size is not part of the stage records; keep it with the rest.
     assignment.params.setdefault("min_cluster_size", int(settings.min_cluster_size))
 
-    present = [meta / f for f in CLUSTERING_FILES if (meta / f).exists()]
-    if present:
-        archive = meta / "clustering_history" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        archive.mkdir(parents=True)
-        for path in present:
-            shutil.copy2(path, archive / path.name)
-
+    archive_clustering(meta)
     return write_clustering(meta, ids, assignment, combined_m, file_by_id)

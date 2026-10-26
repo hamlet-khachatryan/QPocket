@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import json
+import shutil
+from datetime import datetime, timezone
 from typing import Dict, List, NamedTuple, Optional, Tuple
 import numpy as np
 from pathlib import Path
@@ -222,6 +224,23 @@ def cluster_pockets(
             "n_clusters": n_final,
         },
     )
+
+
+CLUSTERING_FILES = ("clustering_metadata.csv", "selected_representatives.csv", "clustering_params.json")
+
+
+def archive_clustering(meta: Path) -> None:
+    """Copy the current clustering, if any, into ``clustering_history/<UTC stamp>/``.
+
+    Args:
+        meta: A run's or a site's metadata directory.
+    """
+    present = [meta / f for f in CLUSTERING_FILES if (meta / f).exists()]
+    if present:
+        archive = meta / "clustering_history" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        archive.mkdir(parents=True)
+        for path in present:
+            shutil.copy2(path, archive / path.name)
 
 
 def write_clustering(meta_dir: Path, ids: List[str], assignment: ClusterAssignment,
