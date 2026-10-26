@@ -1,10 +1,11 @@
 """Ligand finding picks every drug-like residue, once per residue."""
 from pathlib import Path
 
+import numpy as np
 import pytest
 from Bio.PDB import PDBParser
 
-from qpocket.core.sites import find_ligands
+from qpocket.core.sites import find_ligands, group_ligands, points_in_box, site_box, site_ids
 from qpocket.core.types import Ligand
 
 # the synthetic residues deliberately carry unidentifiable elements
@@ -110,3 +111,40 @@ def test_cofactor_names_match_case_insensitively():
 @needs_fixtures
 def test_biotin_still_found_at_threshold_one():
     assert [l.resname for l, _ in find_ligands(_parse("1STP"), "1STP", [], 1)] == ["BTN"]
+
+
+A = np.array([[0, 0, 0], [1, 0, 0]]); B = A + [4.5, 0, 0]; C = A + [9.0, 0, 0]; FAR = A + [50, 0, 0]
+
+
+def test_overlapping_join_far_split():
+    labels = group_ligands([A, A + 0.5, FAR], cutoff=4.0)
+    assert labels[0] == labels[1] != labels[2]
+
+
+def test_bridge_chains_sites():  # accepted per spec decision 13
+    labels = group_ligands([A, B, C], cutoff=4.0)
+    assert len(set(labels)) == 1
+
+
+def test_group_ligands_edge_sizes():
+    assert group_ligands([], cutoff=4.0).tolist() == []
+    assert group_ligands([A], cutoff=4.0).tolist() == [0]
+
+
+def test_site_ids_by_holo_count():
+    ids = site_ids(np.array([0, 1, 1, 1]), ["P1", "P1", "P2", "P3"])
+    assert ids == ["site_02", "site_01", "site_01", "site_01"]
+
+
+def test_site_ids_ties_by_appearance_and_wide_padding():
+    assert site_ids(np.array([5, 3]), ["P1", "P2"]) == ["site_01", "site_02"]
+    assert site_ids(np.array([], dtype=int), []) == []
+    ids = site_ids(np.arange(100), [f"P{i}" for i in range(100)])
+    assert ids[0] == "site_001" and ids[99] == "site_100"
+
+
+def test_points_in_box():
+    lo, hi = site_box([A], padding=1.0)
+    pts = np.array([[0.5, 0, 0], [5, 0, 0]])
+    assert points_in_box(pts, lo, hi).tolist() == [[0.5, 0, 0]]
+    assert points_in_box(np.array([[2.0, 0, 0]]), lo, hi).shape == (1, 3)  # inclusive bound
