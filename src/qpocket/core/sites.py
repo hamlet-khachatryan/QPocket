@@ -1,7 +1,7 @@
 """Binding-site discovery: ligands a structure holds, and sites built from cavity boxes (pure)."""
 from __future__ import annotations
 
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
@@ -73,7 +73,8 @@ def grid_spacing(points: Sequence[np.ndarray]) -> float:
     Returns:
         The spacing (Å), or 0.0 when there are fewer than two points.
     """
-    xyz = np.vstack([p for p in points if len(p)] or [np.zeros((0, 3))])
+    # CavFind repeats points; spacing is measured between distinct ones.
+    xyz = np.unique(np.round(np.vstack([p for p in points if len(p)] or [np.zeros((0, 3))]), 4), axis=0)
     if len(xyz) < 2:
         return 0.0
     return float(np.median(cKDTree(xyz).query(xyz, k=2)[0][:, 1]))
@@ -164,21 +165,24 @@ def merge_sites(groups: List[List[int]], boxes: np.ndarray, threshold: float) ->
     return sites
 
 
-def site_members(site_boxes: np.ndarray, boxes: np.ndarray, threshold: float) -> List[List[int]]:
-    """Per site, every box overlapping the site box by at least ``threshold``; a box may join several.
+def site_members(site_boxes: np.ndarray, boxes: np.ndarray, threshold: float,
+                 groups: Optional[Sequence[Sequence[int]]] = None) -> List[List[int]]:
+    """Per site, its own group plus every box overlapping the site box by at least ``threshold``.
 
     Args:
         site_boxes: ``(k, 6)`` site boxes.
         boxes: ``(n, 6)`` cavity boxes.
-        threshold: IoU a cavity needs with a site box.
+        threshold: IoU a cavity of another group needs with a site box.
+        groups: The cavities each site was built from; they always belong to it.
 
     Returns:
-        One index list per site.
+        One sorted index list per site; a box may be in several.
     """
+    own = [set(g) for g in groups] if groups is not None else [set() for _ in range(len(site_boxes))]
     if not len(site_boxes) or not len(boxes):
-        return [[] for _ in range(len(site_boxes))]
+        return [sorted(g) for g in own]
     iou = box_iou(site_boxes, boxes)
-    return [np.flatnonzero(row >= threshold).tolist() for row in iou]
+    return [sorted(own[k] | set(np.flatnonzero(row >= threshold).tolist())) for k, row in enumerate(iou)]
 
 
 def ligand_sites(coords: Sequence[np.ndarray], site_boxes: np.ndarray, fraction: float,

@@ -149,7 +149,7 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
         boxes = np.array([voxel_box(c[2], half) for c in candidates]).reshape(-1, 6)
         groups = merge_sites(cavity_cores(boxes, p.cavity_overlap), boxes, p.cavity_overlap)
         site_boxes = np.array([median_box(boxes[g]) for g in groups]).reshape(-1, 6)
-        members = site_members(site_boxes, boxes, p.cavity_overlap)
+        members = site_members(site_boxes, boxes, p.cavity_overlap, groups=groups)
         lig_sites = ligand_sites([_heavy_coords(lig.file) for lig in ligands], site_boxes,
                                  p.ligand_fraction, p.box_padding)
 
@@ -281,7 +281,7 @@ def _repoint(site_dir: Path) -> None:
         site_dir: The site folder, under its new name.
     """
     for path in (site_dir / "metadata").rglob("*.csv"):
-        if "pocket_file" not in pd.read_csv(path, nrows=0).columns:
+        if not path.stat().st_size or "pocket_file" not in pd.read_csv(path, nrows=0).columns:
             continue
         table = pd.read_csv(path, dtype=str, keep_default_na=False)
         # pocket_file is <site>/pockets/<pdb_id>/<file>; crossdock files hold folder-relative paths only.

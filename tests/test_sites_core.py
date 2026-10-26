@@ -221,3 +221,16 @@ def test_grid_spacing_of_a_regular_grid():
     grid = np.array([[i, j, k] for i in range(4) for j in range(4) for k in range(4)], float) * 0.7
     assert grid_spacing([grid]) == pytest.approx(0.7)
     assert grid_spacing([np.zeros((1, 3))]) == 0.0
+
+
+def test_grid_spacing_ignores_duplicate_points():
+    grid = np.array([[i, j, k] for i in range(4) for j in range(4) for k in range(4)], float) * 0.7
+    assert grid_spacing([np.vstack([grid, grid])]) == pytest.approx(0.7)
+
+
+def test_a_cavity_always_belongs_to_its_own_site():
+    boxes = _x_boxes((0, 10), (0, 10), (2, 12), (-2, 8), (-4, 6))   # the last drifts below 0.5 of the median
+    groups = [[0, 1, 2, 3, 4]]
+    site_boxes = np.array([median_box(boxes[g]) for g in groups])
+    assert box_iou(site_boxes, boxes[[4]])[0, 0] < 0.5
+    assert site_members(site_boxes, boxes, 0.5, groups=groups) == [[0, 1, 2, 3, 4]]

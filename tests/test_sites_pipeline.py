@@ -190,3 +190,16 @@ def test_two_ligands_at_one_site_are_two_actives(tmp_path):
     sid = table.site_id.iloc[0]
     assert len((ws.sites / sid / "screening" / "actives.smi").read_text().splitlines()) == 3
     assert _master(ws, sid).loc["P1", "ligand_file"] == big.file
+
+
+def test_repoint_skips_empty_tables(tmp_path):
+    from qpocket.pipelines.sites import _repoint
+
+    site = tmp_path / "S2-Y1"
+    (site / "metadata").mkdir(parents=True)
+    (site / "metadata" / "failures.csv").write_text("")
+    pd.DataFrame({"pocket_file": [str(tmp_path / "S1-Y1" / "pockets" / "P1" / "binding_site.csv")]}).to_csv(
+        site / "metadata" / "clustering_metadata.csv", index=False)
+    _repoint(site)
+    moved = pd.read_csv(site / "metadata" / "clustering_metadata.csv")["pocket_file"].iloc[0]
+    assert moved == str(site / "pockets" / "P1" / "binding_site.csv")
