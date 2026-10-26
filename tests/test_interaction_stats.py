@@ -17,10 +17,7 @@ import pytest
 from qpocket.io.hdf5 import build_profile
 from qpocket.core.interactions import (
     MIN_TESTABLE,
-    engaged_set,
-    exclusivity,
     interaction_type_shift,
-    pairwise_exclusivity,
     residue_enrichment,
 )
 
@@ -98,7 +95,7 @@ def test_a_missing_file_is_refused_rather_than_read_as_empty(tmp_path):
 # --- presence: which residues differ --------------------------------------
 
 
-def test_a_residue_exclusive_to_one_cluster_is_significant(split_profile):
+def test_a_residue_only_one_cluster_engages_is_significant(split_profile):
     results = by_residue(residue_enrichment(split_profile, CLUSTER_A, CLUSTER_B))
     assert results["ARG_1_A"].significant
 
@@ -108,7 +105,7 @@ def test_a_residue_engaged_by_both_equally_is_not_significant(split_profile):
     assert not results["TYR_3_A"].significant
 
 
-def test_an_exclusive_residue_reports_the_full_frequency_difference(split_profile):
+def test_a_one_cluster_residue_reports_the_full_frequency_difference(split_profile):
     results = by_residue(residue_enrichment(split_profile, CLUSTER_A, CLUSTER_B))
     assert results["ARG_1_A"].difference == pytest.approx(1.0)
 
@@ -208,48 +205,3 @@ def test_a_potential_profile_has_no_types_to_shift(tmp_path):
     data = {pid: ["ARG_1_A"] for pid in CLUSTER_A + CLUSTER_B}
     profile = build_profile(write_h5(tmp_path / "pot.h5", data))
     assert interaction_type_shift(profile, CLUSTER_A, CLUSTER_B) == []
-
-
-# --- exclusivity ----------------------------------------------------------
-
-
-def test_disjoint_repertoires_score_zero(tmp_path):
-    data = {pid: ["ARG_1_A|Hydrophobic"] for pid in CLUSTER_A}
-    data.update({pid: ["ASP_2_A|Hydrophobic"] for pid in CLUSTER_B})
-    profile = build_profile(write_h5(tmp_path / "disjoint.h5", data))
-    assert exclusivity(profile, CLUSTER_A, CLUSTER_B).jaccard == 0.0
-
-
-def test_identical_repertoires_score_one(tmp_path):
-    data = {pid: ["ARG_1_A|Hydrophobic"] for pid in CLUSTER_A + CLUSTER_B}
-    profile = build_profile(write_h5(tmp_path / "same.h5", data))
-    assert exclusivity(profile, CLUSTER_A, CLUSTER_B).jaccard == 1.0
-
-
-def test_a_half_shared_repertoire_scores_one_third(split_profile):
-    """A engages {ARG, TYR}, B engages {ASP, TYR}: one shared of three."""
-    assert exclusivity(split_profile, CLUSTER_A, CLUSTER_B).jaccard == pytest.approx(1 / 3)
-
-
-def test_exclusivity_names_the_residues_on_each_side(split_profile):
-    result = exclusivity(split_profile, CLUSTER_A, CLUSTER_B)
-    assert (result.a_only, result.shared, result.b_only) == (
-        ("ARG_1_A",), ("TYR_3_A",), ("ASP_2_A",),
-    )
-
-
-def test_a_residue_below_the_engagement_fraction_is_not_in_the_set(tmp_path):
-    """One structure of four is 25%, under the 50% default."""
-    data = {pid: [] for pid in CLUSTER_A}
-    data["A1"] = ["ARG_1_A|Hydrophobic"]
-    profile = build_profile(write_h5(tmp_path / "rare.h5", data))
-    assert engaged_set(profile, CLUSTER_A) == ()
-
-
-def test_raising_the_engagement_fraction_shrinks_the_set(split_profile):
-    assert engaged_set(split_profile, CLUSTER_A, engaged_frac=1.01) == ()
-
-
-def test_pairwise_covers_every_unordered_pair(split_profile):
-    clusters = {0: CLUSTER_A, 1: CLUSTER_B, 2: ["C1"]}
-    assert set(pairwise_exclusivity(split_profile, clusters)) == {(0, 1), (0, 2), (1, 2)}
