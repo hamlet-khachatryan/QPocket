@@ -90,6 +90,8 @@ def chem_height_range(m: RunMatrices, shape_labels: np.ndarray, linkage: str = "
     Returns:
         (min height, max height); (0, 1) when no cluster can be split.
     """
+    if m.chem is None:
+        return 0.0, 1.0
     lows, highs = [], []
     for value in np.unique(shape_labels):
         members = np.flatnonzero(shape_labels == value)
@@ -118,6 +120,20 @@ def threshold_settings(settings, shape_threshold: float, chem_threshold: Optiona
         settings.chem, method="hierarchical", criterion="threshold", threshold=float(chem_threshold))
     return replace(settings, mode="two_stage", shape=shape, chem=chem,
                    min_cluster_size=min_cluster_size or settings.min_cluster_size)
+
+
+def shape_only_settings(settings, shape_threshold: float):
+    """Clustering settings that cut the shape tree and stop there.
+
+    Args:
+        settings: Starting ClusteringParams (usually the run's own).
+        shape_threshold: Shape tree cut height.
+
+    Returns:
+        New ClusteringParams in shape-only mode.
+    """
+    shape = replace(settings.shape, method="hierarchical", criterion="threshold", threshold=float(shape_threshold))
+    return replace(settings, mode="shape_only", shape=shape)
 
 
 def regroup(m: RunMatrices, settings) -> pd.DataFrame:

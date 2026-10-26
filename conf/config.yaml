@@ -103,7 +103,7 @@ distance:
     # "two_stage" groups on pocket shape, then subdivides each group on
     # physicochemistry. "single" clusters the blended matrix in one pass, which
     # is what the pipeline did before 0.2 and reproduces those runs exactly.
-    mode: "two_stage"             # "two_stage" or "single"
+    mode: "two_stage"             # "two_stage", "single" or "shape_only"
     min_cluster_size: 4           # stage-one clusters smaller than this are
                                   # not subdivided
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 from eliot import log_message, start_action
 from joblib import Parallel, delayed
+from scipy.spatial.distance import pdist, squareform
 
 from qpocket.config import QPocketConfig
 from qpocket.core import spectral as sp
@@ -15,8 +16,6 @@ from qpocket.core.spectral import pad_or_truncate  # noqa: F401  (re-exported)
 from qpocket.io import cache, tables
 from qpocket.io.layout import Workspace
 from qpocket.types import Fingerprint
-from scipy.spatial.distance import pdist, squareform
-
 from qpocket.pipelines.clustering import assign_clusters, write_clustering
 
 

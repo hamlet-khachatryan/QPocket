@@ -63,8 +63,6 @@ def run(run_dir: Path, settings: ClusteringParams) -> Path:
         shape_df = shape_df.loc[combined.index, combined.columns]
         ids = [str(i) for i in combined.index]
         chem = pd.read_csv(meta / "feature_distance_matrix.csv", index_col=0).loc[combined.index, combined.columns]
-    elif settings.mode != "shape_only":
-        raise ValueError("two-stage clustering needs featurised pockets; run Featurise first")
     shape = shape_df
 
     old = meta / "clustering_metadata.csv"

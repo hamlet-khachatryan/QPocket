@@ -225,3 +225,14 @@ def test_two_stage_resolves_k_by_silhouette_when_it_is_not_pinned(two_axes):
     shape_d, chem_d = two_axes
     result = two_stage_labels(shape_d, chem_d, shape_k=None, shape_k_range=(2, 6))
     assert result.shape_clustering.n_clusters == 3
+
+
+@pytest.mark.parametrize("mode", ["two_stage", "single"])
+def test_cluster_pockets_without_chem_raises(mode):
+    from dataclasses import replace
+    from qpocket.config import ClusteringParams
+    from qpocket.pipelines.clustering import cluster_pockets
+
+    d = distances([0, 1, 2, 10, 11, 12])
+    with pytest.raises(ValueError, match="needs featurised pockets"):
+        cluster_pockets(replace(ClusteringParams(), mode=mode), d, None, None)

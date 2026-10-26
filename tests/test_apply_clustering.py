@@ -95,3 +95,12 @@ def test_recluster_two_stage_without_chem_raises(run):
     (run / "metadata/feature_distance_matrix.csv").unlink()
     with pytest.raises(ValueError, match="needs featurised pockets"):
         recluster.run(run, recluster.load_settings(run))
+
+
+def test_shape_only_matrices_preview_with_shape_only_settings(run):
+    (run / "metadata/feature_distance_matrix.csv").unlink()
+    m = ts.load_matrices(run)
+    assert ts.chem_height_range(m, np.zeros(len(m.ids), dtype=int)) == (0.0, 1.0)
+    settings = ts.shape_only_settings(recluster.load_settings(run), 4.0)
+    assert settings.mode == "shape_only"
+    assert ts.preview(m, settings).n_clusters >= 1

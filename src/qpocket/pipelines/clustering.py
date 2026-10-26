@@ -136,6 +136,9 @@ def cluster_pockets(
     if settings.mode == "shape_only":
         return cluster_shape_only(settings.shape, d_shape)
 
+    if d_chem is None or combined is None:
+        raise ValueError("two-stage clustering needs featurised pockets; run Featurise first")
+
     if settings.mode == "single":
         stage = settings.single
         # Single mode has never honoured a threshold cut, so it always counts.

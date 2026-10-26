@@ -256,7 +256,9 @@ def _(
     shape_cut,
 ):
     # Only the knobs the chosen method uses are on screen.
-    (mo.md("") if cluster_matrices is None else {
+    (mo.md("") if cluster_matrices is None else
+     mo.vstack([mo.md("_Shape-only clustering — featurise this site for two-stage clustering._"),
+                shape_cut]) if cluster_matrices.chem is None else {
         "affinity": mo.hstack([damping], justify="start", gap=2),
         "hierarchical": mo.hstack([combined_cut], justify="start", gap=2),
         "two_stage": mo.hstack([shape_cut, chem_cut, min_split], justify="start", gap=2),
@@ -280,7 +282,8 @@ def _(
     # what Apply writes cannot disagree.
     pending_settings, pending = None, None
     if cluster_matrices is not None:
-        pending_settings = qviz.two_stage.settings_for(
+        pending_settings = qviz.two_stage.shape_only_settings(
+            cluster_settings, shape_cut.value) if cluster_matrices.chem is None else qviz.two_stage.settings_for(
             cluster_settings, cluster_method.value,
             combined_cut=combined_cut.value, shape_cut=shape_cut.value,
             chem_cut=chem_cut.value, damping=damping.value,
@@ -303,6 +306,10 @@ def _(
     # The mirrored pair only means something for the two-stage cut.
     if cluster_matrices is None or pending is None:
         _view = mo.md("")
+    elif cluster_matrices.chem is None:
+        _view = qviz.two_stage.dendrogram_figure(
+            cluster_matrices.shape, cluster_matrices.ids, shape_cut.value, "Shape",
+            cluster_settings.shape.linkage)
     elif cluster_method.value == "two_stage":
         _view = qviz.two_stage.mirrored_figure(
             cluster_matrices, pending, shape_cut.value, chem_cut.value,
