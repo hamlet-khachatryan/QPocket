@@ -13,42 +13,24 @@ import time
 import uuid
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-from qpocket.io import layout
 from qpocket.viz import explorer_path
 
 NOTEBOOK = explorer_path()
 websockets = pytest.importorskip("websockets", reason="needs the websockets client")
 
 
-def _old_style_run(root: Path) -> Path:
-    """A run as they were written before the shape and feature matrices existed."""
-    run = root / "legacy" / "1ABC"
-    meta = run / "metadata"
-    meta.mkdir(parents=True)
-    (meta / "run.json").write_text(json.dumps({"layout_version": layout.LAYOUT_VERSION}))
-    ids = ["1ABC", "2DEF", "3GHI"]
-    frame = pd.DataFrame(
-        [[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]], index=ids, columns=ids)
-    # Only the spectral matrix, which is all those runs carried.
-    frame.to_csv(meta / "spectral_distance_matrix.csv")
-    pd.DataFrame({"pdb_id": ids, "cluster_id": [0, 0, 1],
-                  "is_representative": [True, False, True]}).to_csv(
-        meta / "clustering_metadata.csv", index=False)
-    pd.DataFrame({"pdb_id": ids, "protein_state": ["BOUND_STATE"] * 3,
-                  "rmsd_to_ref": [0.0, 0.3, 0.5]}).to_csv(meta / "master.csv", index=False)
-    # A directory counts as a run only when it also holds pockets/.
-    for pid in ids:
-        pocket = run / "pockets" / pid
-        pocket.mkdir(parents=True)
-        pd.DataFrame({"x": [0.0, 1.0], "y": [0.0, 1.0], "z": [0.0, 1.0],
-                      "apbs": [0.1, 0.2]}).to_csv(pocket / "featurized.csv", index=False)
-        pd.DataFrame({"x": [0.0, 1.0], "y": [0.0, 1.0], "z": [0.0, 1.0]}).to_csv(
-            pocket / "binding_site.csv", index=False)
-    return run
+def _site_run(tmp_path, monkeypatch, shape_clustered: bool) -> Path:
+    """The site-steps fixture run: clouds only, or with site_01 shape-clustered."""
+    from qpocket.arms import sites
+    from tests.test_site_steps import _finished_run
+
+    root = _finished_run(tmp_path, monkeypatch)
+    if shape_clustered:
+        sites.shape_cluster_site(root, "site_01")
+    return root
 
 
 def _free_port() -> int:
@@ -89,13 +71,14 @@ def _cell_errors(port: int, seconds: float = 90.0):
 
 @pytest.mark.golden
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
-def test_a_run_without_the_newer_matrices_leaves_no_error_boxes(tmp_path):
-    """A small run used to crash inside UMAP's spectral start, deep in scipy."""
-    _old_style_run(tmp_path)
+@pytest.mark.parametrize("shape_clustered", [False, True], ids=["clouds-only", "shape-clustered"])
+def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered):
+    """A three-structure site: the landscape's UMAP once crashed on runs this small, deep in scipy."""
+    root = _site_run(tmp_path, monkeypatch, shape_clustered)
     port = _free_port()
     server = subprocess.Popen(
         [sys.executable, "-m", "marimo", "run", str(NOTEBOOK), "--headless",
-         "--no-token", "-p", str(port), "--", "--runs", str(tmp_path)],
+         "--no-token", "-p", str(port), "--", "--runs", str(root)],
         cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
     try:

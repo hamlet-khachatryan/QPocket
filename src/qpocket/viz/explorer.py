@@ -26,9 +26,10 @@ def _():
     import plotly.express as px
 
     import qpocket.viz as qviz
+    from qpocket.arms import sites as qsites
     from qpocket.viz import controls as qcontrols
 
-    return Path, json, lru_cache, mo, np, pd, px, qcontrols, qviz
+    return Path, json, lru_cache, mo, np, pd, px, qcontrols, qsites, qviz
 
 
 @app.cell
@@ -85,12 +86,49 @@ def _(Path, mo, qviz, run_location):
 
 
 @app.cell
-def _(Path, mo, pd, run_selector):
+def _(Path, mo, run_selector):
     mo.stop(run_selector.value is None, mo.md("No run selected / none found."))
-
     run_dir = Path(run_selector.value)
-    meta = run_dir / "metadata"
-    pockets_dir = run_dir / "pockets"
+    return (run_dir,)
+
+
+@app.cell
+def _(mo, pd, qsites, regrouped, run_dir):
+    # regrouped is None until Regroup sites runs; depending on it re-reads the table.
+    _ = regrouped
+    try:
+        sites_df = qsites.site_table(run_dir)
+    except qsites.SiteError:
+        sites_df = pd.DataFrame(columns=["site_id", "n_holo_structures", "n_ligands", "extent", "resnames"])
+    _labels = {f"{r.site_id} · {r.n_holo_structures} holo · {r.resnames}": r.site_id
+               for r in sites_df.itertuples()}
+    site_picker = mo.ui.dropdown(options=_labels, value=next(iter(_labels), None),
+                                 label="**Binding site**")
+    mo.vstack([
+        mo.md("## Binding sites\nEvery ligand-occupied site of the run. Everything below reads "
+              "the site picked here."),
+        site_picker,
+        mo.ui.table(sites_df[["site_id", "n_holo_structures", "n_ligands", "extent", "resnames"]],
+                    selection=None, pagination=True),
+    ])
+    return site_picker, sites_df
+
+
+@app.cell
+def _(mo):
+    # A site step rewrites the site's files; bumping this re-reads them below.
+    get_site_steps, set_site_steps = mo.state("")
+    return get_site_steps, set_site_steps
+
+
+@app.cell
+def _(Path, get_site_steps, mo, pd, run_dir, site_picker):
+    mo.stop(site_picker.value is None, mo.md("No ligand-bound site was found in this run."))
+
+    _ = get_site_steps()
+    site_dir = run_dir / "sites" / site_picker.value
+    meta = site_dir / "metadata"
+    pockets_dir = site_dir / "pockets"
 
     def _read_csv(p, **kw):
         return pd.read_csv(p, **kw) if p.exists() else None
@@ -100,9 +138,12 @@ def _(Path, mo, pd, run_selector):
     util_df = _read_csv(meta / "binding_pocket_utilization.csv")
 
 
-    actives_df = _read_csv(run_dir / "screening" / "actives.smi", sep="\t")
+    actives_df = _read_csv(site_dir / "screening" / "actives.smi", sep="\t")
 
+    # A site clustered on shape alone has no spectral matrix; its shape matrix stands in.
     dist_path = meta / "spectral_distance_matrix.csv"
+    if not dist_path.exists():
+        dist_path = meta / "shape_distance_matrix.csv"
     dist_df = pd.read_csv(dist_path, index_col=0) if dist_path.exists() else None
 
     #per-structure metadata
@@ -121,13 +162,15 @@ def _(Path, mo, pd, run_selector):
     info["cluster_id"] = info.get("cluster_id", -1)
     info = info.sort_values(["cluster_id", "pdb_id"]).reset_index(drop=True)
 
-    def featurized_path(pdb_id: str) -> Path:
-        return pockets_dir / str(pdb_id) / "featurized.csv"
+    def cloud_path(pdb_id: str) -> Path:
+        """The pocket's featurised cloud, or its bare cloud before Featurise."""
+        _featurized = pockets_dir / str(pdb_id) / "featurized.csv"
+        return _featurized if _featurized.exists() else _featurized.with_name("binding_site.csv")
 
     #available features
     FEATURE_COLS = []
     for _pid in info["pdb_id"]:
-        _fp = featurized_path(_pid)
+        _fp = pockets_dir / str(_pid) / "featurized.csv"
         if _fp.exists():
             _cols = pd.read_csv(_fp, nrows=1).columns.tolist()
             FEATURE_COLS = [c for c in _cols if c not in ("x", "y", "z")]
@@ -135,20 +178,119 @@ def _(Path, mo, pd, run_selector):
 
     mo.md(
         f"""
-        `{run_dir}` — structures: **{len(info)}** · clusters:
+        `{site_dir}` — structures: **{len(info)}** · clusters:
         **{info['cluster_id'].nunique()}** · representatives:
         **{int(info['is_representative'].sum())}** · features:
         `{', '.join(FEATURE_COLS) or 'none found'}`
         """
     )
-    return (
-        FEATURE_COLS,
-        actives_df,
-        dist_df,
-        featurized_path,
-        info,
-        run_dir,
-    )
+    return FEATURE_COLS, actives_df, cloud_path, dist_df, info, site_dir
+
+
+@app.cell
+def _(Path, info, mo, qviz, site_dir, sites_df):
+    # The site's ligands over the frame protein, every site's centre as a sphere
+    # (this one dark, the others faint), through the pocket grid's own page.
+    _centres = sites_df[["centre_x", "centre_y", "centre_z"]].to_numpy(dtype=float)
+    _here = (sites_df["site_id"] == site_dir.name).to_numpy(dtype=float)
+    _ligands = site_dir / "ligands.pdb"
+    # shortcut: the first aligned structure stands in for the frame; every one is superposed onto it.
+    _frame = next((f for f in info.get("aligned_file", []) if isinstance(f, str) and Path(f).exists()), None)
+    _ramp = qviz.RampSpec("sequential", "Blues", ("other sites", "this site"))
+    _domain = qviz.ColourDomain(0.15, 1.0, None)
+    _stops = qviz.ramp_stops(_ramp.scale)
+    _panel = {
+        "id": site_dir.name, "title": f"{site_dir.name} · ligands of every holo structure",
+        "cloud": qviz.pseudo_atom_pdb(_centres, b=qviz.scale_to_percent(_here, _domain)),
+        "cartoon": Path(_frame).read_text(encoding="utf-8") if _frame else "",
+        "side": "", "highlights": {}, "n_forced": 0,
+        "ligand": qviz.ligand_pdb(str(_ligands)) if _ligands.exists() else "",
+        "vals": [round(float(v), 3) for v in _here], "n_points": len(_centres), "n_ctx": 0,
+    }
+    _html, _h = qviz.grid.grid_html(
+        [_panel], bbox_pdb=qviz.pseudo_atom_pdb(qviz.bbox_corners(_centres, pad=10.0), resname="BOX", chain="Z"),
+        n_cols=1, panel_px=420, sphere_radius=1.2, stops=_stops, value_label="this site",
+        ramp=_ramp, domain=_domain, hover=False, cartoon_opacity=0.5, ligand_color="greenCarbon",
+        observed_colour="#eb6834", potential_colour="#7b5cd6", offline=True)
+    mo.iframe(_html, height=f"{_h + 70}px")
+    return
+
+
+@app.cell
+def _(get_site_steps, mo, qsites, run_dir, site_dir):
+    _sid = site_dir.name
+    site_steps = qsites.site_status(run_dir, _sid)
+    shape_button = mo.ui.run_button(label="Shape clustering")
+    featurise_button = mo.ui.run_button(label="Featurise")
+    two_stage_button = mo.ui.run_button(
+        label="Two-stage clustering" if site_steps["featurised"] else "Two-stage clustering (needs Featurise)",
+        disabled=not site_steps["featurised"])
+    _done = " · ".join(f"{name.replace('_', ' ')} {'✓' if ok else '—'}" for name, ok in site_steps.items())
+    _commands = "\n".join([
+        f"qpocket site shape {run_dir} --site {_sid}",
+        f"qpocket site featurize {run_dir} --site {_sid}",
+        f"qpocket site cluster {run_dir} --site {_sid}",
+        "# or on SLURM (featurises one cloud per array task, then clusters):",
+        f"qpocket slurm generate --config {run_dir / 'metadata' / 'config.yaml'} "
+        f"--workdir {run_dir.parent} --site {_sid}",
+    ])
+    mo.vstack([
+        mo.md(f"### Steps for {_sid}\n{_done}"),
+        mo.hstack([shape_button, featurise_button, two_stage_button], justify="start"),
+        mo.md(get_site_steps()),
+        mo.accordion({"Run them from a terminal instead": mo.plain_text(_commands)}),
+    ])
+    return featurise_button, shape_button, two_stage_button
+
+
+@app.cell
+def _(featurise_button, mo, qsites, run_dir, set_site_steps, shape_button, site_dir, two_stage_button):
+    mo.stop(not (shape_button.value or featurise_button.value or two_stage_button.value))
+    _name, _step = next((n, f) for n, f, b in [
+        ("Shape clustering", qsites.shape_cluster_site, shape_button),
+        ("Featurise", qsites.featurize_site, featurise_button),
+        ("Two-stage clustering", qsites.two_stage_site, two_stage_button),
+    ] if b.value)
+    with mo.status.spinner(title=f"{_name} for {site_dir.name}…"):
+        try:
+            _step(run_dir, site_dir.name)
+            _message = f"_{_name} finished for {site_dir.name}._"
+        except Exception as _e:
+            _message = f"_{_name} failed: {type(_e).__name__}: {_e}_"
+    set_site_steps(_message)
+    return
+
+
+@app.cell
+def _(mo, run_dir):
+    from qpocket.config import load_run_config as _load_run_config
+
+    regroup_cutoff = mo.ui.number(start=0.5, stop=20.0, step=0.5,
+                                  value=float(_load_run_config(run_dir).sites.link_cutoff),
+                                  label="Link cutoff (Å)")
+    regroup_button = mo.ui.run_button(label="Regroup sites")
+    mo.accordion({"Regroup sites": mo.vstack([
+        mo.callout(mo.md("Regrouping rewrites `sites/`. Every site whose ligands change loses its "
+                         "per-site results: features, clustering and cross-docking."), kind="warn"),
+        mo.hstack([regroup_cutoff, regroup_button], justify="start", align="end"),
+        mo.plain_text(f"qpocket site regroup {run_dir} --cutoff <x>"),
+    ])})
+    return regroup_button, regroup_cutoff
+
+
+@app.cell
+def _(mo, qsites, regroup_button, regroup_cutoff, run_dir):
+    # No mo.stop: the site table depends on this, and must show before any regroup.
+    regrouped = None
+    if regroup_button.value:
+        with mo.status.spinner(title="Regrouping sites…"):
+            try:
+                regrouped = qsites.regroup_sites(run_dir, float(regroup_cutoff.value))
+                _message = f"_Regrouped into {len(regrouped)} sites._"
+            except Exception as _e:
+                _message = f"_Regroup failed: {type(_e).__name__}: {_e}_"
+    mo.md(_message if regroup_button.value else "")
+    return (regrouped,)
 
 
 @app.cell
@@ -161,11 +303,11 @@ def _(lru_cache, pd):
 
 
 @app.cell
-def _(qviz, run_dir):
+def _(qviz, site_dir):
     # Read once, in a cell of its own: both the 3D panels and the fingerprint
     # section below depend on this, and marimo resolves cells by dataflow, so a
     # shared upstream cell is what keeps them from forming a cycle.
-    run_interactions = qviz.interactions.load_run_interactions(run_dir)
+    run_interactions = qviz.interactions.load_run_interactions(site_dir)
     return (run_interactions,)
 
 
@@ -179,11 +321,11 @@ def _(mo):
 
 
 @app.cell
-def _(mo, qviz, run_dir):
+def _(mo, qviz, site_dir):
     from qpocket.arms import recluster as _recluster
 
-    cluster_matrices = qviz.two_stage.load_matrices(run_dir)
-    cluster_settings = _recluster.load_settings(run_dir)
+    cluster_matrices = qviz.two_stage.load_matrices(site_dir)
+    cluster_settings = _recluster.load_settings(site_dir)
 
     cluster_method = mo.ui.dropdown(
         options={label: key for key, label in qviz.two_stage.METHODS.items()},
@@ -192,8 +334,7 @@ def _(mo, qviz, run_dir):
         full_width=True,
     )
     (cluster_method if cluster_matrices is not None
-     else mo.md("_This run predates the shape and chemistry matrices, so it is "
-                "shown with the clustering it was saved with._"))
+     else mo.md("_This site has no distance matrices yet; run Shape clustering above._"))
     return cluster_matrices, cluster_method, cluster_settings
 
 
@@ -348,14 +489,14 @@ def _(mo, pending_settings):
 
 
 @app.cell
-def _(apply_clustering, mo, pending_settings, run_dir):
+def _(apply_clustering, mo, pending_settings, site_dir):
     # Every section below reads the file this writes, so the button is what makes
     # them refresh.
     applied_at = None
     if apply_clustering.value and pending_settings is not None:
         from qpocket.arms import recluster as _recluster_apply
 
-        _saved = _recluster_apply.run(run_dir, pending_settings)
+        _saved = _recluster_apply.run(site_dir, pending_settings)
         applied_at = str(_saved)
     mo.md(f"Applied; `{applied_at}` is now this run's clustering."
           if applied_at else "")
@@ -363,7 +504,7 @@ def _(apply_clustering, mo, pending_settings, run_dir):
 
 
 @app.cell
-def _(applied_at, dist_df, info, mo, np, pd, qviz, run_dir):
+def _(applied_at, dist_df, info, mo, np, pd, qviz, site_dir):
     # ---- The grouping every view below follows -------------------------------
     # The clustering section is the decision point: it writes
     # metadata/clustering_metadata.csv, and this reads that file back. Depending
@@ -374,7 +515,7 @@ def _(applied_at, dist_df, info, mo, np, pd, qviz, run_dir):
     # negative value sits closer to a cluster other than its own.
     _ = applied_at
     active_info = info.copy()
-    _stored_path = run_dir / "metadata" / "clustering_metadata.csv"
+    _stored_path = site_dir / "metadata" / "clustering_metadata.csv"
     if _stored_path.exists():
         _saved = pd.read_csv(_stored_path)
         _cols = [c for c in ["cluster_id", "shape_cluster_id", "chem_cluster_id",
@@ -506,7 +647,7 @@ def _(
     perplexity,
     qviz,
 ):
-    mo.stop(dist_df is None, mo.md("No `spectral_distance_matrix.csv` for this run."))
+    mo.stop(dist_df is None, mo.md("No distance matrix for this site yet; run Shape clustering above."))
 
     _ids = list(dist_df.index)
     try:
@@ -583,16 +724,16 @@ def _(embed_plot):
 
 
 @app.cell
-def _(active_info, featurized_path, load_pocket, np, qviz):
+def _(active_info, cloud_path, load_pocket, np, qviz):
     # ---- The lattice the viewer's set-arithmetic modes rest on ---------------
     # Every pocket in a run is sampled on the same regular lattice, which is what
     # makes "difference from representative" and "consensus occupancy" exact rather
     # than interpolated. Never fatal: a run whose spacing cannot be established
     # still gets a viewer, just without those two modes.
     _clouds = [
-        load_pocket(str(featurized_path(_pid)))[["x", "y", "z"]].to_numpy(dtype=float)
+        load_pocket(str(cloud_path(_pid)))[["x", "y", "z"]].to_numpy(dtype=float)
         for _pid in active_info["pdb_id"]
-        if featurized_path(_pid).exists()
+        if cloud_path(_pid).exists()
     ]
     grid_spacing = None
     if _clouds:
@@ -757,7 +898,7 @@ def _(
     colour_mode,
     context_radius,
     feature,
-    featurized_path,
+    cloud_path,
     grid_spacing,
     hover_values,
     json,
@@ -781,11 +922,10 @@ def _(
     show_pocket,
     sphere_radius,
 ):
-    mo.stop(feature.value is None, mo.md("No feature available."))
-
     CONTACT_R = 4.0  # side chains are drawn for residues this close to the cloud
 
-    feat = feature.value
+    # Before Featurise the clouds carry no feature column: drawn in one colour.
+    feat = feature.value or "unfeaturised"
     across_clusters = panel_mode.value != "one cluster"
     _sizes = active_info["cluster_id"].value_counts().to_dict()
 
@@ -803,13 +943,13 @@ def _(
     pockets = []  # (pdb_id, metadata row, point cloud)
     missing = []
     for _, _row in _rows.iterrows():
-        _fp = featurized_path(_row["pdb_id"])
+        _fp = cloud_path(_row["pdb_id"])
         if _fp.exists():
             pockets.append((str(_row["pdb_id"]), _row, load_pocket(str(_fp))))
         else:
             missing.append(str(_row["pdb_id"]))
 
-    mo.stop(not pockets, mo.md(f"No `featurized.csv` found for cluster {cluster_sel.value}."))
+    mo.stop(not pockets, mo.md(f"No pocket cloud found for cluster {cluster_sel.value}."))
 
     # ---- What the spheres encode, and on what scale --------------------------
     # Each mode produces (coordinates, values) per panel. The difference and
@@ -817,6 +957,8 @@ def _(
     # interpolation; a site only one pocket occupies has no difference to show and
     # is dropped rather than filled in.
     mode = colour_mode.value
+    if feature.value is None and mode == "difference from representative":
+        mode = "feature value"
     # Within a cluster the reference is that cluster's own representative. Across
     # clusters it is the largest cluster's, so each panel reads as "how this
     # conformational family differs from the dominant one".
@@ -890,7 +1032,7 @@ def _(actives_df, mo, pd):
     # selector re-runs.
     mo.stop(
         actives_df is None or actives_df.empty,
-        mo.md("No `screening/actives.smi` in this run, so there is no ligand chemistry to draw."),
+        mo.md("No `screening/actives.smi` for this site, so there is no ligand chemistry to draw."),
     )
 
     from rdkit import Chem as _Chem, RDLogger as _RDLogger
@@ -1119,7 +1261,7 @@ def _(mo):
 
 
 @app.cell
-def _(active_info, featurized_path, grid_spacing, load_pocket, mo, qviz, run_interactions):
+def _(active_info, cloud_path, grid_spacing, load_pocket, mo, qviz, run_interactions):
     mo.stop(run_interactions is None, mo.md("No interaction archives in this run."))
 
     _holo = set(run_interactions.holo)
@@ -1138,9 +1280,9 @@ def _(active_info, featurized_path, grid_spacing, load_pocket, mo, qviz, run_int
     _shape = None
     if grid_spacing is not None:
         _clouds = {
-            _pid: load_pocket(str(featurized_path(_pid)))[["x", "y", "z"]].to_numpy(dtype=float)
+            _pid: load_pocket(str(cloud_path(_pid)))[["x", "y", "z"]].to_numpy(dtype=float)
             for _ids in exclusivity_members.values() for _pid in _ids
-            if featurized_path(_pid).exists()
+            if cloud_path(_pid).exists()
         }
         if _clouds:
             _shape = qviz.interactions.shape_overlaps(_clouds, exclusivity_members, grid_spacing)

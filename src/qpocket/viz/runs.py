@@ -11,7 +11,7 @@ RUNS_ENV = "QPOCKET_RUNS"
 
 #: Directories inside a run, or never containing one. Skipped outright.
 PRUNE = frozenset({
-    "pockets", "structures", "metadata", "screening", "slurm",
+    "pockets", "structures", "metadata", "screening", "slurm", "sites",
     "__pycache__", "__marimo__", "node_modules", ".git", ".venv", "venv",
 })
 
@@ -38,12 +38,12 @@ def is_run(path: Path) -> bool:
     p = Path(path)
     record = read_run_record(p)
     return (record is not None and record.get("layout_version") == LAYOUT_VERSION
-            and (p / "metadata" / "master.csv").is_file() and (p / "pockets").is_dir())
+            and (p / "metadata" / "master.csv").is_file() and (p / "sites").is_dir())
 
 
 def is_complete(path: Path) -> bool:
-    """Whether a run got as far as the distance matrix."""
-    return (Path(path) / "metadata" / "spectral_distance_matrix.csv").is_file()
+    """Whether a run got as far as its site table."""
+    return (Path(path) / "sites" / "sites.csv").is_file()
 
 
 def find_runs(roots: Iterable[Path], max_depth: int = MAX_DEPTH) -> List[Path]:
@@ -119,7 +119,7 @@ def resolve_location(text: str, max_depth: int = MAX_DEPTH) -> Location:
     if not runs:
         return Location(
             [], f"no run under `{path}` (looked {max_depth} levels down for "
-                f"`metadata/master.csv` beside `pockets/`)"
+                f"`metadata/master.csv` beside `sites/`)"
         )
     return Location(runs, None)
 
