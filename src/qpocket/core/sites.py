@@ -12,12 +12,25 @@ from qpocket.core.geometry import compute_pocket_bounding_box
 from qpocket.core.types import Ligand
 
 
+def element_symbol(name: str, element: str) -> str:
+    """Upper-case element symbol, read from the atom name when the element is blank or unidentified.
+
+    Args:
+        name: Atom name.
+        element: Element column, possibly blank.
+
+    Returns:
+        The symbol, or "" when neither gives one.
+    """
+    symbol = (element or "").strip().upper()
+    if symbol in ("", "X"):
+        symbol = next((c for c in name.upper() if c.isalpha()), "")
+    return symbol
+
+
 def _element(atom) -> str:
-    """Upper-case element symbol, read from the atom name when the element is blank or unidentified."""
-    element = (atom.element or "").strip().upper()
-    if element in ("", "X"):
-        element = next((c for c in atom.name.upper() if c.isalpha()), "")
-    return element
+    """Element symbol of a Biopython atom."""
+    return element_symbol(atom.name, atom.element)
 
 
 def find_ligands(structure, pdb_id: str, allowed_cofactors: Sequence[str],
