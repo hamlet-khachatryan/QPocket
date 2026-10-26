@@ -205,3 +205,18 @@ def test_save_intermediate_is_obsolete(tmp_path):
     assert any("io.save_intermediate is obsolete" in n for n in notices)
     assert not hasattr(IOConfig(), "save_intermediate")
     assert "save_intermediate" not in inspect.signature(run_qpocket_pipeline).parameters
+
+
+def test_k_range_is_obsolete():
+    cfg = OmegaConf.create({"distance": {"clustering": {"shape": {"k_range": [2, 9]}}}})
+    assert any("k_range is obsolete" in w for w in migrate_legacy(cfg))
+
+
+def test_a_config_with_k_range_still_loads(tmp_path):
+    path = tmp_path / "old.yaml"
+    path.write_text("reference:\n  pdb_id: 1ABC\ndistance:\n  clustering:\n    chem:\n"
+                    "      method: kmedoids\n      k: 3\n      criterion: count\n      k_range: [2, 6]\n",
+                    encoding="utf-8")
+    cfg, notices = load_with_notices(str(path))
+    assert cfg.distance.clustering.chem.k == 3
+    assert any("distance.clustering.chem.k_range is obsolete" in n for n in notices)

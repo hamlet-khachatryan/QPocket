@@ -16,7 +16,7 @@ from qpocket.core.ports import CLUSTERING
 
 
 
-def stage_labels(distances, method, linkage, k, k_range, criterion="count", threshold=None,
+def stage_labels(distances, method, linkage, k, criterion="count", threshold=None,
                  damping=cl.PIPELINE_DAMPING, max_iter=cl.PIPELINE_MAX_ITER) -> cl.Clustering:
     """One clustering stage through the CLUSTERING registry.
 
@@ -24,17 +24,16 @@ def stage_labels(distances, method, linkage, k, k_range, criterion="count", thre
         distances: Square distance matrix.
         method: Plug-in name.
         linkage: Linkage for hierarchical.
-        k: Pinned count, or None.
-        k_range: Counts scanned when k is None.
-        criterion: "count" or "threshold".
-        threshold: Cut height for a threshold stage.
+        k: Cluster count for a count stage.
+        criterion: "count", "threshold" or "relative".
+        threshold: Cut height for a threshold stage; the fraction of the tallest merge for a relative one.
         damping: Affinity damping.
         max_iter: Affinity iteration cap.
 
     Returns:
         The clustering.
     """
-    stage = SimpleNamespace(linkage=linkage, k=k, k_range=k_range, criterion=criterion,
+    stage = SimpleNamespace(linkage=linkage, k=k, criterion=criterion,
                             threshold=threshold, damping=damping, max_iter=max_iter)
     return CLUSTERING.get(method).fn(distances, stage)
 
@@ -63,7 +62,6 @@ def _stage_params(stage) -> Dict[str, object]:
         "method": stage.method,
         "linkage": stage.linkage,
         "k": None if stage.k is None else int(stage.k),
-        "k_range": [int(v) for v in stage.k_range],
         "damping": float(stage.damping),
         "max_iter": int(stage.max_iter),
         "criterion": getattr(stage, "criterion", "count"),
@@ -97,13 +95,13 @@ def cluster_shape_only(stage, d_shape: np.ndarray) -> ClusterAssignment:
     Returns:
         The assignment; representatives are the medoids on d_shape.
     """
-    result = stage_labels(d_shape, stage.method, stage.linkage, stage.k, stage.k_range,
-                          getattr(stage, "criterion", "count"), getattr(stage, "threshold", None),
+    result = stage_labels(d_shape, stage.method, stage.linkage, stage.k,
+                          stage.criterion, stage.threshold,
                           stage.damping, stage.max_iter)
     zeros = np.zeros(len(result.labels), dtype=int)
     exemplar_map = cl.exemplars(d_shape, result.labels)
     log_message(message_type="clustering_result", mode="shape_only", algorithm=result.method,
-                n_clusters=result.n_clusters, silhouette=result.silhouette)
+                n_clusters=result.n_clusters)
     return ClusterAssignment(
         labels=result.labels,
         shape_labels=result.labels,
@@ -111,8 +109,7 @@ def cluster_shape_only(stage, d_shape: np.ndarray) -> ClusterAssignment:
         exemplar_positions=tuple(exemplar_map[c] for c in sorted(exemplar_map)),
         params={
             "mode": "shape_only",
-            "shape": {**_stage_params(stage), "n_clusters": result.n_clusters,
-                      "silhouette": result.silhouette},
+            "shape": {**_stage_params(stage), "n_clusters": result.n_clusters},
             "n_clusters": result.n_clusters,
         },
     )
@@ -143,9 +140,8 @@ def cluster_pockets(
 
     if settings.mode == "single":
         stage = settings.single
-        # Single mode has never honoured a threshold cut, so it always counts.
-        result = stage_labels(combined, stage.method, stage.linkage, stage.k, stage.k_range,
-                              "count", None, stage.damping, stage.max_iter)
+        result = stage_labels(combined, stage.method, stage.linkage, stage.k,
+                              stage.criterion, stage.threshold, stage.damping, stage.max_iter)
 
         zeros = np.zeros(len(result.labels), dtype=int)
         exemplar_map = cl.exemplars(combined, result.labels)
@@ -154,7 +150,6 @@ def cluster_pockets(
             mode="single",
             algorithm=result.method,
             n_clusters=result.n_clusters,
-            silhouette=result.silhouette,
         )
         return ClusterAssignment(
             labels=result.labels,
@@ -165,7 +160,6 @@ def cluster_pockets(
                 "mode": "single",
                 "single": _stage_params(stage),
                 "n_clusters": result.n_clusters,
-                "silhouette": result.silhouette,
             },
         )
 
@@ -176,11 +170,9 @@ def cluster_pockets(
         shape_method=shape_cfg.method,
         shape_linkage=shape_cfg.linkage,
         shape_k=None if shape_cfg.k is None else int(shape_cfg.k),
-        shape_k_range=shape_cfg.k_range,
         chem_method=chem_cfg.method,
         chem_linkage=chem_cfg.linkage,
         chem_k=None if chem_cfg.k is None else int(chem_cfg.k),
-        chem_k_range=chem_cfg.k_range,
         min_cluster_size=int(settings.min_cluster_size),
         combined_distances=combined,
         shape_criterion=getattr(shape_cfg, "criterion", "count"),
@@ -200,7 +192,6 @@ def cluster_pockets(
         mode="two_stage",
         n_shape_clusters=result.shape_clustering.n_clusters,
         n_clusters=n_final,
-        shape_silhouette=result.shape_clustering.silhouette,
     )
     return ClusterAssignment(
         labels=result.labels,
@@ -212,7 +203,6 @@ def cluster_pockets(
             "shape": {
                 **_stage_params(shape_cfg),
                 "n_clusters": result.shape_clustering.n_clusters,
-                "silhouette": result.shape_clustering.silhouette,
             },
             "chem": {
                 **_stage_params(chem_cfg),

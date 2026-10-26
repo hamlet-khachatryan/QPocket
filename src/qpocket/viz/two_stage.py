@@ -260,14 +260,12 @@ class Preview(NamedTuple):
     Attributes:
         frame: pdb_id, cluster_id, shape_cluster_id, chem_cluster_id.
         n_clusters: Number of clusters.
-        silhouette: Mean silhouette on the combined distances, or None.
         shape_labels: Stage-one label per pocket, in matrix order.
         labels: Final label per pocket, in matrix order.
     """
 
     frame: pd.DataFrame
     n_clusters: int
-    silhouette: Optional[float]
     shape_labels: np.ndarray
     labels: np.ndarray
 
@@ -282,8 +280,6 @@ def preview(m: RunMatrices, settings) -> Preview:
     Returns:
         The grouping these settings produce.
     """
-    from qpocket.core.clustering import silhouette
-
     assignment = cluster_pockets(settings, m.shape, m.chem, m.combined)
     labels = np.asarray(assignment.labels, dtype=int)
     frame = pd.DataFrame({
@@ -292,15 +288,8 @@ def preview(m: RunMatrices, settings) -> Preview:
         "shape_cluster_id": np.asarray(assignment.shape_labels, dtype=int),
         "chem_cluster_id": np.asarray(assignment.chem_labels, dtype=int),
     })
-    score = None
-    if len(set(labels.tolist())) > 1 and len(labels) > 2:
-        try:
-            mean, _per_structure = silhouette(symmetrise(m.combined), labels)
-            score = None if mean is None else float(mean)
-        except Exception:
-            score = None
     return Preview(frame=frame, n_clusters=int(len(set(labels.tolist()))),
-                   silhouette=score, shape_labels=np.asarray(assignment.shape_labels, dtype=int),
+                   shape_labels=np.asarray(assignment.shape_labels, dtype=int),
                    labels=labels)
 
 

@@ -109,17 +109,18 @@ distance:
     shape:                        # stage one: Laplacian eigenvalue distances
       method: "hierarchical"      # "hierarchical", "kmedoids" or "affinity"
       linkage: "average"          # average | complete | single | weighted
-      k: null                     # null = choose by silhouette over k_range
-      k_range: [2, 10]            # inclusive [lo, hi], lo >= 2
-      criterion: "count"          # "count" (k / silhouette) or "threshold"
-      threshold: null             # cut height when criterion is "threshold"
+      criterion: "relative"       # "count" (k clusters), "threshold" (a height)
+                                  # or "relative" (a fraction of the tallest merge)
+      threshold: 0.5              # height for "threshold"; fraction in (0, 1]
+                                  # for "relative"
+      k: null                     # cluster count, needed when criterion is "count"
 
     chem:                         # stage two: Graph-Fourier feature distances,
-      method: "kmedoids"          # applied within each shape cluster only.
-      k: null                     # linkage omitted: kmedoids ignores it
-      k_range: [2, 6]
-      criterion: "count"          # "threshold" needs method "hierarchical"
-      threshold: null
+      method: "hierarchical"      # applied within each shape cluster only.
+      linkage: "average"
+      criterion: "relative"       # "threshold" and "relative" need "hierarchical";
+      threshold: 0.5              # relative cuts each cluster's own tree
+      k: null
 
     single:                       # used only when mode == "single"
       method: "affinity"

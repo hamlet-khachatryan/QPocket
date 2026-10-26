@@ -115,23 +115,21 @@ class StageClustering:
     """Clustering settings for one stage of a two-stage grouping.
 
     Attributes:
-        method: ``"hierarchical"`` cuts a linkage tree, ``"kmedoids"`` partitions around medoids, ``"affinity"`` lets Affinity Propagation choose its own cluster count and ignores ``k`` / ``k_range``.
+        method: ``"hierarchical"`` cuts a linkage tree, ``"kmedoids"`` partitions around medoids, ``"affinity"`` lets Affinity Propagation choose its own cluster count and ignores ``k`` and ``criterion``.
         linkage: Linkage used when ``method`` is ``"hierarchical"``.
-        k: Pinned cluster count.
-        k_range: Inclusive ``[lo, hi]`` bounds scanned when ``k`` is ``None``.
+        k: Cluster count for the ``"count"`` criterion.
         damping: Affinity Propagation damping, in ``[0.5, 1.0)``.
         max_iter: Affinity Propagation iteration cap.
-        criterion: ``"count"`` uses k (or silhouette); ``"threshold"`` cuts a hierarchical tree at ``threshold``.
-        threshold: Cut height for a threshold stage, in that stage's distance units.
+        criterion: ``"count"`` makes k clusters; ``"threshold"`` cuts a hierarchical tree at the height ``threshold``; ``"relative"`` cuts it at ``threshold`` times its tallest merge.
+        threshold: Cut height for a threshold stage, in that stage's distance units; for a relative stage, a fraction in ``(0, 1]``.
     """
     method: Literal["hierarchical", "kmedoids", "affinity"] = "hierarchical"
     linkage: Literal["average", "complete", "single", "weighted"] = "average"
     k: Optional[int] = None
-    k_range: List[int] = field(default_factory=lambda: [2, 10])
     damping: float = 0.9
     max_iter: int = 300
-    criterion: Literal["count", "threshold"] = "count"
-    threshold: Optional[float] = None
+    criterion: Literal["count", "threshold", "relative"] = "relative"
+    threshold: Optional[float] = 0.5
 
 
 @dataclass(frozen=True)
@@ -140,7 +138,7 @@ class ClusteringParams:
 
     Attributes:
         mode: ``"two_stage"`` groups on shape, then subdivides each group on physicochemistry; ``"shape_only"`` stops after the shape stage.
-        min_cluster_size: A stage-one cluster with fewer members than this is not subdivided: a split that small cannot be supported by a silhouette.
+        min_cluster_size: A stage-one cluster with fewer members than this is not subdivided.
         single: Settings used when ``mode == "single"``.
         shape: Stage-one settings, applied to the shape distance matrix.
         chem: Stage-two settings, applied to the physicochemical distance submatrix of each stage-one cluster.
@@ -154,7 +152,7 @@ class ClusteringParams:
         default_factory=lambda: StageClustering(method="hierarchical")
     )
     chem: StageClustering = field(
-        default_factory=lambda: StageClustering(method="kmedoids", k_range=[2, 6])
+        default_factory=lambda: StageClustering(method="hierarchical")
     )
 
 
@@ -398,6 +396,10 @@ LEGACY_KEYS: Dict[str, Optional[str]] = {
     "slurm.stages.collect": None,
     "slurm.stages.geodesic": None,
     "slurm.stages.distance": None,
+    # Bounded an automatic choice of k that no longer exists; a stage cuts by count, height or relative height.
+    "distance.clustering.single.k_range": None,
+    "distance.clustering.shape.k_range": None,
+    "distance.clustering.chem.k_range": None,
 }
 
 
@@ -735,25 +737,7 @@ def validate_config(cfg: "QPocketConfig") -> None:
                 f"invalid for a precomputed distance matrix), got: {stage.linkage!r}"
             )
         if stage.k is not None and stage.k < 2:
-            raise ValueError(
-                f"{prefix}.k must be >= 2 when set, or null to choose it by "
-                f"silhouette, got: {stage.k}"
-            )
-        if len(stage.k_range) != 2:
-            raise ValueError(
-                f"{prefix}.k_range must be a list of 2 values [lo, hi], "
-                f"got {len(stage.k_range)}"
-            )
-        if stage.k_range[0] < 2:
-            raise ValueError(
-                f"{prefix}.k_range lower bound must be >= 2 (silhouette is "
-                f"undefined below two clusters), got: {stage.k_range[0]}"
-            )
-        if stage.k_range[1] < stage.k_range[0]:
-            raise ValueError(
-                f"{prefix}.k_range upper bound ({stage.k_range[1]}) must be >= "
-                f"lower bound ({stage.k_range[0]})"
-            )
+            raise ValueError(f"{prefix}.k must be >= 2 when set, got: {stage.k}")
         if not (0.5 <= stage.damping < 1.0):
             raise ValueError(
                 f"{prefix}.damping must be in [0.5, 1.0), got: {stage.damping}"
@@ -762,16 +746,27 @@ def validate_config(cfg: "QPocketConfig") -> None:
             raise ValueError(
                 f"{prefix}.max_iter must be >= 1, got: {stage.max_iter}"
             )
-        criterion = getattr(stage, "criterion", "count")
-        if criterion not in ("count", "threshold"):
-            raise ValueError(f"{prefix}.criterion must be 'count' or 'threshold', got: {criterion!r}")
-        if criterion == "threshold":
-            threshold = getattr(stage, "threshold", None)
-            if stage.method != "hierarchical" or threshold is None or threshold <= 0:
-                raise ValueError(
-                    f"{prefix}.threshold must be > 0 with method 'hierarchical' when "
-                    f"criterion is 'threshold', got method {stage.method!r}, threshold {threshold!r}"
-                )
+        criterion, threshold = stage.criterion, stage.threshold
+        if stage.method == "affinity":  # chooses its own count; criterion and threshold are ignored
+            continue
+        if criterion not in ("count", "threshold", "relative"):
+            raise ValueError(f"{prefix}.criterion must be 'count', 'threshold' or 'relative', "
+                             f"got: {criterion!r}")
+        if criterion == "count" and stage.k is None:
+            raise ValueError(f"{prefix}.k must be set when criterion is 'count'; "
+                             f"set k or use criterion 'threshold' or 'relative'")
+        if criterion == "threshold" and (
+                stage.method != "hierarchical" or threshold is None or threshold <= 0):
+            raise ValueError(
+                f"{prefix}.threshold must be > 0 with method 'hierarchical' when "
+                f"criterion is 'threshold', got method {stage.method!r}, threshold {threshold!r}"
+            )
+        if criterion == "relative" and (
+                stage.method != "hierarchical" or threshold is None or not 0 < threshold <= 1):
+            raise ValueError(
+                f"{prefix}.threshold must be in (0, 1] with method 'hierarchical' when "
+                f"criterion is 'relative', got method {stage.method!r}, threshold {threshold!r}"
+            )
 
     # --- FeaturesConfig ---
     from qpocket.core.ports import FEATURES as _features

@@ -388,3 +388,35 @@ def test_sites_validation(key, value):
     base = evolve(QPocketConfig(), "reference.pdb_id", "1ABC")
     with pytest.raises(ValueError, match=f"sites.{key}"):
         validate_config(evolve(base, f"sites.{key}", value))
+
+
+def _stage(**kw):
+    from qpocket.config import ClusteringParams, StageClustering
+
+    return evolve(_dm(), "clustering", ClusteringParams(shape=StageClustering(**kw)))
+
+
+@pytest.mark.parametrize("kw", [
+    dict(criterion="relative", threshold=0.0),
+    dict(criterion="relative", threshold=1.5),
+    dict(criterion="relative", threshold=None),
+    dict(method="kmedoids", criterion="relative", threshold=0.5),
+    dict(criterion="count", k=None),
+    dict(criterion="threshold", threshold=0.0),
+    dict(criterion="silhouette"),
+])
+def test_bad_stage_criteria_are_refused(kw):
+    with pytest.raises(ValueError, match="distance.clustering.shape"):
+        validate_config(make_config(distance=_stage(**kw)))
+
+
+@pytest.mark.parametrize("kw", [
+    dict(criterion="relative", threshold=1.0),
+    dict(criterion="relative", threshold=0.05),
+    dict(criterion="count", k=2),
+    dict(method="kmedoids", criterion="count", k=3),
+    dict(criterion="threshold", threshold=4.0),
+    dict(method="affinity"),
+])
+def test_good_stage_criteria_pass(kw):
+    validate_config(make_config(distance=_stage(**kw)))

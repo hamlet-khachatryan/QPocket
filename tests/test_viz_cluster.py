@@ -19,6 +19,7 @@ from qpocket.viz.cluster import (
     METHODS,
     PIPELINE_DAMPING,
     PIPELINE_PREFERENCE_PCT,
+    RELATIVE,
     THRESHOLD,
     affinity_labels,
     block_order,
@@ -27,7 +28,6 @@ from qpocket.viz.cluster import (
     dendrogram_segments,
     exemplars,
     linkage_matrix,
-    silhouette,
     threshold_for_clusters,
 )
 
@@ -158,8 +158,8 @@ def test_unknown_criterion_is_reported(three_groups):
         cluster_labels(d, "average", "elbow", n_clusters=2)
 
 
-def test_criteria_names_are_the_two_offered():
-    assert CRITERIA == (COUNT, THRESHOLD)
+def test_criteria_names_are_the_three_offered():
+    assert CRITERIA == (COUNT, THRESHOLD, RELATIVE)
 
 
 def test_reclustering_is_reproducible(three_groups):
@@ -196,43 +196,6 @@ def test_threshold_for_one_cluster_sits_above_the_tallest_merge(three_groups):
     d, _ = three_groups
     link = linkage_matrix(d, "average")
     assert threshold_for_clusters(link, 1) > link[:, 2].max()
-
-
-# ---------------------------------------------------------------------------
-# silhouette
-# ---------------------------------------------------------------------------
-
-
-def test_silhouette_is_high_for_the_planted_grouping(three_groups):
-    d, truth = three_groups
-    mean, per_structure = silhouette(d, truth)
-    assert mean > 0.9
-    assert per_structure.shape == (len(d),)
-
-
-def test_silhouette_prefers_the_right_cluster_count(three_groups):
-    d, _ = three_groups
-    scores = {
-        k: cluster_labels(d, "average", COUNT, n_clusters=k).silhouette for k in (2, 3, 4, 5)
-    }
-    assert max(scores, key=lambda k: scores[k]) == 3
-
-
-def test_silhouette_is_undefined_for_a_single_cluster(three_groups):
-    d, _ = three_groups
-    assert silhouette(d, np.zeros(len(d), dtype=int)) == (None, None)
-
-
-def test_silhouette_is_undefined_when_every_structure_is_its_own_cluster(three_groups):
-    d, _ = three_groups
-    assert silhouette(d, np.arange(len(d))) == (None, None)
-
-
-def test_clustering_reports_no_silhouette_when_it_is_undefined(three_groups):
-    d, _ = three_groups
-    result = cluster_labels(d, "average", COUNT, n_clusters=1)
-    assert result.silhouette is None
-    assert result.silhouette_per_structure is None
 
 
 # ---------------------------------------------------------------------------
@@ -489,12 +452,6 @@ def test_affinity_is_reproducible(three_groups):
     first, second = affinity_labels(d), affinity_labels(d)
     assert np.array_equal(first.labels, second.labels)
     assert first.exemplar_positions == second.exemplar_positions
-
-
-def test_affinity_reports_a_silhouette(three_groups):
-    d, _ = three_groups
-    result = affinity_labels(d)
-    assert result.silhouette is not None and result.silhouette > 0.9
 
 
 def test_unknown_method_is_reported(three_groups):

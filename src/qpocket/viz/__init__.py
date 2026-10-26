@@ -28,7 +28,6 @@ from qpocket.viz.cluster import (
     dendrogram_segments,
     exemplars,
     linkage_matrix,
-    silhouette,
     threshold_for_clusters,
 )
 from qpocket.viz.cluster import METHODS as CLUSTER_METHODS
@@ -174,7 +173,6 @@ __all__ = [
     "residue_models",
     "scale_to_percent",
     "shares_lattice",
-    "silhouette",
     "symmetrise",
     "threedmol_path",
     "threedmol_script",
