@@ -96,6 +96,11 @@ qpocket slurm status --config run.yaml --site site_01
 A site's scripts, manifests and logs carry its id, so several sites can be
 generated and run side by side.
 
+`--config` locates the run and sets the SLURM resources; the site tasks
+themselves read the settings saved with the run in `<run>/metadata/config.yaml`.
+Edit that file to change features, charges, distance or clustering for later
+site steps.
+
 ## 6. Re-running
 
 Every task skips work whose output already exists. Resubmitting the same chain

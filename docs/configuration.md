@@ -17,6 +17,12 @@ command line (`qpocket run --sigma 8.0`).
 An unrecognised key is reported and ignored rather than failing the run, so a
 typo tells you about itself instead of silently doing nothing.
 
+The per-site steps (`qpocket site …`, the explorer's site buttons and
+`qpocket slurm generate --site`) read the settings saved with the run in
+`<run>/metadata/config.yaml`, not the file you passed to `qpocket run`. Edit that
+file to change `features`, `charges`, `distance` or `distance.clustering` for later
+site steps.
+
 ---
 
 ## `mode`

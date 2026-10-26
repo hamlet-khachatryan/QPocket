@@ -24,6 +24,10 @@ quick first look. Featurise writes `featurized.csv` beside each cloud; two-stage
 clustering needs it. Results land in `sites/site_NN/metadata/`. On a cluster, see
 [Running on a cluster](hpc.md).
 
+These steps read the settings saved with the run in `<run>/metadata/config.yaml`.
+Edit that file to change features, charges, distance or clustering settings for
+later site steps; the YAML you passed to `qpocket run` is not read again.
+
 ## Pipeline
 
 ```
