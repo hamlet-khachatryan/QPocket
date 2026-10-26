@@ -51,9 +51,10 @@ button, so the notebook controls the order of consecutive steps.
 1. **Alignment frame.** Reference is optional. If `reference.pdb_id`/`chain_id`
    (pdb_query) or `fragment_screen.reference_path` is set, it is the frame.
    Otherwise one is picked automatically.
-2. **What is a ligand.** Non-polymer, non-water HET groups, excluding ions and
-   a built-in list of crystallisation additives (GOL, EDO, SO4, PEG, …), with a
-   minimum heavy-atom count.
+2. **What is a ligand.** Non-polymer, non-water HET groups not kept by the
+   run's cleaning set (`cleaning.allowed_cofactors`), with a minimum heavy-atom
+   count. No built-in name list and no include/exclude lists (revised by the
+   user 2026-10-26: additives that pass the size cut show up as small sites).
 3. **Grouping ligands into sites.** After alignment, two ligands belong to the
    same site if any of their heavy atoms lie within a cutoff (Å); sites are the
    connected components (single linkage).

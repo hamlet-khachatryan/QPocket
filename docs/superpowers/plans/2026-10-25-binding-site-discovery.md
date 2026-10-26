@@ -14,7 +14,7 @@
 
 - Layout version 3 (`io/layout.py` `LAYOUT_VERSION = 3`); layout-2 runs are not readable and must be re-run.
 - `reference.ligand_id`, `reference.ligand_chain_id`, `reference.pocket_mode`, `reference.bounding_box` are obsolete: warn and ignore (via `LEGACY_KEYS` → `None`).
-- A ligand: non-polymer, non-water HET residue, not in `cleaning.allowed_cofactors`, not in `constants.HET_TO_REMOVE` unless in `sites.include`, not in `sites.exclude`, with ≥ `sites.min_heavy_atoms` heavy atoms.
+- A ligand: non-polymer, non-water HET residue, not in `cleaning.allowed_cofactors` (the per-run cleaning set), with ≥ `sites.min_heavy_atoms` heavy atoms. No built-in name list (`constants.HET_TO_REMOVE` is not used for sites) and no `sites.include`/`sites.exclude` (user decision 2026-10-26).
 - Allowed cofactors stay in the protein and never define a site.
 - Every site seen at least once is kept.
 - Every structure gets a cloud at every site; `protein_state` per site is `BOUND_STATE` (≥1 ligand of the site) or `UNBOUND_STATE`, or `CAVITY_CLOSED` when the box holds no cavity points.
@@ -31,8 +31,6 @@
 ```yaml
 sites:
   min_heavy_atoms: 6
-  include: []
-  exclude: []
   link_cutoff: 4.0     # Å
   box_padding: 4.0     # Å
 ```
@@ -220,7 +218,7 @@ def test_points_in_box():
   - `Structure` gains `ligands: Tuple[Ligand, ...] = ()`, `contacts: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()` (ligand key → `RES_NUM_CHAIN|Type` entries) and `cavities_file: Optional[str] = None`.
   - Run-level `protein_state` is `BOUND_STATE` if any ligand, `UNBOUND_STATE` otherwise, or `FAILED` / `NO_ANY_CAVITY_FOUND`.
   - `master_row()` columns: `pdb_id, rmsd_to_ref, aligned_file, [aux_chain_mapping], cleaned_file, protonated_file, cavities_file, n_ligands, protein_state`.
-  - `StructureParams` drops `pocket`, `pocket_params`, `reference_ligand_id`, `pocket_definition` and `interaction_padding` (the last two move to the site step). It gains `min_heavy_atoms`, `include` and `exclude`.
+  - `StructureParams` drops `pocket`, `pocket_params`, `reference_ligand_id`, `pocket_definition` and `interaction_padding` (the last two move to the site step). It gains `min_heavy_atoms`.
   - Steps:
     - `find_ligands_step(p, ws, record) -> Structure` writes `extracted_ligands/{pdb_id}_{chain}_{resname}_{resseq}{icode}.pdb` and fills `Ligand.file` and `Ligand.smiles` using the existing `ligand_smiles`.
     - `protonate(ws, record)` writes every ligand into one complex.
