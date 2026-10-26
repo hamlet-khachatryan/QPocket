@@ -1,6 +1,7 @@
 """One structure from input file to its ligands, contacts and cavities: a pipe of small steps."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -33,14 +34,8 @@ class StructureParams:
     Attributes:
         allowed_cofactors: "|"-separated residue names kept by cleaning and skipped as ligands.
         min_heavy_atoms: Smaller HET groups are not ligands.
-        save_intermediate: Also write binding_site_initial.csv.
-        features: FEATURES plug-in names.
-        feature_options: Settings per feature plug-in.
-        charges: CHARGES plug-in name.
-        charge_params: Its parameters.
         contacts: CONTACTS plug-in names.
         contact_params: Parameters per contact plug-in.
-        geodesic_radius: Neighbour radius of the geodesic graph.
         min_auxiliary_identity: Interface mode alignment threshold.
         max_auxiliary_centroid_deviation: Interface mode alignment threshold.
         require_all_chains: Interface mode alignment rule.
@@ -48,14 +43,8 @@ class StructureParams:
 
     allowed_cofactors: str
     min_heavy_atoms: int
-    save_intermediate: bool
-    features: Tuple[str, ...]
-    feature_options: Mapping[str, Any]
-    charges: str
-    charge_params: Any
     contacts: Tuple[str, ...]
     contact_params: Mapping[str, Any]
-    geodesic_radius: float
     min_auxiliary_identity: float
     max_auxiliary_centroid_deviation: float
     require_all_chains: bool
@@ -80,15 +69,10 @@ def structure_params(cfg: QPocketConfig) -> StructureParams:
     return StructureParams(
         allowed_cofactors=cfg.cleaning.allowed_cofactors or "",
         min_heavy_atoms=cfg.sites.min_heavy_atoms,
-        save_intermediate=bool(cfg.io.save_intermediate),
-        features=tuple(cfg.features.enabled), feature_options=dict(cfg.features.options or {}),
-        charges=cfg.charges.use,
-        charge_params=plugin_params(CHARGES, cfg.charges.use, cfg.charges.options),
         contacts=tuple(cfg.contacts.use),
         contact_params={name: prolif_params if name == "prolif"
                         else plugin_params(CONTACTS, name, cfg.contacts.options)
                         for name in cfg.contacts.use},
-        geodesic_radius=cfg.distance.geo_graph_neighbor_radius,
         min_auxiliary_identity=cfg.alignment.min_auxiliary_identity,
         max_auxiliary_centroid_deviation=cfg.alignment.max_auxiliary_centroid_deviation,
         require_all_chains=cfg.alignment.require_all_chains,
@@ -274,8 +258,12 @@ def protonate(ws: layout.Workspace, record: Structure) -> Structure:
     out_dir = ws.structures / "protonated"
     out_dir.mkdir(parents=True, exist_ok=True)
     destination = out_dir / f"{pdb_id}.pdb"
-    if destination.exists():
+    # Ligand i sits at residue 900 + i, so a complex is reused only for the same ligand list.
+    keys_file = out_dir / f"{pdb_id}.ligands.json"
+    keys = json.dumps([ligand.key for ligand in record.ligands])
+    if destination.exists() and keys_file.exists() and keys_file.read_text(encoding="utf-8") == keys:
         return record._replace(protonated_file=str(destination))
+    keys_file.unlink(missing_ok=True)
 
     try:
         pqr = protonate_for_interactions(Path(cleaned), out_dir / f"{pdb_id}.pqr")
@@ -284,6 +272,7 @@ def protonate(ws: layout.Workspace, record: Structure) -> Structure:
         # pdb2pqr placed the hydroxyl hydrogens before the ligands existed, so
         # their rotamers are re-chosen now that they are present.
         write_molecule(destination, optimise_hydroxyls(load_molecule(destination)))
+        keys_file.write_text(keys, encoding="utf-8")
     except Exception as error:
         log_message(message_type="error", stage="protonation",
                     pdb_id=pdb_id, error=str(error))
@@ -298,16 +287,21 @@ def read_contacts(p: StructureParams, ws: layout.Workspace, record: Structure) -
         The record with contacts, one entry per ligand.
     """
     with start_action(action_type="analyse_interactions", pdb_id=record.pdb_id):
+        if not record.protonated_file:
+            # Name and number alone cannot tell same-named ligands on two chains apart.
+            if record.ligands:
+                log_message(message_type="warning", stage="read_contacts", pdb_id=record.pdb_id,
+                            warning="no protonated complex; contacts not read")
+            return record._replace(contacts=tuple((ligand.key, ("no_ligand_found",))
+                                                  for ligand in record.ligands))
         # The protonated complex: interactions are read from the hydrogens the pipeline placed.
-        source = Path(record.protonated_file or record.aligned_file or "")
         contacts = []
         for index, ligand in enumerate(record.ligands):
-            # write_complex numbers ligand i as 900 + i; the aligned file keeps the original number.
-            resseq = 900 + index if record.protonated_file else ligand.resseq
             found: list = []
             for name in p.contacts:
-                found += CONTACTS.get(name).fn(source, ligand.resname, p.contact_params[name],
-                                               ligand_resseq=resseq)
+                # write_complex numbers ligand i as 900 + i.
+                found += CONTACTS.get(name).fn(Path(record.protonated_file), ligand.resname,
+                                               p.contact_params[name], ligand_resseq=900 + index)
             contacts.append((ligand.key, tuple(found)))
         return record._replace(contacts=tuple(contacts))
 

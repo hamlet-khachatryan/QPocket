@@ -28,7 +28,7 @@ def _params(**kw):
 
 def test_params_are_frozen_and_built_from_config():
     p = _params()
-    assert p.charges == "pdb2pqr" and p.contacts == ("prolif",) and p.min_heavy_atoms == 6
+    assert p.contacts == ("prolif",) and p.min_heavy_atoms == 6
 
 
 def test_the_reference_is_not_realigned(ws):
@@ -81,6 +81,59 @@ def test_contacts_are_read_per_ligand_by_its_residue_number(ws, monkeypatch):
     rec = Structure("T", "t", protonated_file="/p/T.pdb", ligands=(a, b))
     out = structure.read_contacts(_params(), ws, rec)
     assert out.contacts == ((a.key, ("R_900_A|X",)), (b.key, ("R_901_A|X",)))
+
+
+def test_without_a_protonated_complex_no_contacts_are_guessed(ws, monkeypatch):
+    """The aligned file cannot tell BTN A301 from BTN B301 by name and number alone."""
+    from qpocket.plugins.contacts import prolif
+
+    monkeypatch.setattr(prolif, "interactions_for", lambda *a, **k: ["R_1_A|X"])
+    a, b = Ligand("T", "A", "BTN", 301, " ", 16), Ligand("T", "B", "BTN", 301, " ", 16)
+    out = structure.read_contacts(_params(), ws, Structure("T", "t", aligned_file="/a.pdb", ligands=(a, b)))
+    assert out.contacts == ((a.key, ("no_ligand_found",)), (b.key, ("no_ligand_found",)))
+
+
+def _fake_protonation(monkeypatch, written):
+    from qpocket.core import hydroxyl
+    from qpocket.io import interactions, tools
+
+    def write_complex(path, pqr, ligands):
+        written.append([name for _, name in ligands])
+        Path(path).write_text("END\n")
+        return Path(path)
+
+    monkeypatch.setattr(tools, "protonate_for_interactions", lambda pdb, pqr: pqr)
+    monkeypatch.setattr(interactions, "write_complex", write_complex)
+    monkeypatch.setattr(interactions, "load_molecule", lambda path: None)
+    monkeypatch.setattr(interactions, "write_molecule", lambda path, mol: path)
+    monkeypatch.setattr(hydroxyl, "optimise_hydroxyls", lambda mol: mol)
+    monkeypatch.setattr(structure, "_protonated_ligand", lambda path: "mol")
+
+
+def test_a_complex_is_rebuilt_when_the_ligand_list_changes(ws, monkeypatch, tmp_path):
+    written = []
+    _fake_protonation(monkeypatch, written)
+    rec = _cleaned(tmp_path)
+    one = (Ligand("T", "A", "AAA", 1, " ", 6),)
+    two = one + (Ligand("T", "A", "BBB", 2, " ", 6),)
+    structure.protonate(ws, rec._replace(ligands=one))
+    structure.protonate(ws, rec._replace(ligands=one))       # same list: reused
+    out = structure.protonate(ws, rec._replace(ligands=two))  # new list: rebuilt
+    assert written == [["AAA"], ["AAA", "BBB"]] and out.protonated_file
+
+
+def test_per_site_settings_do_not_change_a_structure_fingerprint(tmp_path):
+    from qpocket.config import evolve
+    from qpocket.core.types import RawStructure
+    from tests.conftest import make_config
+
+    raw = tmp_path / "T.pdb"
+    raw.write_text("ATOM\n")
+    ref = Reference("REF", CTX, Structure("REF", "r"))
+    base = make_config()
+    other = evolve(evolve(base, "features.enabled", ["hbond"]), "distance.geo_graph_neighbor_radius", 9.5)
+    key = lambda cfg: structure.fingerprint(ref, structure.structure_params(cfg), RawStructure("T", raw))
+    assert key(base) == key(other)
 
 
 def test_contacts_need_a_ligand(ws):
