@@ -94,8 +94,8 @@ interactions:
 ```
 
 This matters beyond the interaction tables. When
-`reference.pocket_definition` is `Interactions`, each pocket is cropped to its
-observed contacts and re-featurised, so the thresholds shape the point cloud,
+`reference.pocket_definition` is `Interactions`, each site's pocket is cropped to its
+observed contacts before featurising, so the thresholds shape the point cloud,
 the distance matrices and the clustering.
 
 ## Determinism

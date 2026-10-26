@@ -1,9 +1,33 @@
 # Distance Analysis
 
+`qpocket run` computes no distances. Distance analysis is a per-site step, run after
+the sites exist, either in the explorer or from the command line.
+
+## Running it
+
+In the explorer (`qpocket explore RUNS`), the **Binding sites** section has a site
+picker, a status line and three buttons: **Shape clustering**, **Featurise** and
+**Two-stage clustering**. **Regroup sites** changes the site grouping itself.
+
+From the command line:
+
+```bash
+qpocket site list      --workdir runs/7KG6
+qpocket site shape     --workdir runs/7KG6 --site site_01   # shape only, no features
+qpocket site featurize --workdir runs/7KG6 --site site_01
+qpocket site cluster   --workdir runs/7KG6 --site site_01   # shape, then chemistry
+qpocket site regroup   --workdir runs/7KG6 --cutoff 5.0
+```
+
+Shape clustering (clustering mode `shape_only`) needs no featurisation, so it is the
+quick first look. Featurise writes `featurized.csv` beside each cloud; two-stage
+clustering needs it. Results land in `sites/site_NN/metadata/`. On a cluster, see
+[Running on a cluster](hpc.md).
+
 ## Pipeline
 
 ```
-featurized.csv  (per pocket)
+sites/site_NN/pockets/<pdb_id>/featurized.csv  (per pocket)
       │
       ▼
 compute_geodesic()        ← shortest-path distances on neighbourhood graph
@@ -18,7 +42,7 @@ pairwise L2 distance matrix
 Affinity Propagation clustering
       │
       ▼
-  spectral_distance_matrix.csv
+  sites/site_NN/metadata/spectral_distance_matrix.csv
   clustering_metadata.csv
   selected_representatives.csv
 ```

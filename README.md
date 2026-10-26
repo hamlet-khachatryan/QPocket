@@ -10,8 +10,19 @@ uv run qpocket doctor                                # can this machine run the 
 uv run qpocket run --config experiments/PARG.yaml    # a full run
 ```
 
+`qpocket run` aligns and cleans the structures, finds every ligand-occupied binding
+site, and cuts one pocket point cloud per site per structure. You do not name a
+reference ligand. It stops there; analyse a site next:
+
+```bash
+uv run qpocket explore RUNS                          # pick a site, press the step buttons
+uv run qpocket site list --workdir RUNS/7KG6
+uv run qpocket site featurize --workdir RUNS/7KG6 --site site_01
+uv run qpocket site cluster   --workdir RUNS/7KG6 --site site_01
+```
+
 A run uses half the cores by default; `--workers N` changes that, `--workers 1`
-is serial. `--features hbond,aromatic` (or `--no-apbs`) narrows featurisation,
+is serial. `--features hbond,aromatic` (or `--no-apbs`) narrows a site's featurisation,
 which also skips the tools those providers would have needed.
 
 ## Comparing pockets without a pipeline

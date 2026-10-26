@@ -133,7 +133,6 @@ mode: "pdb_query"                  # or "fragment_screen"
 
 reference:
   pdb_id: "7KG6"
-  ligand_id: "WDG"
   pocket_definition: "Interactions"
 
 paths:
@@ -173,8 +172,8 @@ A whole run on a single machine, without SLURM:
 "$QP_HOME/.venv/bin/qpocket" run --config my_target.yaml --features hbond,aromatic
 ```
 
-Each structure is aligned, cleaned, identified, featurised and turned into a
-geodesic graph on its own worker; see
+Each structure is aligned, cleaned, has its ligands found, is protonated and
+has its contacts and cavities read on its own worker, then the sites are grouped and cut; see
 [Performance](docs/user-guide/performance.md). Memory scales with `--workers`,
 because each one can run APBS. Split the run across nodes with `qpocket slurm`
 instead, below.
