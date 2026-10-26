@@ -27,8 +27,14 @@ def test_shape_featurize_cluster_regroup(tmp_path, monkeypatch, fake_features):
     assert (site / "pockets" / "P1" / "featurized.csv").exists()
     result = _invoke("cluster", str(root), "--site", "S1-Y1")
     assert result.exit_code == 0, result.output
-    result = _invoke("regroup", str(root), "--cutoff", "3.0")
-    assert result.exit_code == 0 and "site_03" in result.output
+    result = _invoke("regroup", str(root), "--ligand-fraction", "0.4")
+    assert result.exit_code == 0 and "S2-Y1" in result.output
+
+
+def test_regroup_needs_an_option(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    result = _invoke("regroup", str(root))
+    assert result.exit_code != 0 and "at least one" in result.output
 
 
 def test_missing_site_option(tmp_path, monkeypatch):

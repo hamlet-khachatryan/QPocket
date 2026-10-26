@@ -151,28 +151,37 @@ def test_rerun_leaves_features_current(tmp_path, monkeypatch, fake_features):
     assert steps.featurize_site(root, NEAR) == []
 
 
-def test_regroup_keeps_unchanged_site(tmp_path, monkeypatch):
+def test_regroup_keeps_unchanged_sites(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     sites_dir = root / "sites"
-    assert sorted(p.name for p in sites_dir.glob("site_*")) == ["site_01", "site_02"]
-    steps.shape_cluster_site(root, "site_02")
-    (sites_dir / "site_02" / "metadata" / "marker.txt").write_text("kept")
-    (sites_dir / "site_02" / "ligands.pdb").write_text("stale")
-    (sites_dir / "site_01" / "metadata" / "marker.txt").write_text("stale")
+    steps.shape_cluster_site(root, FAR)
+    for sid in (NEAR, FAR):
+        (sites_dir / sid / "metadata" / "marker.txt").write_text("kept")
+    (sites_dir / FAR / "ligands.pdb").write_text("stale")
 
-    table = steps.regroup_sites(root, 3.0)
+    table = steps.regroup_sites(root, ligand_fraction=0.4)
 
-    assert list(table["site_id"]) == ["site_01", "site_02", "site_03"]
-    assert (sites_dir / "site_03" / "metadata" / "marker.txt").read_text() == "kept"
-    assert not (sites_dir / "site_01" / "metadata" / "marker.txt").exists()
-    assert not (sites_dir / "site_02" / "metadata" / "marker.txt").exists()
-    for sid in ("site_01", "site_02", "site_03"):
-        assert (sites_dir / sid / "metadata" / "master.csv").exists()
-        assert (sites_dir / sid / "pockets" / "APO1" / "binding_site.csv").exists()
-    assert load_run_config(root).sites.link_cutoff == 3.0
-    assert "CCC" in (sites_dir / "site_03" / "ligands.pdb").read_text()
-    kept = pd.read_csv(sites_dir / "site_03" / "metadata" / "clustering_metadata.csv")
-    assert all(Path(p).exists() and Path(p).parents[2].name == "site_03" for p in kept["pocket_file"])
+    assert list(table["site_id"]) == [NEAR, FAR]
+    for sid in (NEAR, FAR):
+        assert (sites_dir / sid / "metadata" / "marker.txt").read_text() == "kept"
+    assert "CCC" in (sites_dir / FAR / "ligands.pdb").read_text()
+    assert load_run_config(root).sites.ligand_fraction == 0.4
+    kept = pd.read_csv(sites_dir / FAR / "metadata" / "clustering_metadata.csv")
+    assert all(Path(p).exists() and Path(p).parents[2].name == FAR for p in kept["pocket_file"])
+
+
+def test_regroup_that_changes_membership_drops_the_site(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    sites_dir = root / "sites"
+    (sites_dir / NEAR / "metadata" / "marker.txt").write_text("kept")
+
+    table = steps.regroup_sites(root, min_cavity_points=100)   # the far cavities hold 64 points
+
+    assert list(table["site_id"]) == [NEAR]
+    assert (sites_dir / NEAR / "metadata" / "marker.txt").read_text() == "kept"
+    assert not (sites_dir / FAR).exists()
+    misses = pd.read_csv(sites_dir / "cavfind_misses.csv")
+    assert misses.set_index("resname").loc["CCC", "reason"] == "no_site"
 
 
 def test_regroup_after_a_crash_extracts_the_changed_sites(tmp_path, monkeypatch):
@@ -185,9 +194,9 @@ def test_regroup_after_a_crash_extracts_the_changed_sites(tmp_path, monkeypatch)
     with monkeypatch.context() as m:
         m.setattr(steps, "extract_all_sites", crash)
         with pytest.raises(RuntimeError):
-            steps.regroup_sites(root, 3.0)
-    steps.regroup_sites(root, 3.0)
-    for sid in ("site_01", "site_02", "site_03"):
+            steps.regroup_sites(root, cavity_overlap=0.4)
+    table = steps.regroup_sites(root, cavity_overlap=0.4)
+    for sid in table["site_id"]:
         assert (sites_dir / sid / "metadata" / "master.csv").exists()
         assert (sites_dir / sid / "pockets" / "APO1" / "binding_site.csv").exists()
 
@@ -197,14 +206,22 @@ def test_leftover_parked_folders_do_not_break_regroup(tmp_path, monkeypatch):
 
     root = _finished_run(tmp_path, monkeypatch)
     sites_dir = root / "sites"
-    shutil.copytree(sites_dir / "site_02", sites_dir / ".regroup_site_02")  # its name is taken: dropped
-    shutil.move(sites_dir / "site_01", sites_dir / ".regroup_site_01")  # its name is free: it is site_01
-    (sites_dir / ".regroup_site_01" / "metadata" / "marker.txt").write_text("restored")
+    shutil.copytree(sites_dir / FAR, sites_dir / f".regroup_{FAR}")   # its name is taken: dropped
+    shutil.move(sites_dir / NEAR, sites_dir / f".regroup_{NEAR}")     # its name is free: it is NEAR
+    (sites_dir / f".regroup_{NEAR}" / "metadata" / "marker.txt").write_text("restored")
 
-    steps.regroup_sites(root, 4.0)
+    steps.regroup_sites(root, ligand_fraction=0.5)
     assert not list(sites_dir.glob(".regroup_*"))
-    assert (sites_dir / "site_01" / "metadata" / "marker.txt").read_text() == "restored"
-    assert (sites_dir / "site_02" / "metadata" / "master.csv").exists()
+    assert (sites_dir / NEAR / "metadata" / "marker.txt").read_text() == "restored"
+    assert (sites_dir / FAR / "metadata" / "master.csv").exists()
+
+
+def test_regroup_needs_a_known_parameter(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="at least one"):
+        steps.regroup_sites(root)
+    with pytest.raises(ValueError, match="link_cutoff"):
+        steps.regroup_sites(root, link_cutoff=3.0)
 
 
 def test_unknown_site_is_refused(tmp_path, monkeypatch):

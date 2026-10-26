@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterable, List, NamedTuple, Optional, Sequence
+from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence
 
 #: Environment variable listing extra places to look, ``:``-separated.
 RUNS_ENV = "QPOCKET_RUNS"
@@ -46,24 +46,51 @@ def is_complete(path: Path) -> bool:
     return (Path(path) / "sites" / "sites.csv").is_file()
 
 
-def site_link_cutoff(run_dir: Path, lo: float, hi: float) -> float:
-    """The run's ``sites.link_cutoff``, clamped into a control's range.
+def site_parameters(run_dir: Path) -> Dict[str, float]:
+    """The run's tunable ``sites`` parameters, for the regroup controls.
 
     Args:
         run_dir: The run directory.
-        lo: Smallest value the control takes.
-        hi: Largest value the control takes.
 
     Returns:
-        The cutoff, or the default one when the run's config cannot be read.
+        min_cavity_points, cavity_overlap, min_structure_fraction, ligand_fraction and box_padding;
+        the defaults when the run's config cannot be read.
     """
     from qpocket.config import QPocketConfig, load_run_config
 
     try:
-        cutoff = float(load_run_config(run_dir).sites.link_cutoff)
+        sites = load_run_config(run_dir).sites
     except Exception:  # a broken config must not hide the site table
-        cutoff = QPocketConfig().sites.link_cutoff
-    return min(max(cutoff, lo), hi)
+        sites = QPocketConfig().sites
+    keys = ("min_cavity_points", "cavity_overlap", "min_structure_fraction", "ligand_fraction", "box_padding")
+    return {key: getattr(sites, key) for key in keys}
+
+
+def site_view_ligands(run_dir: Path, site_id: str, limit: int) -> List[str]:
+    """Ligand files to show for a site: one per holo structure, its largest, in master order.
+
+    Args:
+        run_dir: The run directory.
+        site_id: The site.
+        limit: How many at most.
+
+    Returns:
+        Ligand file paths, at most ``limit``.
+    """
+    import pandas as pd
+
+    root = Path(run_dir)
+    master_path = root / "sites" / site_id / "metadata" / "master.csv"
+    ligands_path = root / "structures" / "ligands.csv"
+    if not master_path.is_file() or not ligands_path.is_file():
+        return []
+    master = pd.read_csv(master_path, dtype=str, keep_default_na=False)
+    ligands = pd.read_csv(ligands_path, dtype={"pdb_id": str}, keep_default_na=False)
+    here = ligands[ligands["site_ids"].astype(str).str.split(";").apply(lambda ids: site_id in ids)]
+    largest = here.sort_values("n_heavy", ascending=False, kind="stable").drop_duplicates("pdb_id")
+    by_pdb = dict(zip(largest["pdb_id"], largest["file"]))
+    holo = master.loc[master["protein_state"] == "BOUND_STATE", "pdb_id"]
+    return [by_pdb[p] for p in holo if p in by_pdb][: max(int(limit), 0)]
 
 
 def find_runs(roots: Iterable[Path], max_depth: int = MAX_DEPTH) -> List[Path]:

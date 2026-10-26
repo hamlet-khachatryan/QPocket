@@ -69,9 +69,16 @@ def cluster_command(run_dir: str, site_id: str) -> None:
 
 @site_cli.command("regroup")
 @_RUN_DIR
-@click.option("--cutoff", "link_cutoff", type=float, required=True,
-              help="Single-linkage heavy-atom distance in Å for joining ligands into a site.")
+@click.option("--cavity-overlap", type=float, help="Box IoU two cavities (or two sites) need to be grouped.")
+@click.option("--ligand-fraction", type=float, help="Share of a ligand's heavy atoms inside a site box.")
+@click.option("--box-padding", type=float, help="Å added to every face of a site box when assigning ligands.")
+@click.option("--min-cavity-points", type=int, help="Smaller CavFind cavities never form or join a site.")
+@click.option("--min-structure-fraction", type=float, help="Share of structures a site without ligands needs.")
 @_reported
-def regroup_command(run_dir: str, link_cutoff: float) -> None:
-    """Regroup ligands into sites at a new cutoff; unchanged sites keep their work."""
-    click.echo(steps.regroup_sites(run_dir, link_cutoff).to_string(index=False))
+def regroup_command(run_dir: str, **params) -> None:
+    """Rebuild the sites with new parameters; sites whose cavities are unchanged keep their work."""
+    given = {key: value for key, value in params.items() if value is not None}
+    if not given:
+        raise click.UsageError("give at least one of --cavity-overlap, --ligand-fraction, --box-padding, "
+                               "--min-cavity-points, --min-structure-fraction")
+    click.echo(steps.regroup_sites(run_dir, **given).to_string(index=False))

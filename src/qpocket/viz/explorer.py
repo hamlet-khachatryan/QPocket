@@ -99,16 +99,19 @@ def _(mo, pd, qsites, regrouped, run_dir):
     try:
         sites_df = qsites.site_table(run_dir)
     except qsites.SiteError:
-        sites_df = pd.DataFrame(columns=["site_id", "n_holo_structures", "n_ligands", "extent", "resnames"])
-    _labels = {f"{r.site_id} · {r.n_holo_structures} holo · {r.resnames}": r.site_id
-               for r in sites_df.itertuples()}
+        sites_df = pd.DataFrame(columns=["site_id", "n_structures", "n_holo", "n_apo", "n_cavfind_miss",
+                                         "n_ligands", "lining_residues", "centre_x", "centre_y", "centre_z"])
+    _labels = {f"{r.site_id} · {r.n_structures} structures · {r.n_holo} holo · {r.n_cavfind_miss} misses":
+               r.site_id for r in sites_df.itertuples()}
     site_picker = mo.ui.dropdown(options=_labels, value=next(iter(_labels), None),
                                  label="**Binding site**")
     mo.vstack([
-        mo.md("## Binding sites\nEvery ligand-occupied site of the run. Everything below reads "
-              "the site picked here."),
+        mo.md("## Binding sites\nSites built from CavFind cavities seen across the run's structures. "
+              "Everything below reads the site picked here; ligands CavFind found no cavity for are in "
+              "`sites/cavfind_misses.csv`."),
         site_picker,
-        mo.ui.table(sites_df[["site_id", "n_holo_structures", "n_ligands", "extent", "resnames"]],
+        mo.ui.table(sites_df[["site_id", "n_structures", "n_holo", "n_apo", "n_cavfind_miss", "n_ligands",
+                              "lining_residues"]],
                     selection=None, pagination=True),
     ])
     return site_picker, sites_df
@@ -189,12 +192,18 @@ def _(Path, get_site_steps, mo, pd, run_dir, site_picker):
 
 
 @app.cell
-def _(info, mo, qviz, run_dir, site_dir, sites_df):
-    # The site's ligands over the frame protein, every site's centre as a sphere
-    # (this one dark, the others faint), through the pocket grid's own page.
+def _(mo):
+    site_ligand_limit = mo.ui.number(start=1, stop=200, step=1, value=25, label="Ligands shown")
+    return (site_ligand_limit,)
+
+
+@app.cell
+def _(Path, info, mo, qviz, run_dir, site_dir, site_ligand_limit, sites_df):
+    # Some of the site's ligands (one per holo structure, at most the limit) over the frame
+    # protein, every site's centre as a sphere (this one dark, the others faint).
     _centres = sites_df[["centre_x", "centre_y", "centre_z"]].to_numpy(dtype=float)
     _here = (sites_df["site_id"] == site_dir.name).to_numpy(dtype=float)
-    _ligands = site_dir / "ligands.pdb"
+    _files = qviz.site_view_ligands(run_dir, site_dir.name, int(site_ligand_limit.value))
     # shortcut: the first aligned structure stands in for the frame; every one is superposed onto it.
     _frame = next((run_dir / f for f in info.get("aligned_file", [])
                    if isinstance(f, str) and f and (run_dir / f).exists()), None)
@@ -202,11 +211,11 @@ def _(info, mo, qviz, run_dir, site_dir, sites_df):
     _domain = qviz.ColourDomain(0.15, 1.0, None)
     _stops = qviz.ramp_stops(_ramp.scale)
     _panel = {
-        "id": site_dir.name, "title": f"{site_dir.name} · ligands of every holo structure",
+        "id": site_dir.name, "title": f"{site_dir.name} · {len(_files)} ligands shown",
         "cloud": qviz.pseudo_atom_pdb(_centres, b=qviz.scale_to_percent(_here, _domain)),
         "cartoon": _frame.read_text(encoding="utf-8") if _frame else "",
         "side": "", "highlights": {}, "n_forced": 0,
-        "ligand": qviz.ligand_pdb(str(_ligands)) if _ligands.exists() else "",
+        "ligand": "".join(qviz.ligand_pdb(f) for f in _files if Path(f).exists()),
         "vals": [round(float(v), 3) for v in _here], "n_points": len(_centres), "n_ctx": 0,
     }
     _html, _h = qviz.grid.grid_html(
@@ -214,7 +223,7 @@ def _(info, mo, qviz, run_dir, site_dir, sites_df):
         n_cols=1, panel_px=420, sphere_radius=1.2, stops=_stops, value_label="this site",
         ramp=_ramp, domain=_domain, hover=False, cartoon_opacity=0.5, ligand_color="greenCarbon",
         observed_colour="#eb6834", potential_colour="#7b5cd6", offline=True)
-    mo.iframe(_html, height=f"{_h + 70}px")
+    mo.vstack([site_ligand_limit, mo.iframe(_html, height=f"{_h + 70}px")])
     return
 
 
@@ -274,27 +283,35 @@ def _(featurise_button, mo, qsites, run_dir, set_site_steps, shape_button, site_
 @app.cell
 def _(mo, qviz, run_dir):
     # This cell feeds the site table, so an odd config must not stop it.
-    regroup_cutoff = mo.ui.number(start=0.5, stop=20.0, step=0.5,
-                                  value=qviz.site_link_cutoff(run_dir, 0.5, 20.0),
-                                  label="Link cutoff (Å)")
+    _p = qviz.site_parameters(run_dir)
+
+    def _number(key, lo, hi, step, label):  # a saved value outside the control's range is clamped
+        return mo.ui.number(start=lo, stop=hi, step=step, value=min(max(float(_p[key]), lo), hi), label=label)
+
+    regroup_controls = mo.ui.dictionary({
+        "cavity_overlap": _number("cavity_overlap", 0.05, 1.0, 0.05, "Cavity overlap (IoU)"),
+        "ligand_fraction": _number("ligand_fraction", 0.05, 1.0, 0.05, "Ligand fraction"),
+        "box_padding": _number("box_padding", 0.0, 10.0, 0.5, "Box padding (Å)"),
+    })
     regroup_button = mo.ui.run_button(label="Regroup sites")
     mo.accordion({"Regroup sites": mo.vstack([
-        mo.callout(mo.md("Regrouping rewrites `sites/`. Every site whose ligands change loses its "
-                         "per-site results: features, clustering and cross-docking."), kind="warn"),
-        mo.hstack([regroup_cutoff, regroup_button], justify="start", align="end"),
-        mo.plain_text(f"qpocket site regroup {run_dir} --cutoff <x>"),
+        mo.callout(mo.md("Regrouping rewrites `sites/`. Every site whose member cavities change loses "
+                         "its per-site results: features, clustering and cross-docking."), kind="warn"),
+        mo.hstack([*regroup_controls.elements.values(), regroup_button], justify="start", align="end"),
+        mo.plain_text(f"qpocket site regroup {run_dir} --cavity-overlap <x> --ligand-fraction <y> "
+                      "--box-padding <z>"),
     ])})
-    return regroup_button, regroup_cutoff
+    return regroup_button, regroup_controls
 
 
 @app.cell
-def _(mo, qsites, regroup_button, regroup_cutoff, run_dir):
+def _(mo, qsites, regroup_button, regroup_controls, run_dir):
     # No mo.stop: the site table depends on this, and must show before any regroup.
     regrouped = None
     if regroup_button.value:
         with mo.status.spinner(title="Regrouping sites…"):
             try:
-                regrouped = qsites.regroup_sites(run_dir, float(regroup_cutoff.value))
+                regrouped = qsites.regroup_sites(run_dir, **{k: float(v) for k, v in regroup_controls.value.items()})
                 _message = f"_Regrouped into {len(regrouped)} sites._"
             except Exception as _e:
                 _message = f"_Regroup failed: {type(_e).__name__}: {_e}_"

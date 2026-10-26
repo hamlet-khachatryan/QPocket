@@ -23,7 +23,7 @@ websockets = pytest.importorskip("websockets", reason="needs the websockets clie
 
 
 def _site_run(tmp_path, monkeypatch, shape_clustered: bool) -> Path:
-    """The site-steps fixture run: clouds only, or with site_01 shape-clustered.
+    """The site-steps fixture run: clouds only, or with the near site shape-clustered.
 
     The shape-clustered run also carries a link cutoff beyond the regroup control's range.
     """
@@ -34,8 +34,8 @@ def _site_run(tmp_path, monkeypatch, shape_clustered: bool) -> Path:
 
     root = _finished_run(tmp_path, monkeypatch)
     if shape_clustered:
-        sites.shape_cluster_site(root, "site_01")
-        save_run_config(evolve(load_run_config(root), "sites.link_cutoff", 25.0), layout.workspace(root))
+        sites.shape_cluster_site(root, "S1-Y1")
+        save_run_config(evolve(load_run_config(root), "sites.box_padding", 25.0), layout.workspace(root))
     return root
 
 
@@ -106,7 +106,7 @@ def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered
     assert finished, "no cell ran at all"
     assert not errors, "cells left showing errors: " + "; ".join(
         str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
-    for text in ("Binding sites", "Steps for site_01", "site_01 · "):
+    for text in ("Binding sites", "Steps for S1-Y1", "S1-Y1 · ", "Ligands shown"):
         assert text in shown, f"{text!r} never rendered"
     assert ("No distance matrix for this site yet" in shown) is not shape_clustered
     assert "Two-stage clustering (0/3 featurised)" in shown

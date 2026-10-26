@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
-from qpocket.config import QPocketConfig, evolve, load_run_config, plugin_params, save_run_config
+from qpocket.config import QPocketConfig, evolve, load_run_config, plugin_params, save_run_config, validate_config
 from qpocket.core.ports import CHARGES
 from qpocket.core.result import Failure, guarded
 from qpocket.core.types import Structure
@@ -234,19 +234,33 @@ def two_stage_site(run_dir: Path, site_id: str) -> Path:
     return ws.metadata / "clustering_metadata.csv"
 
 
-def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
-    """Regroup the run's ligands with a new link cutoff; a site whose ligands are unchanged keeps its folder.
+TUNABLE = ("min_cavity_points", "cavity_overlap", "min_structure_fraction", "ligand_fraction", "box_padding")
+
+
+def regroup_sites(run_dir: Path, **overrides: float) -> pd.DataFrame:
+    """Rebuild the run's sites with new ``sites`` parameters; a site whose member cavities are unchanged keeps its folder.
 
     Args:
         run_dir: The run directory.
-        link_cutoff: The new ``sites.link_cutoff`` (Å); saved into the run's config.
+        **overrides: New values for any of TUNABLE; saved into the run's config.
 
     Returns:
         The new site table.
+
+    Raises:
+        ValueError: If no parameter, or an unknown one, is given.
     """
+    if not overrides:
+        raise ValueError(f"regroup needs at least one of: {', '.join(TUNABLE)}")
+    unknown = sorted(set(overrides) - set(TUNABLE))
+    if unknown:
+        raise ValueError(f"unknown site parameter(s) {', '.join(unknown)}; known: {', '.join(TUNABLE)}")
     site_table(run_dir)  # refuses a directory that is not a run
     ws = layout.workspace(run_dir)
-    cfg = evolve(load_run_config(run_dir), "sites.link_cutoff", float(link_cutoff))
+    cfg = load_run_config(run_dir)
+    for key, value in overrides.items():
+        cfg = evolve(cfg, f"sites.{key}", int(value) if key == "min_cavity_points" else float(value))
+    validate_config(cfg)
     records = []
     for pid in pd.read_csv(ws.metadata / "master.csv", dtype=str)["pdb_id"]:
         payload = layout.read_part(ws, pid)

@@ -22,7 +22,8 @@ from qpocket.viz.runs import (
     is_run,
     resolve_location,
     run_label,
-    site_link_cutoff,
+    site_parameters,
+    site_view_ligands,
 )
 
 
@@ -149,26 +150,40 @@ def test_command_line_roots_are_included(tmp_path):
     assert tmp_path / "cli" in default_roots(tmp_path, extra=[str(tmp_path / "cli")])
 
 
-# --- the regroup control's starting cutoff --------------------------------
+# --- the regroup controls and the site view ---------------------------------
 
 
-def test_the_cutoff_starts_at_the_runs_own(tmp_path):
+def test_site_parameters_read_from_run(tmp_path):
     from qpocket.config import QPocketConfig, evolve, save_run_config
 
     ws = layout.create(str(tmp_path), "r")
-    save_run_config(evolve(evolve(QPocketConfig(), "reference.pdb_id", "1ABC"), "sites.link_cutoff", 6.5), ws)
-    assert site_link_cutoff(ws.root, 0.5, 20.0) == 6.5
+    save_run_config(evolve(evolve(QPocketConfig(), "reference.pdb_id", "1ABC"), "sites.cavity_overlap", 0.4), ws)
+    got = site_parameters(ws.root)
+    assert got["cavity_overlap"] == 0.4 and got["ligand_fraction"] == 0.5
+    assert set(got) == {"min_cavity_points", "cavity_overlap", "min_structure_fraction",
+                        "ligand_fraction", "box_padding"}
 
 
-def test_a_cutoff_outside_the_control_is_clamped(tmp_path):
-    from qpocket.config import QPocketConfig, evolve, save_run_config
-
-    ws = layout.create(str(tmp_path), "r")
-    save_run_config(evolve(evolve(QPocketConfig(), "reference.pdb_id", "1ABC"), "sites.link_cutoff", 25.0), ws)
-    assert site_link_cutoff(ws.root, 0.5, 20.0) == 20.0
-
-
-def test_an_unreadable_config_falls_back_to_the_default(tmp_path):
+def test_an_unreadable_config_falls_back_to_the_defaults(tmp_path):
     from qpocket.config import QPocketConfig
 
-    assert site_link_cutoff(tmp_path, 0.5, 20.0) == QPocketConfig().sites.link_cutoff
+    assert site_parameters(tmp_path)["cavity_overlap"] == QPocketConfig().sites.cavity_overlap
+
+
+def test_site_view_ligands_one_per_holo_structure_largest_first(tmp_path):
+    import pandas as pd
+
+    ws = layout.create(str(tmp_path), "r")
+    rows = [("P1", "A", "LIG", 1, " ", 6, "p1_small.pdb", "", "S1-H21"),
+            ("P1", "A", "LIG", 2, " ", 9, "p1_big.pdb", "", "S1-H21;S2-A5"),
+            ("P2", "A", "LIG", 1, " ", 7, "p2.pdb", "", "S1-H21"),
+            ("P3", "A", "LIG", 1, " ", 7, "p3.pdb", "", "S2-A5")]
+    pd.DataFrame(rows, columns=["pdb_id", "chain", "resname", "resseq", "icode", "n_heavy", "file", "smiles",
+                                "site_ids"]).to_csv(ws.structures / "ligands.csv", index=False)
+    meta = ws.sites / "S1-H21" / "metadata"
+    meta.mkdir(parents=True)
+    pd.DataFrame({"pdb_id": ["P2", "P1", "APO"], "protein_state": ["BOUND_STATE", "BOUND_STATE",
+                                                                     "UNBOUND_STATE"]}).to_csv(meta / "master.csv",
+                                                                                               index=False)
+    assert site_view_ligands(ws.root, "S1-H21", 25) == ["p2.pdb", "p1_big.pdb"]
+    assert site_view_ligands(ws.root, "S1-H21", 1) == ["p2.pdb"]
