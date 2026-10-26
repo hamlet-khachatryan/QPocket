@@ -220,3 +220,38 @@ def test_a_config_with_k_range_still_loads(tmp_path):
     cfg, notices = load_with_notices(str(path))
     assert cfg.distance.clustering.chem.k == 3
     assert any("distance.clustering.chem.k_range is obsolete" in n for n in notices)
+
+
+def test_a_run_saved_with_the_silhouette_defaults_still_loads(tmp_path):
+    import subprocess
+
+    from qpocket.config import load_run_config
+
+    old = subprocess.run(["git", "show", "d9bcb50:conf/config.yaml"], capture_output=True, text=True,
+                         cwd=Path(__file__).resolve().parents[1])
+    if old.returncode:
+        pytest.skip("commit d9bcb50 is not in this checkout")
+    (tmp_path / "metadata").mkdir()
+    saved = old.stdout.replace("pdb_id: null", 'pdb_id: "1ABC"', 1)  # a run always has its reference
+    (tmp_path / "metadata" / "config.yaml").write_text(saved, encoding="utf-8")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        cfg = load_run_config(tmp_path)
+    c = cfg.distance.clustering
+    for name in ("shape", "chem"):
+        stage = getattr(c, name)
+        assert (stage.method, stage.criterion, stage.threshold) == ("hierarchical", "relative", 0.5)
+        assert f"distance.clustering.{name} chose k by silhouette" in err.getvalue()
+    assert c.single.method == "affinity"
+
+
+def test_an_explicit_k_means_count(tmp_path):
+    path = tmp_path / "k.yaml"
+    path.write_text("reference:\n  pdb_id: 1ABC\ndistance:\n  clustering:\n"
+                    "    shape:\n      k: 3\n    chem:\n      method: kmedoids\n      k: 3\n",
+                    encoding="utf-8")
+    cfg, _ = load_with_notices(str(path))
+    assert (cfg.distance.clustering.shape.criterion, cfg.distance.clustering.shape.k) == ("count", 3)
+    assert (cfg.distance.clustering.chem.criterion, cfg.distance.clustering.chem.k) == ("count", 3)
+    cfg = load_qpocket_config(overrides=["reference.pdb_id=1ABC", "distance.clustering.shape.k=4"])
+    assert (cfg.distance.clustering.shape.criterion, cfg.distance.clustering.shape.k) == ("count", 4)

@@ -211,3 +211,18 @@ def test_unknown_site_is_refused(tmp_path, monkeypatch):
         with pytest.raises(steps.SiteError, match="unknown site 'site_99'"):
             step(root, "site_99")
     assert not (root / "sites" / "site_99").exists()
+
+
+def test_a_run_saved_with_the_silhouette_defaults_still_clusters(tmp_path, monkeypatch):
+    from omegaconf import OmegaConf
+
+    root = _finished_run(tmp_path, monkeypatch)
+    path = Path(root) / "metadata" / "config.yaml"
+    saved = OmegaConf.load(path)
+    saved.distance.clustering.shape = {"method": "hierarchical", "linkage": "average", "k": None,
+                                       "k_range": [2, 10], "criterion": "count", "threshold": None}
+    saved.distance.clustering.chem = {"method": "kmedoids", "k": None, "k_range": [2, 6],
+                                      "criterion": "count", "threshold": None}
+    path.write_text(OmegaConf.to_yaml(saved), encoding="utf-8")
+    steps.shape_cluster_site(root, "site_01")
+    assert steps.site_status(root, "site_01")["shape_clustered"]

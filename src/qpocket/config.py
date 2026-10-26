@@ -426,6 +426,26 @@ def _config_keys(node: object, prefix: str = "") -> set:
     return out
 
 
+def _k_means_count(layer: DictConfig) -> DictConfig:
+    """Give every clustering stage that sets k but no criterion the count criterion.
+
+    Applied to the user's own layer before it is merged, because the packaged
+    default criterion would otherwise silently override an explicit k.
+
+    Args:
+        layer: A user config file or the command-line overrides, modified in place.
+
+    Returns:
+        The same layer.
+    """
+    for root in ("distance.clustering", "spectral_distance_matrix.clustering"):
+        for name in ("single", "shape", "chem"):
+            stage = OmegaConf.select(layer, f"{root}.{name}", default=None)
+            if isinstance(stage, DictConfig) and stage.get("k") is not None and "criterion" not in stage:
+                stage.criterion = "count"
+    return layer
+
+
 def migrate_legacy(cfg: DictConfig) -> List[str]:
     """Rewrite renamed keys in place and report what needs changing.
 
@@ -496,6 +516,18 @@ def migrate_legacy(cfg: DictConfig) -> List[str]:
             f"{', '.join(sorted(k.split('.', 1)[1] for k in keys))}); "
             f"the old names still work but will be removed"
         )
+
+    # Before the relative cut, count with no k meant "choose k by silhouette"; every
+    # config and run saved then carries that, and it no longer validates.
+    for name in ("single", "shape", "chem"):
+        stage = OmegaConf.select(cfg, f"distance.clustering.{name}", default=None)
+        if (isinstance(stage, DictConfig) and stage.get("criterion") == "count"
+                and stage.get("k") is None and stage.get("method") != "affinity"):
+            stage.method, stage.criterion, stage.threshold = "hierarchical", "relative", 0.5
+            warnings.append(
+                f"distance.clustering.{name} chose k by silhouette, which no longer exists; "
+                "using a relative cut at 0.5 — set k or a threshold to choose"
+            )
 
     # Drop legacy containers emptied by the moves above, so they are not then
     # reported as unrecognised settings.
@@ -935,11 +967,11 @@ def load_qpocket_config(
 
     if config_path:
         user_cfg = OmegaConf.load(config_path)
-        cfg = OmegaConf.merge(cfg, user_cfg)
+        cfg = OmegaConf.merge(cfg, _k_means_count(user_cfg))
 
     if overrides:
         override_cfg = OmegaConf.from_dotlist(overrides)
-        cfg = OmegaConf.merge(cfg, override_cfg)
+        cfg = OmegaConf.merge(cfg, _k_means_count(override_cfg))
 
     for notice in migrate_legacy(cfg):
         log_message(message_type="config_deprecation", notice=notice)
