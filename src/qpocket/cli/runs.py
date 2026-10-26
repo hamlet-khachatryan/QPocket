@@ -41,7 +41,7 @@ def recluster_command(run_dir, mode, min_cluster_size, shape_method, shape_linka
 
     settings = recluster.load_settings(Path(run_dir))
 
-    def stage(current, method, linkage, k, criterion, threshold):
+    def stage(name, current, method, linkage, k, criterion, threshold):
         changes = {}
         if method:
             changes["method"] = method
@@ -55,14 +55,21 @@ def recluster_command(run_dir, mode, min_cluster_size, shape_method, shape_linka
             changes["criterion"] = criterion
             if criterion != "count":
                 changes["method"] = "hierarchical"
+            # A threshold kept from another criterion would mean something else here.
+            if threshold is None and criterion == "relative" and current.criterion != "relative":
+                changes["threshold"] = 0.5
+            if threshold is None and criterion == "threshold" and (
+                    current.criterion != "threshold" or current.threshold is None):
+                raise click.ClickException(
+                    f"--{name}-criterion threshold needs a height: set --{name}-threshold")
         return replace(current, **changes)
 
     settings = replace(
         settings,
         mode=mode or settings.mode,
         min_cluster_size=min_cluster_size or settings.min_cluster_size,
-        shape=stage(settings.shape, shape_method, shape_linkage, shape_k, shape_criterion, shape_threshold),
-        chem=stage(settings.chem, chem_method, chem_linkage, chem_k, chem_criterion, chem_threshold),
+        shape=stage("shape", settings.shape, shape_method, shape_linkage, shape_k, shape_criterion, shape_threshold),
+        chem=stage("chem", settings.chem, chem_method, chem_linkage, chem_k, chem_criterion, chem_threshold),
     )
     try:
         out = recluster.run(Path(run_dir), settings)

@@ -401,8 +401,12 @@ def _(cluster_matrices, cluster_settings, cut_by, info, mo, qviz):
 @app.cell
 def _(cluster_matrices, cluster_settings, cut_by, mo, qviz, shape_cut):
     # The chemistry range depends on where the shape cut fell, so it follows it.
+    _chem_start = None
     if cut_by.value == "relative":
         _chem_lo, _chem_hi = 0.05, 1.0
+        _chem_start = (float(cluster_settings.chem.threshold)
+                       if cluster_settings.chem.criterion == "relative"
+                       and cluster_settings.chem.threshold else 0.5)
     elif cluster_matrices is None:
         _chem_lo, _chem_hi = 0.0, 1.0
     else:
@@ -412,7 +416,8 @@ def _(cluster_matrices, cluster_settings, cut_by, mo, qviz, shape_cut):
                                                               cluster_settings.chem.linkage)
     chem_cut = mo.ui.slider(start=_chem_lo, stop=_chem_hi,
                             step=max((_chem_hi - _chem_lo) / 200, 1e-9),
-                            value=(_chem_lo + _chem_hi) / 2,
+                            value=min(max(_chem_start, _chem_lo), _chem_hi) if _chem_start
+                            else (_chem_lo + _chem_hi) / 2,
                             label=("Chemistry cut fraction" if cut_by.value == "relative"
                                    else "Chemistry cut"), show_value=True)
     return (chem_cut,)

@@ -369,7 +369,7 @@ def cluster_labels(
         method: One of :data:`ALL_METHODS`.
         criterion: One of :data:`CRITERIA`, or its short name ``"count"``, ``"threshold"`` or ``"relative"``.
         n_clusters: Wanted cluster count, used by the count criterion.
-        threshold: Cut height for the threshold criterion; for the relative one, the fraction of the tallest merge to cut at.
+        threshold: Cut height for the threshold criterion; for the relative one, the fraction of the tallest merge to cut at. When every distance is equal and non-zero, every merge sits at the same height, so a fraction below 1 leaves each structure on its own.
         damping: Affinity Propagation damping.
         preference_percentile: Affinity Propagation preference percentile.
 
@@ -377,7 +377,7 @@ def cluster_labels(
         The grouping.
 
     Raises:
-        ValueError: If ``method`` or ``criterion`` is unknown.
+        ValueError: If ``method`` or ``criterion`` is unknown, or a threshold or relative cut has no threshold.
     """
     d = symmetrise(distances)
     criterion = _CRITERION_NAMES.get(criterion, criterion)
@@ -389,6 +389,10 @@ def cluster_labels(
 
     if method == KMEDOIDS:
         return kmedoids_labels(d, n_clusters=n_clusters)
+
+    if criterion in (THRESHOLD, RELATIVE) and threshold is None:
+        short = {v: k for k, v in _CRITERION_NAMES.items()}[criterion]
+        raise ValueError(f"a '{short}' cut needs a threshold")
 
     if criterion == RELATIVE and len(d) < 3:
         # Too few pockets for a tree worth cutting: one group, never an error.
@@ -403,7 +407,7 @@ def cluster_labels(
         raw = fcluster(link, t=k, criterion="maxclust")
         cut = threshold_for_clusters(link, k)
     elif criterion == THRESHOLD:
-        cut = float(link[:, 2].max() if threshold is None else threshold)
+        cut = float(threshold)
         raw = fcluster(link, t=cut, criterion="distance")
     elif criterion == RELATIVE:
         cut = float(threshold) * float(link[:, 2].max())

@@ -332,6 +332,57 @@ def test_cli_recluster_on_an_old_run_says_what_to_set(tmp_path, two_axes):
     assert res.exit_code != 0 and "set k or use criterion" in res.output
 
 
+@pytest.mark.parametrize("criterion", ["relative", "threshold"])
+def test_a_height_cut_without_a_threshold_says_so(criterion):
+    with pytest.raises(ValueError, match=f"a '{criterion}' cut needs a threshold"):
+        cluster_labels(_two_blobs(), method="average", criterion=criterion, threshold=None)
+    with pytest.raises(ValueError, match=f"a '{criterion}' cut needs a threshold"):
+        _stage_labels(_two_blobs(), "hierarchical", "average", k=None, criterion=criterion)
+
+
+def test_cli_relative_without_a_threshold_takes_half_height(tmp_path, two_axes):
+    """The recovery the old-run error recommends must work without a threshold."""
+    import json
+    from click.testing import CliRunner
+    from qpocket.cli import cli
+
+    run = _old_run(tmp_path, two_axes)
+    res = CliRunner().invoke(cli, ["recluster", str(run), "--shape-criterion", "relative",
+                                   "--chem-criterion", "relative"])
+    assert res.exit_code == 0, res.output
+    params = json.loads((run / "metadata/clustering_params.json").read_text())
+    for stage in ("shape", "chem"):
+        assert (params[stage]["criterion"], params[stage]["threshold"]) == ("relative", 0.5)
+
+
+def test_cli_threshold_without_a_height_asks_for_one(tmp_path, two_axes):
+    from click.testing import CliRunner
+    from qpocket.cli import cli
+
+    res = CliRunner().invoke(cli, ["recluster", str(_old_run(tmp_path, two_axes)),
+                                   "--shape-criterion", "threshold"])
+    assert res.exit_code != 0 and "--shape-threshold" in res.output
+    assert "Traceback" not in res.output
+
+
+def test_a_run_saved_before_criteria_existed_counts(tmp_path, two_axes):
+    """No criterion key means the old count behaviour, not the new relative default."""
+    import json
+    from qpocket.arms import recluster
+
+    run = _old_run(tmp_path, two_axes)
+    path = run / "metadata/clustering_params.json"
+    params = json.loads(path.read_text())
+    for stage in ("shape", "chem"):
+        params[stage].pop("criterion")
+        params[stage].pop("threshold")
+    path.write_text(json.dumps(params))
+    settings = recluster.load_settings(run)
+    assert settings.shape.criterion == settings.chem.criterion == "count"
+    with pytest.raises(ValueError, match="set k or use criterion"):
+        recluster.run(run, settings)
+
+
 @pytest.mark.parametrize("mode", ["two_stage", "single"])
 def test_cluster_pockets_without_chem_raises(mode):
     from dataclasses import replace

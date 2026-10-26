@@ -64,8 +64,8 @@ def _stage_params(stage) -> Dict[str, object]:
         "k": None if stage.k is None else int(stage.k),
         "damping": float(stage.damping),
         "max_iter": int(stage.max_iter),
-        "criterion": getattr(stage, "criterion", "count"),
-        "threshold": None if getattr(stage, "threshold", None) is None else float(stage.threshold),
+        "criterion": stage.criterion,
+        "threshold": None if stage.threshold is None else float(stage.threshold),
     }
 
 
@@ -175,12 +175,12 @@ def cluster_pockets(
         chem_k=None if chem_cfg.k is None else int(chem_cfg.k),
         min_cluster_size=int(settings.min_cluster_size),
         combined_distances=combined,
-        shape_criterion=getattr(shape_cfg, "criterion", "count"),
-        shape_threshold=getattr(shape_cfg, "threshold", None),
+        shape_criterion=shape_cfg.criterion,
+        shape_threshold=shape_cfg.threshold,
         shape_damping=float(shape_cfg.damping),
         shape_max_iter=int(shape_cfg.max_iter),
-        chem_criterion=getattr(chem_cfg, "criterion", "count"),
-        chem_threshold=getattr(chem_cfg, "threshold", None),
+        chem_criterion=chem_cfg.criterion,
+        chem_threshold=chem_cfg.threshold,
         chem_damping=float(chem_cfg.damping),
         chem_max_iter=int(chem_cfg.max_iter),
         stage_labels=stage_labels,

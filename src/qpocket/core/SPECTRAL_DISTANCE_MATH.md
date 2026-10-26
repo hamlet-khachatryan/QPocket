@@ -49,8 +49,8 @@ PDB/PQR files
            │  dist_matrix  (M × M)
            ▼
 ┌───────────────────────────────┐
-│  Stage 6 · K-Medoids Cluster  │  optimal_k()
-│  Silhouette-optimal k         │
+│  Stage 6 · Clustering         │  core/clustering.py
+│  Tree cut: relative height    │
 └───────────────────────────────┘
 ```
 
@@ -350,32 +350,31 @@ The matrix **D ∈ ℝ^{M × M}** is symmetric with D[i,i] = 0.
 
 ---
 
-## Stage 6 — K-Medoids Clustering
+## Stage 6 — Clustering
 
-> **Source**: `spectral_distance.py · optimal_k()`
+> **Source**: `core/clustering.py · two_stage_labels(), cluster_labels()`
 
-Standard K-Medoids clustering with **adaptive k selection via Silhouette Score**.
-
-### Algorithm
+By default the pockets are grouped in two stages: first on the shape distances,
+then on the chemistry distances inside each shape group. Each stage is a
+hierarchical (average-linkage) tree on the precomputed distances, cut by one of
+three criteria (`distance.clustering.{shape,chem}.criterion`):
 
 ```
-Input: D  (M × M precomputed distance matrix),  k_max
+Input: D  (M × M precomputed distance matrix)
+Z ← linkage(D, average);  h_max ← max merge height in Z
 
-For k in [2, min(k_max, M−1)]:
-    1. Run K-Medoids (init: k-medoids++, metric: precomputed)
-    2. Compute Silhouette Score:
-           s(i) = (b(i) − a(i)) / max(a(i), b(i))
-       where
-           a(i) = mean distance to other members of the same cluster
-           b(i) = mean distance to members of the nearest other cluster
-       Score S(k) = (1/M) Σᵢ s(i)
-
-k* = argmax_k S(k)
+criterion "count":     cut Z into exactly k clusters            (k set by the user)
+criterion "threshold": cut Z at height t                        (t in D's units)
+criterion "relative":  cut Z at height t · h_max,  0 < t ≤ 1    (default t = 0.5)
 
 Output: cluster labels,  medoid_indices (one per cluster)
 ```
 
-Silhouette ∈ [−1, 1]; a value near 1 indicates well-separated, compact clusters.
+The relative cut does not depend on scale: multiplying D by a constant leaves the
+labels unchanged, so one setting suits shape and chemistry distances alike, and
+in stage two each shape group's chemistry tree is cut at its own `h_max`. A stage
+with fewer than three pockets stays one cluster. `kmedoids` (with a set k) and
+`affinity` (which chooses its own count) are offered as alternatives.
 
 Medoids (actual pocket structures, not centroids) serve as **representative
 structures** for each cluster — the most central real pocket in each group.
@@ -385,7 +384,7 @@ structures** for each cluster — the most central real pocket in each group.
 ## Full Algorithm — End-to-End Pseudocode
 
 ```
-Given: PDB files {P₁, …, P_M},  hyperparameters {r, σ, K, α, β, k_max}
+Given: PDB files {P₁, …, P_M},  hyperparameters {r, σ, K, α, β, t}
 
 ═══ Featurisation ══════════════════════════════════════════
 For each pocket Pₘ:
@@ -422,8 +421,9 @@ For each pair (i, j):
    20.  D[i,j]  ← α · d_shape + (1−α) · β · d_chem
 
 ═══ Clustering ═════════════════════════════════════════════
-   21.  k* ← argmax_k Silhouette(K-Medoids(D, k))
-   22.  Assign labels;  select medoid structures
+   21.  Z ← linkage(D_shape);  shape labels ← cut Z at t · max height
+   22.  Within each shape group: cut its chemistry tree the same way
+   23.  Assign labels;  select medoid structures
 ```
 
 ---
@@ -437,5 +437,5 @@ For each pair (i, j):
 | `geo_graph_neighbor_radius` | r | 2.0 Å | Denser graph → fewer disconnected components but more noise |
 | `alpha` | α | 0.85 | More weight on shape; less on chemistry |
 | `beta` | β | 12.5 | Amplifies chemical distance contribution |
-| `max_clusters` | k_max | 10 | Wider k search; may reveal finer cluster structure |
+| `clustering.*.threshold` (relative) | t | 0.5 | Higher cut → fewer, larger clusters |
 | `max_points` | — | 5000 | Memory guard; pockets above this size are excluded |
