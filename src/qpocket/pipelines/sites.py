@@ -6,7 +6,7 @@ import json
 import shutil
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -123,6 +123,88 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
         grouping.write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
         action.add_success_fields(n_sites=len(table))
         return table
+
+
+PARKED = ".regroup_"
+
+
+def _site_keys(ws: Workspace) -> Dict[str, FrozenSet[str]]:
+    path = ws.structures / "ligands.csv"
+    if not path.is_file():
+        return {}
+    table = pd.read_csv(path, dtype=str, keep_default_na=False)
+    return {sid: frozenset(Ligand(*row).key for row in group[list(Ligand._fields)].itertuples(index=False))
+            for sid, group in table.groupby("site_id")}
+
+
+def _repoint(site_dir: Path) -> None:
+    """Point the pocket_file paths of a renamed site's clustering tables at its new folder.
+
+    Args:
+        site_dir: The site folder, under its new name.
+    """
+    for path in (site_dir / "metadata").rglob("*.csv"):
+        if "pocket_file" not in pd.read_csv(path, nrows=0).columns:
+            continue
+        table = pd.read_csv(path, dtype=str, keep_default_na=False)
+        # pocket_file is <site>/pockets/<pdb_id>/<file>; crossdock files hold folder-relative paths only.
+        table["pocket_file"] = [str(site_dir.joinpath(*Path(p).parts[-3:])) if p else p
+                                for p in table["pocket_file"]]
+        table.to_csv(path, index=False)
+
+
+def sync_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structure]) -> Tuple[pd.DataFrame, List[str]]:
+    """Rediscover the sites; a site whose ligands are unchanged keeps its folder and results, renamed if renumbered.
+
+    Args:
+        cfg: Run configuration.
+        ws: The run.
+        records: Every structure of the run.
+
+    Returns:
+        The new site table, and the ids of the sites that are new or changed and so hold no per-site results.
+    """
+    # A crashed sync leaves parked folders: one whose name is free is that old site, the rest are copies.
+    for stale in sorted(p for p in ws.sites.glob(f"{PARKED}site_*") if p.is_dir()):
+        real = ws.sites / stale.name[len(PARKED):]
+        if real.exists():
+            shutil.rmtree(stale)
+        else:
+            stale.rename(real)
+
+    old_keys = _site_keys(ws)
+    # discover_sites skips on a matching grouping.json and would then not rewrite the sites' ligands.pdb.
+    (ws.sites / "grouping.json").unlink(missing_ok=True)
+    parked: Dict[str, Path] = {}
+    try:
+        # Out of the way first, so the new sites written under the same ids do not land in old folders.
+        for folder in sorted(p for p in ws.sites.glob("site_*") if p.is_dir()):
+            parked[folder.name] = folder.rename(ws.sites / f"{PARKED}{folder.name}")
+        table = discover_sites(cfg, ws, records)
+    except Exception:
+        for sid, folder in parked.items():
+            shutil.rmtree(ws.sites / sid, ignore_errors=True)
+            folder.rename(ws.sites / sid)
+        raise
+
+    changed = []
+    for sid, keys in _site_keys(ws).items():
+        # A folder whose extraction never finished has nothing worth keeping.
+        match = next((old for old, k in old_keys.items() if k == keys and old in parked
+                      and (parked[old] / "metadata" / "master.csv").exists()), None)
+        if match is None:
+            changed.append(sid)
+            continue
+        kept, fresh = parked.pop(match), ws.sites / sid
+        if (fresh / "ligands.pdb").exists():
+            shutil.copy2(fresh / "ligands.pdb", kept / "ligands.pdb")
+        shutil.rmtree(fresh, ignore_errors=True)
+        kept.rename(fresh)
+        if match != sid:
+            _repoint(fresh)
+    for folder in parked.values():
+        shutil.rmtree(folder)
+    return table, changed
 
 
 # ── per-site clouds ──────────────────────────────────────────────────────────

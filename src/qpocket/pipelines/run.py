@@ -14,7 +14,7 @@ from qpocket.io import logging as qlog
 from qpocket.pipelines import parallel
 from qpocket.pipelines.collect import collect_structures
 from qpocket.pipelines.reference import build_reference
-from qpocket.pipelines.sites import discover_sites, extract_all_sites
+from qpocket.pipelines.sites import extract_all_sites, sync_sites
 from qpocket.pipelines.structure import process, structure_params
 
 
@@ -73,7 +73,7 @@ def run(cfg: QPocketConfig) -> Path:
             stage="structure", log_dir=ws.root / parallel.WORKER_LOG_DIR, label=_pdb_id)
         records, failures = partition(results)
         collect_structures(ws, records, failures)
-        extract_all_sites(cfg, ws, discover_sites(cfg, ws, records), records)
+        extract_all_sites(cfg, ws, sync_sites(cfg, ws, records)[0], records)
         save_run_config(cfg, ws)
         log_message(message_type="stage_complete", stage="sites")
     return ws.root

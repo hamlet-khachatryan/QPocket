@@ -2,26 +2,24 @@
 from __future__ import annotations
 
 import json
-import shutil
 from functools import partial
 from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from qpocket.config import QPocketConfig, evolve, load_run_config, plugin_params, save_run_config
 from qpocket.core.ports import CHARGES
 from qpocket.core.result import Failure, guarded
-from qpocket.core.types import Ligand, Structure
+from qpocket.core.types import Structure
 from qpocket.io import layout
 from qpocket.io.layout import Workspace
 from qpocket.pipelines import parallel, structure
 from qpocket.pipelines.clustering import archive_clustering, cluster_shape_only, write_clustering
 from qpocket.pipelines.distance import compute_shape_matrix, compute_spectral_distance_matrix, pocket_manifest
-from qpocket.pipelines.sites import discover_sites, extract_all_sites, read_sites
+from qpocket.pipelines.sites import extract_all_sites, read_sites, sync_sites
 from qpocket.pipelines.tasks import TaskError, resolve_pdb_id
 
-PARKED = ".regroup_"
 NEEDS_FEATURES = "two-stage clustering needs featurised pockets; run Featurise first"
 
 
@@ -214,31 +212,6 @@ def two_stage_site(run_dir: Path, site_id: str) -> Path:
     return ws.metadata / "clustering_metadata.csv"
 
 
-def _site_keys(ws: Workspace) -> Dict[str, FrozenSet[str]]:
-    path = ws.structures / "ligands.csv"
-    if not path.is_file():
-        return {}
-    table = pd.read_csv(path, dtype=str, keep_default_na=False)
-    return {sid: frozenset(Ligand(*row).key for row in group[list(Ligand._fields)].itertuples(index=False))
-            for sid, group in table.groupby("site_id")}
-
-
-def _repoint(site_dir: Path) -> None:
-    """Point the pocket_file paths of a renamed site's clustering tables at its new folder.
-
-    Args:
-        site_dir: The site folder, under its new name.
-    """
-    for path in (site_dir / "metadata").rglob("*.csv"):
-        if "pocket_file" not in pd.read_csv(path, nrows=0).columns:
-            continue
-        table = pd.read_csv(path, dtype=str, keep_default_na=False)
-        # pocket_file is <site>/pockets/<pdb_id>/<file>; crossdock files hold folder-relative paths only.
-        table["pocket_file"] = [str(site_dir.joinpath(*Path(p).parts[-3:])) if p else p
-                                for p in table["pocket_file"]]
-        table.to_csv(path, index=False)
-
-
 def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
     """Regroup the run's ligands with a new link cutoff; a site whose ligands are unchanged keeps its folder.
 
@@ -258,47 +231,7 @@ def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
         if payload is not None and "failure" not in payload:
             records.append(Structure.from_json(payload))
 
-    # A crashed regroup leaves parked folders: one whose name is free is that old site, the rest are copies.
-    for stale in sorted(p for p in ws.sites.glob(f"{PARKED}site_*") if p.is_dir()):
-        real = ws.sites / stale.name[len(PARKED):]
-        if real.exists():
-            shutil.rmtree(stale)
-        else:
-            stale.rename(real)
-
-    old_keys = _site_keys(ws)
-    # discover_sites skips on a matching grouping.json and would then not rewrite the sites' ligands.pdb.
-    (ws.sites / "grouping.json").unlink(missing_ok=True)
-    parked: Dict[str, Path] = {}
-    try:
-        # Out of the way first, so the new sites written under the same ids do not land in old folders.
-        for folder in sorted(p for p in ws.sites.glob("site_*") if p.is_dir()):
-            parked[folder.name] = folder.rename(ws.sites / f"{PARKED}{folder.name}")
-        table = discover_sites(cfg, ws, records)
-    except Exception:
-        for sid, folder in parked.items():
-            shutil.rmtree(ws.sites / sid, ignore_errors=True)
-            folder.rename(ws.sites / sid)
-        raise
-
-    changed = []
-    for sid, keys in _site_keys(ws).items():
-        # A folder whose extraction never finished has nothing worth keeping.
-        match = next((old for old, k in old_keys.items() if k == keys and old in parked
-                      and (parked[old] / "metadata" / "master.csv").exists()), None)
-        if match is None:
-            changed.append(sid)
-            continue
-        kept, fresh = parked.pop(match), ws.sites / sid
-        if (fresh / "ligands.pdb").exists():
-            shutil.copy2(fresh / "ligands.pdb", kept / "ligands.pdb")
-        shutil.rmtree(fresh, ignore_errors=True)
-        kept.rename(fresh)
-        if match != sid:
-            _repoint(fresh)
-    for folder in parked.values():
-        shutil.rmtree(folder)
-
+    table, changed = sync_sites(cfg, ws, records)
     extract_all_sites(cfg, ws, table[table["site_id"].isin(changed)], records)
     save_run_config(cfg, ws)
     return table

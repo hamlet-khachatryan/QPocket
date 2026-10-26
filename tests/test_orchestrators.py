@@ -87,6 +87,46 @@ def test_rerun_keeps_site_results(tmp_path, monkeypatch):
     assert marker.exists() and cloud.exists()
 
 
+def test_rerun_reconciles_renumbered_sites(tmp_path, monkeypatch):
+    """A third structure joins the far site, which becomes site_01: only the untouched site keeps its results."""
+    from dataclasses import replace
+
+    from qpocket.core.types import RawStructure, Sources
+    from tests.site_helpers import INSIDE, _lig, _structure
+
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    points = INSIDE + [(float(x), 2.0, 0.0) for x in range(47, 55)]
+    near = _lig(inputs, "P1", "AAA", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 3, 0, 0)])
+    records = {"P1": _structure(inputs, "P1", [near], points=points),
+               "P2": _structure(inputs, "P2", [_lig(inputs, "P2", "CCC", 2, [("C1", "C", 50, 0, 0)])],
+                                points=points)}
+    current = {}
+    monkeypatch.setattr(run, "ingest", lambda cfg, ws: Sources(current["raws"][0], current["raws"]))
+    monkeypatch.setattr(run, "build_reference", lambda cfg, ws, src: "REF")
+    monkeypatch.setattr(run, "structure_params", lambda cfg: None)
+    monkeypatch.setattr(run, "process", lambda ref, p, ws, raw: records[raw.pdb_id])
+    cfg = evolve(evolve(QPocketConfig(), "paths.workdir", str(tmp_path / "work")), "reference.pdb_id", "1ABC")
+    cfg = replace(cfg, compute=replace(cfg.compute, workers=1, backend="thread"))
+
+    current["raws"] = tuple(RawStructure(pid, inputs / f"{pid}.pdb") for pid in records)
+    root = run.run(cfg)
+    sites = root / "sites"
+    assert "AAA" in (sites / "site_01" / "ligands.pdb").read_text()
+    (sites / "site_01" / "metadata" / "keep.txt").write_text("near")
+    (sites / "site_02" / "metadata" / "keep.txt").write_text("far")
+
+    records["P3"] = _structure(inputs, "P3", [_lig(inputs, "P3", "DDD", 3, [("C1", "C", 51, 0, 0)])], points=points)
+    current["raws"] = tuple(RawStructure(pid, inputs / f"{pid}.pdb") for pid in records)
+    run.run(cfg)
+
+    assert "AAA" in (sites / "site_02" / "ligands.pdb").read_text()
+    assert (sites / "site_02" / "metadata" / "keep.txt").read_text() == "near"
+    assert not (sites / "site_01" / "metadata" / "keep.txt").exists()
+    assert (sites / "site_02" / "pockets" / "P3" / "binding_site.csv").exists()
+    assert not list(sites.glob(".regroup_*"))
+
+
 def test_run_with_no_ligands(tmp_path, monkeypatch):
     import pandas as pd
 

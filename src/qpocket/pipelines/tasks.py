@@ -35,7 +35,7 @@ from qpocket.io import layout
 from qpocket.pipelines import collect as collecting
 from qpocket.pipelines.distance import pocket_manifest
 from qpocket.pipelines.reference import build_reference, load_reference
-from qpocket.pipelines.sites import discover_sites, extract_all_sites
+from qpocket.pipelines.sites import extract_all_sites, sync_sites
 from qpocket.pipelines.structure import process, structure_params
 
 #: Stages of the run, which ``run_task`` accepts, in pipeline order.
@@ -153,7 +153,7 @@ def task_sites(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False) -
             )
         ids = [p.stem for p in layout.structure_files(dirs)]
         records, _ = collecting.collect_from_parts(dirs, ids)
-        extract_all_sites(cfg, dirs, discover_sites(cfg, dirs, records), records)
+        extract_all_sites(cfg, dirs, sync_sites(cfg, dirs, records)[0], records)
         save_run_config(cfg, dirs)
 
         table = dirs.sites / "sites.csv"
