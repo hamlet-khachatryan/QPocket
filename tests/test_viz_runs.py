@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 import pytest
 
+from qpocket.io import layout
 from qpocket.viz.runs import (
     default_roots,
     find_runs,
@@ -26,7 +29,7 @@ def make_run(path: Path, complete: bool = True) -> Path:
     (path / "metadata").mkdir(parents=True)
     (path / "pockets").mkdir()
     (path / "metadata" / "master.csv").write_text("pdb_id\n")
-    (path / "metadata" / "run.json").write_text('{"layout_version": 2}')
+    (path / "metadata" / "run.json").write_text(json.dumps({"layout_version": layout.LAYOUT_VERSION}))
     if complete:
         (path / "metadata" / "spectral_distance_matrix.csv").write_text(",\n")
     return path

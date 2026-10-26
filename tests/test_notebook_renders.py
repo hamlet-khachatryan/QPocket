@@ -17,6 +17,7 @@ import pandas as pd
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
+from qpocket.io import layout
 from qpocket.viz import explorer_path
 
 NOTEBOOK = explorer_path()
@@ -28,7 +29,7 @@ def _old_style_run(root: Path) -> Path:
     run = root / "legacy" / "1ABC"
     meta = run / "metadata"
     meta.mkdir(parents=True)
-    (meta / "run.json").write_text('{"layout_version": 2}')
+    (meta / "run.json").write_text(json.dumps({"layout_version": layout.LAYOUT_VERSION}))
     ids = ["1ABC", "2DEF", "3GHI"]
     frame = pd.DataFrame(
         [[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]], index=ids, columns=ids)

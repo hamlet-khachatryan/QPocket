@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional, Union
 
 #: Bumped whenever a run's files move; older runs must be re-run.
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3
 
 RUN_RECORD = "run.json"
 
@@ -27,6 +27,8 @@ class Workspace(NamedTuple):
         screening: Screening inputs and outputs.
         decoys: Decoy sets.
         actives: Active sets.
+        sites: Parent of the per-site workspaces.
+        cavities: Per-structure cavity point clouds.
     """
 
     root: Path
@@ -40,6 +42,8 @@ class Workspace(NamedTuple):
     screening: Path
     decoys: Path
     actives: Path
+    sites: Path
+    cavities: Path
 
     def __getitem__(self, key):
         # shortcut: dict-style access keeps stages.py's dirs["x"] working; remove with stages.py (plan 2).
@@ -47,20 +51,43 @@ class Workspace(NamedTuple):
 
 
 def workspace(root: Union[str, Path]) -> Workspace:
-    """Paths of a run, without touching the disk.
+    """Paths of a run or of one of its sites, without touching the disk.
 
     Args:
-        root: The run directory.
+        root: The run directory, or a site directory ``<run>/sites/<site>``.
 
     Returns:
-        Its Workspace.
+        Its Workspace; a site shares the run's structures and owns its own pockets and screening.
     """
     root = Path(root)
-    structures = root / "structures"
+    run = root.parent.parent if root.parent.name == "sites" else root
+    structures = run / "structures"
     screening = root / "screening"
     return Workspace(root, structures, structures / "original", structures / "aligned",
                      structures / "cleaned", structures / "extracted_ligands", root / "pockets",
-                     root / "metadata", screening, screening / "decoys", screening / "actives")
+                     root / "metadata", screening, screening / "decoys", screening / "actives",
+                     run / "sites" if run == root else root.parent, structures / "cavities")
+
+
+def run_root(ws: Workspace) -> Path:
+    """The run directory, whether ws is the run or one of its sites."""
+    return ws.sites.parent
+
+
+def site_workspace(ws: Workspace, site_id: str) -> Workspace:
+    """A site's workspace, with its directories made; it has no run record.
+
+    Args:
+        ws: The run.
+        site_id: The site folder name, such as ``site_01``.
+
+    Returns:
+        The site's Workspace.
+    """
+    site = workspace(ws.sites / site_id)
+    for path in (site.pockets, site.metadata, site.decoys, site.actives):
+        path.mkdir(parents=True, exist_ok=True)
+    return site
 
 
 def _qpocket_version() -> str:
