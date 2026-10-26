@@ -7,7 +7,7 @@ import numpy as np
 
 __all__ = ["Scaler", "Fingerprint", "StructureData", "FeatureContext", "PocketSpec",
            "ComparisonResult", "PQRAtoms", "AlignmentContext", "RawStructure", "Sources",
-           "Structure", "Reference"]
+           "Structure", "Ligand", "Reference"]
 
 
 class Scaler(NamedTuple):
@@ -323,6 +323,59 @@ class Structure(NamedTuple):
         smiles = known.get("smiles")
         known["smiles"] = None if smiles is None else (smiles[0], smiles[1])
         return cls(**known)
+
+
+class Ligand(NamedTuple):
+    """One ligand residue found in a structure.
+
+    Attributes:
+        pdb_id: Structure identifier.
+        chain: Chain holding the residue.
+        resname: Chemical-component ID.
+        resseq: Residue number.
+        icode: Insertion code (blank when none).
+        n_heavy: Heavy-atom count.
+        file: Extracted ligand file, once written.
+        smiles: SMILES, once derived.
+    """
+
+    pdb_id: str
+    chain: str
+    resname: str
+    resseq: int
+    icode: str
+    n_heavy: int
+    file: str = ""
+    smiles: str = ""
+
+    @property
+    def key(self) -> str:
+        """Unique within a run: structure, chain, component and number.
+
+        Returns:
+            ``pdb:chain:resname:resseq`` with the insertion code appended.
+        """
+        return f"{self.pdb_id}:{self.chain}:{self.resname}:{self.resseq}{self.icode.strip()}"
+
+    def to_json(self) -> Dict[str, Any]:
+        """Plain form for a sidecar.
+
+        Returns:
+            JSON-serialisable dict.
+        """
+        return self._asdict()
+
+    @classmethod
+    def from_json(cls, payload: Dict[str, Any]) -> "Ligand":
+        """Rebuild from :meth:`to_json`; absent optional fields take their defaults.
+
+        Args:
+            payload: Output of to_json.
+
+        Returns:
+            The record.
+        """
+        return cls(**{k: v for k, v in payload.items() if k in cls._fields})
 
 
 class Reference(NamedTuple):
