@@ -4,6 +4,26 @@ from __future__ import annotations
 import click
 
 
+_SITE = click.option("--site", default=None,
+                     help="A binding site of the run, such as site_01; omit when --workdir is a site directory.")
+
+
+def _target(workdir: str, site: str | None) -> str:
+    """The directory to screen: the workdir, or one of its sites."""
+    if not site:
+        return workdir
+    from qpocket.arms.sites import SiteError, site_table
+    from qpocket.io import layout
+
+    try:
+        known = list(site_table(workdir)["site_id"])
+    except SiteError as exc:
+        raise click.ClickException(str(exc))
+    if site not in known:
+        raise click.ClickException(f"unknown site {site!r}; known: {', '.join(known) or 'none'}")
+    return str(layout.workspace(workdir).sites / site)
+
+
 @click.group()
 @click.version_option(package_name="QPocket")
 def screen_cli() -> None:
@@ -11,7 +31,8 @@ def screen_cli() -> None:
 
 
 @screen_cli.command("prepare")
-@click.option("--workdir", required=True, help="Pipeline output directory.")
+@click.option("--workdir", required=True, help="Pipeline output directory, or one of its site directories.")
+@_SITE
 @click.option("--config", "config_path", default=None, help="Path to screen_config.yaml.")
 @click.option(
     "--run-mode",
@@ -38,6 +59,7 @@ def screen_cli() -> None:
 @click.option("--box-padding", default=None, type=float, help="Box padding in Å.")
 def prepare(
     workdir: str,
+    site: str | None,
     config_path: str | None,
     run_mode: str | None,
     engine: str | None,
@@ -80,6 +102,7 @@ def prepare(
     if box_padding is not None:
         overrides.setdefault("box", {})["padding"] = box_padding
 
+    workdir = _target(workdir, site)
     plan = prepare_campaign(workdir, config_path, submit=submit or ("slurm" if use_slurm else None), **overrides)
     import pandas as pd
 
@@ -93,7 +116,8 @@ def prepare(
 
 
 @screen_cli.command("analyze")
-@click.option("--workdir", required=True, help="Pipeline output directory.")
+@click.option("--workdir", required=True, help="Pipeline output directory, or one of its site directories.")
+@_SITE
 @click.option("--config", "config_path", default=None, help="Path to screen_config.yaml.")
 @click.option(
     "--run-mode",
@@ -110,6 +134,7 @@ def prepare(
 @click.option("--bedroc-alpha", default=None, type=float, help="BEDROC alpha parameter.")
 def analyze(
     workdir: str,
+    site: str | None,
     config_path: str | None,
     run_mode: str | None,
     rmsd_threshold: float | None,
@@ -126,7 +151,7 @@ def analyze(
     if bedroc_alpha is not None:
         overrides.setdefault("analysis", {})["bedroc_alpha"] = bedroc_alpha
 
-    click.echo(f"Reports written to: {analyze_campaign(workdir, config_path, **overrides)}")
+    click.echo(f"Reports written to: {analyze_campaign(_target(workdir, site), config_path, **overrides)}")
 
 
 @screen_cli.command("run-task")

@@ -1348,23 +1348,24 @@ def _(exclusivity_members, exclusivity_profile, mo, pair_choice, qviz, verdicts)
 
 @app.cell
 def _(mo):
+    from qpocket.arms.screen import crossdock
+
     crossdock_prepare = mo.ui.run_button(label="Prepare cross-docking")
     crossdock_analyse = mo.ui.run_button(label="Analyse cross-docking")
     mo.vstack([
-        mo.md("## Screening: cross-docking\n\nEvery distinct active into every cluster representative. "
+        mo.md("## Screening: cross-docking\n\nEvery distinct active of this site into every cluster representative. "
               "Prepare writes a task folder you can run here or copy to a cluster; Analyse reads the results."),
         mo.hstack([crossdock_prepare, crossdock_analyse], justify="start"),
     ])
-    return crossdock_analyse, crossdock_prepare
+    return crossdock, crossdock_analyse, crossdock_prepare
 
 
 @app.cell
-def _(crossdock_prepare, mo, run_dir):
+def _(crossdock, crossdock_prepare, mo, site_dir):
     mo.stop(not crossdock_prepare.value)
-    from qpocket.arms.screen import crossdock as _cx
 
     try:
-        _plan = _cx.prepare(run_dir)
+        _plan = crossdock.prepare(site_dir)
         _out = mo.vstack([mo.md(f"Prepared `{_plan.jobs_csv}`. Run the dockings with:"),
                           mo.plain_text(_plan.command)])
     except Exception as _e:
@@ -1374,13 +1375,12 @@ def _(crossdock_prepare, mo, run_dir):
 
 
 @app.cell
-def _(crossdock_analyse, mo, qviz, run_dir):
+def _(crossdock, crossdock_analyse, mo, qviz, site_dir):
     mo.stop(not crossdock_analyse.value)
-    from qpocket.arms.screen import crossdock as _cx
     from qpocket.screen_config import load_screen_config as _load
 
     try:
-        _res = _cx.analyze(run_dir)
+        _res = crossdock.analyze(site_dir)
         _threshold = _load().analysis.rmsd_threshold
         _out = mo.vstack([
             mo.ui.table(_res.success, selection=None),

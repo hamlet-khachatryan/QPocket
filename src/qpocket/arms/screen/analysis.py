@@ -9,6 +9,7 @@ import pandas as pd
 from eliot import log_message, start_action
 from rdkit import Chem
 
+from qpocket.io import layout
 from qpocket.io.screening import parse_vina_output
 from qpocket.screen_config import AnalysisConfig, ScreenConfig
 
@@ -370,7 +371,7 @@ def run_full_analysis(
 
     Args:
         screening_dir: Root screening directory.
-        pipeline_dir: Root pipeline output directory (for crystal ligands etc.).
+        pipeline_dir: Run root or site directory (for crystal ligands etc.).
         cfg: Full screen config.
     """
     analysis_dir = screening_dir / "analysis"
@@ -389,8 +390,7 @@ def run_full_analysis(
         scores_df.to_csv(analysis_dir / "docking_scores.csv", index=False)
 
     # 2. RMSD analysis
-    crystal_ligands_dir = pipeline_dir / "structures" / "extracted_ligands"
-    master_csv = pipeline_dir / "metadata" / "master.csv"
+    crystal_ligands_dir = layout.workspace(pipeline_dir).extracted_ligands
 
     with start_action(action_type="rmsd_analysis"):
         rmsd_df = _run_rmsd_analysis_from_jobs(jobs_df, scores_df, crystal_ligands_dir, cfg.analysis)

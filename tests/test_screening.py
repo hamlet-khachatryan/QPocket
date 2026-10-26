@@ -164,3 +164,57 @@ def test_prepare_options_only_override_the_config_when_given(monkeypatch, tmp_pa
     CliRunner().invoke(cli, ["screen", "prepare", "--workdir", str(tmp_path), "--engine", "vina",
                              "--run-mode", "virtual_screening"])
     assert seen["run_mode"] == "virtual_screening" and seen["docking"]["engine"] == "vina"
+
+
+def test_campaign_prepare_on_site_dir(tmp_path, monkeypatch):
+    from qpocket.io import layout
+    from qpocket.io import screening as io_screen
+    from qpocket.arms.screen import receptors as screening_prep
+
+    _fake_inputs(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(io_screen, "extract_vina_box", lambda params, dirs: seen.update(box=dirs))
+    monkeypatch.setattr(screening_prep, "prepare_all_proteins",
+                        lambda screening_dir, reps, master, cfg: seen.update(protein=(screening_dir, reps)) or ["P1"])
+    run = layout.create(str(tmp_path), "RUN")
+    site = layout.site_workspace(run, "site_01")
+    plan = screening.prepare(site.root, run_mode="virtual_screening")
+    assert seen["box"]["ligands"] == run.extracted_ligands and seen["box"]["cavities"] == site.pockets
+    assert seen["protein"] == (site.screening, site.metadata / "selected_representatives.csv")
+    assert plan.jobs_csv == site.screening / "docking_jobs.csv"
+
+
+def test_full_analysis_reads_crystal_ligands_of_the_run(tmp_path, monkeypatch):
+    from qpocket.io import layout
+    from qpocket.arms.screen import analysis
+
+    run = layout.create(str(tmp_path), "RUN")
+    site = layout.site_workspace(run, "site_01")
+    pd.DataFrame({"job_id": []}).to_csv(site.screening / "docking_jobs.csv", index=False)
+    seen = {}
+    monkeypatch.setattr(analysis, "collect_docking_scores", lambda *a: pd.DataFrame())
+    monkeypatch.setattr(analysis, "_run_rmsd_analysis_from_jobs",
+                        lambda jobs, scores, crystal_dir, cfg: seen.setdefault("crystal", crystal_dir) and pd.DataFrame())
+    monkeypatch.setattr(analysis, "run_interaction_analysis", lambda *a: pd.DataFrame())
+    analysis.run_full_analysis(site.screening, site.root, ScreenConfig())
+    assert seen["crystal"] == run.extracted_ligands
+
+
+def test_screen_site_option_resolves_to_the_site_dir(monkeypatch, tmp_path):
+    from click.testing import CliRunner
+
+    from qpocket.arms.screen import campaign
+    from qpocket.cli import cli
+    from qpocket.io import layout
+
+    run = layout.create(str(tmp_path), "RUN")
+    layout.site_workspace(run, "site_01")
+    pd.DataFrame({"site_id": ["site_01"]}).to_csv(run.sites / "sites.csv", index=False)
+    seen = []
+    monkeypatch.setattr(campaign, "analyze", lambda workdir, config_path, **o: seen.append(workdir) or workdir)
+    ok = CliRunner().invoke(cli, ["screen", "analyze", "--workdir", str(run.root), "--site", "site_01"])
+    assert ok.exit_code == 0 and seen == [str(run.sites / "site_01")]
+    bad = CliRunner().invoke(cli, ["screen", "analyze", "--workdir", str(run.root), "--site", "site_09"])
+    assert bad.exit_code != 0 and "unknown site 'site_09'; known: site_01" in bad.output and len(seen) == 1
+    direct = CliRunner().invoke(cli, ["screen", "analyze", "--workdir", str(run.sites / "site_01")])
+    assert direct.exit_code == 0 and seen[-1] == str(run.sites / "site_01")

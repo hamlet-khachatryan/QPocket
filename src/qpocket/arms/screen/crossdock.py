@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional
 
@@ -19,10 +20,12 @@ from qpocket.io import layout
 from qpocket.screen_config import ScreenConfig, load_screen_config, validate_screen_config
 
 CROSSDOCK_DIR = "crossdock"
+#: Inside the task folder: the clustering output the docking was prepared from.
+REPRESENTATIVES_USED = "representatives_used"
 
 
-def _representatives(ws) -> List[str]:
-    reps = pd.read_csv(ws.metadata / "selected_representatives.csv")
+def _representatives(folder: Path) -> List[str]:
+    reps = pd.read_csv(folder / "selected_representatives.csv")
     column = "pdb_id" if "pdb_id" in reps.columns else reps.columns[0]
     return [str(v) for v in reps[column]]
 
@@ -108,11 +111,32 @@ def _write_runners(folder: Path, n_jobs: int, cfg: ScreenConfig) -> str:
             f"cd {shlex.quote(str(folder))} && qpocket screen run-local docking_jobs.csv --workers 0   # this machine")
 
 
-def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> ScreeningPlan:
-    """Build the cross-docking task folder for a finished run.
+def _snapshot_representatives(ws, folder: Path) -> Optional[str]:
+    """Copy the site's clustering output into the task folder, so a later re-cluster leaves this docking alone.
 
     Args:
-        run_dir: Run root.
+        ws: The run or site.
+        folder: The task folder.
+
+    Returns:
+        The clustering mode that chose the representatives, or None when it is not recorded.
+    """
+    used = folder / REPRESENTATIVES_USED
+    used.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ws.metadata / "selected_representatives.csv", used)
+    params = ws.metadata / "clustering_params.json"
+    if not params.exists():
+        (used / params.name).unlink(missing_ok=True)
+        return None
+    shutil.copy2(params, used)
+    return json.loads(params.read_text(encoding="utf-8")).get("mode")
+
+
+def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> ScreeningPlan:
+    """Build the cross-docking task folder for a finished run or one of its sites.
+
+    Args:
+        run_dir: Run root or site directory.
         config_path: screen_config.yaml, or None for the defaults.
         **overrides: Config overrides.
 
@@ -126,7 +150,8 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
     ws = layout.workspace(Path(run_dir).resolve())
     folder = ws.screening / CROSSDOCK_DIR
     with start_action(action_type="crossdock_prepare", run=str(ws.root)):
-        rep_ids = _representatives(ws)
+        clustering_mode = _snapshot_representatives(ws, folder)
+        rep_ids = _representatives(folder / REPRESENTATIVES_USED)
         cleaned = pd.read_csv(ws.metadata / "master.csv").set_index("pdb_id")["cleaned_file"].to_dict()
         receptors = {}
         for rep in rep_ids:
@@ -141,6 +166,7 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
         box = shared_box(ws, list(receptors), cfg.crossdock.box_mode, cfg.crossdock.box_padding)
         (folder / "box.json").write_text(json.dumps({"mode": cfg.crossdock.box_mode,
                                                       "padding": cfg.crossdock.box_padding,
+                                                      "clustering_mode": clustering_mode,
                                                       **{k: float(v) for k, v in box.items()}}, indent=2),
                                          encoding="utf-8")
         (folder / "engines.json").write_text(json.dumps(dict(cfg.docking.custom_engines or {}), indent=2),
@@ -221,7 +247,7 @@ def analyze(run_dir, config_path: Optional[str] = None, **overrides) -> Crossdoc
     """Score a finished cross-docking campaign.
 
     Args:
-        run_dir: Run root.
+        run_dir: Run root or site directory.
         config_path: screen_config.yaml, or None for the defaults.
         **overrides: Config overrides.
 
@@ -234,6 +260,9 @@ def analyze(run_dir, config_path: Optional[str] = None, **overrides) -> Crossdoc
     folder = layout.workspace(Path(run_dir).resolve()).screening / CROSSDOCK_DIR
     with start_action(action_type="crossdock_analyze", folder=str(folder)):
         jobs = pd.read_csv(folder / "docking_jobs.csv", dtype={"engine": str})
+        used = folder / REPRESENTATIVES_USED
+        if used.exists():  # folders prepared before the snapshot existed keep every job
+            jobs = jobs[jobs["representative"].astype(str).isin(_representatives(used))]
         actives = pd.read_csv(folder / "ligands.csv", keep_default_na=False)
         poses = pose_table(folder, jobs, actives)
         pairs = pair_table(poses, cfg.analysis.rmsd_threshold, cfg.analysis.top_k)
