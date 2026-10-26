@@ -142,10 +142,34 @@ listed here; see `sites.keep_ligands`.
 ```yaml
 sites:
   min_heavy_atoms: 6
-  link_cutoff: 4.0
-  box_padding: 4.0
   keep_ligands: []          # buffers/cryoprotectants to treat as ligands in this run
+  min_cavity_points: 50
+  cavity_overlap: 0.5
+  min_structure_fraction: 0.05
+  ligand_fraction: 0.5
+  box_padding: 0.0
 ```
+
+Sites are built from CavFind cavities, never cut or cropped:
+
+1. Cavities with at least `min_cavity_points` points are candidates; each gets
+   a box (its points' extent plus half the grid spacing per face).
+2. Candidates are grouped so that every pair in a group has box IoU ≥
+   `cavity_overlap`; groups whose median boxes overlap by the same IoU merge.
+3. A cavity belongs to every site whose box it overlaps by ≥ `cavity_overlap`,
+   so one cavity can be in two neighbouring sites.
+4. A ligand belongs to every site whose box, padded by `box_padding`, holds ≥
+   `ligand_fraction` of its heavy atoms.
+5. A site is kept when its cavities come from ≥ `min_structure_fraction` of the
+   structures, or when it holds any ligand. Sites are named `S<rank>-<residue>`
+   (e.g. `S1-H21`): rank by number of structures, residue nearest the centre.
+6. A structure at a site is holo (cavity and ligand) or apo (cavity only); its
+   cloud is its own member cavities' points. A ligand that is in no site where
+   its structure has a cavity is a CavFind miss, listed in
+   `sites/cavfind_misses.csv` and never analysed.
+
+`reference.pocket_definition` and `reference.interaction_padding` do not affect
+site clouds.
 
 Crystallisation additives are never ligands: glycerol, ethylene glycol, the
 PEGs, MPD, the propanediols, small alcohols, DMSO and DMF, and the common

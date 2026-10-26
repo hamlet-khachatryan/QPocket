@@ -10,11 +10,14 @@ reference:
   pocket_definition: "Solvent"       # "Interactions" or "Solvent"
   interaction_padding: 5.0   # Padding around interacting residues (Å) — used when pocket_definition == "Interactions"
 
-sites:                        # Every ligand-occupied binding site is discovered
+sites:                        # Sites are built from CavFind cavities; ligands are assigned to them
   min_heavy_atoms: 6          # Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites
-  link_cutoff: 4.0            # Ligands closer than this (Å, any heavy atoms) join one site
-  box_padding: 4.0            # Padding (Å) around the union of a site's ligands
   keep_ligands: []            # Buffers/cryoprotectants (e.g. CIT) to treat as ligands in this run; never list them as cofactors
+  min_cavity_points: 50       # Smaller CavFind cavities never form or join a site
+  cavity_overlap: 0.5         # Box IoU two cavities (or two sites) need to be grouped, in (0, 1]
+  min_structure_fraction: 0.05  # Share of structures a site without ligands needs to be kept
+  ligand_fraction: 0.5        # Share of a ligand's heavy atoms inside a site box to belong to it
+  box_padding: 0.0            # Padding (Å) on every face of a site box when assigning ligands
 
 fragment_screen:
   input_type: "csv"           # "csv" or "paths"

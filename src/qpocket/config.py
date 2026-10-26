@@ -316,15 +316,21 @@ class SitesConfig:
 
     Attributes:
         min_heavy_atoms: Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites.
-        link_cutoff: Distance (A) between any heavy atoms of two ligands under which they join one site.
-        box_padding: Padding (A) added around the union of a site's ligands when boxing the site.
         keep_ligands: Residue names treated as ligands although they are buffers or cryoprotectants.
+        min_cavity_points: CavFind cavities with fewer points never form or join a site.
+        cavity_overlap: Box IoU two cavities, or two sites, need to be grouped.
+        min_structure_fraction: Share of structures a site without ligands needs to be kept.
+        ligand_fraction: Share of a ligand's heavy atoms inside a site box for the ligand to belong to it.
+        box_padding: Padding (A) on every face of a site box when assigning ligands.
     """
 
     min_heavy_atoms: int = 6
-    link_cutoff: float = 4.0
-    box_padding: float = 4.0
     keep_ligands: List[str] = field(default_factory=list)
+    min_cavity_points: int = 50
+    cavity_overlap: float = 0.5
+    min_structure_fraction: float = 0.05
+    ligand_fraction: float = 0.5
+    box_padding: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -388,6 +394,8 @@ LEGACY_KEYS: Dict[str, Optional[str]] = {
     "reference.ligand_chain_id": None,
     "reference.pocket_mode": None,
     "reference.bounding_box": None,
+    # Replaced by cavity-defined sites: cavities, not linked ligands, define a site.
+    "sites.link_cutoff": None,
     # Site runs write no pre-crop cloud, so there is nothing left to save.
     "io.save_intermediate": None,
     # The SLURM stages were rebuilt around sites. featurize, collect and distance
@@ -585,8 +593,13 @@ def validate_config(cfg: "QPocketConfig") -> None:
     sites = cfg.sites
     if sites.min_heavy_atoms < 1:
         raise ValueError(f"sites.min_heavy_atoms must be >= 1, got: {sites.min_heavy_atoms}")
-    if sites.link_cutoff <= 0:
-        raise ValueError(f"sites.link_cutoff must be > 0, got: {sites.link_cutoff}")
+    for key in ("cavity_overlap", "ligand_fraction"):
+        if not 0 < getattr(sites, key) <= 1:
+            raise ValueError(f"sites.{key} must be in (0, 1], got: {getattr(sites, key)}")
+    if not 0 <= sites.min_structure_fraction <= 1:
+        raise ValueError(f"sites.min_structure_fraction must be in [0, 1], got: {sites.min_structure_fraction}")
+    if sites.min_cavity_points < 1:
+        raise ValueError(f"sites.min_cavity_points must be >= 1, got: {sites.min_cavity_points}")
     if sites.box_padding < 0:
         raise ValueError(f"sites.box_padding must be >= 0, got: {sites.box_padding}")
     if isinstance(sites.keep_ligands, str) or not all(isinstance(n, str) for n in sites.keep_ligands):

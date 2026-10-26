@@ -190,7 +190,7 @@ def test_an_obsolete_slurm_stage_names_its_successors():
 
 def test_sites_defaults():
     s = QPocketConfig().sites
-    assert (s.min_heavy_atoms, s.link_cutoff, s.box_padding) == (6, 4.0, 4.0)
+    assert (s.min_heavy_atoms, s.cavity_overlap, s.box_padding) == (6, 0.5, 0.0)
 
 
 def test_save_intermediate_is_obsolete(tmp_path):
@@ -255,3 +255,10 @@ def test_an_explicit_k_means_count(tmp_path):
     assert (cfg.distance.clustering.chem.criterion, cfg.distance.clustering.chem.k) == ("count", 3)
     cfg = load_qpocket_config(overrides=["reference.pdb_id=1ABC", "distance.clustering.shape.k=4"])
     assert (cfg.distance.clustering.shape.criterion, cfg.distance.clustering.shape.k) == ("count", 4)
+
+
+def test_an_old_link_cutoff_loads_and_is_dropped(tmp_path):
+    path = tmp_path / "old.yaml"
+    path.write_text("mode: pdb_query\nreference:\n  pdb_id: 1ABC\nsites:\n  link_cutoff: 4.0\n")
+    cfg = load_qpocket_config(config_path=str(path))
+    assert not hasattr(cfg.sites, "link_cutoff")

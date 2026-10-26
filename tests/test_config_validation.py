@@ -382,7 +382,7 @@ def test_compute_defaults_and_validation():
         validate_config(cfg)
 
 
-@pytest.mark.parametrize("key,value", [("link_cutoff", 0.0), ("box_padding", -1.0), ("min_heavy_atoms", 0)])
+@pytest.mark.parametrize("key,value", [("box_padding", -1.0), ("min_heavy_atoms", 0)])
 def test_sites_validation(key, value):
     from qpocket.config import QPocketConfig
     base = evolve(QPocketConfig(), "reference.pdb_id", "1ABC")
@@ -440,3 +440,23 @@ def test_keep_ligands_must_be_a_list():
     cfg = evolve(make_config(mode="pdb_query"), "sites.keep_ligands", "CIT")
     with pytest.raises(ValueError, match="sites.keep_ligands"):
         validate_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Cavity-defined sites
+# ---------------------------------------------------------------------------
+
+def test_site_defaults():
+    s = make_config(mode="pdb_query").sites
+    assert (s.min_cavity_points, s.cavity_overlap, s.min_structure_fraction,
+            s.ligand_fraction, s.box_padding) == (50, 0.5, 0.05, 0.5, 0.0)
+    assert not hasattr(s, "link_cutoff")
+
+
+@pytest.mark.parametrize("key,value", [("cavity_overlap", 0.0), ("cavity_overlap", 1.5),
+                                       ("ligand_fraction", 0.0), ("ligand_fraction", 1.1),
+                                       ("min_structure_fraction", -0.1), ("min_structure_fraction", 1.1),
+                                       ("min_cavity_points", 0), ("box_padding", -1.0)])
+def test_site_parameter_ranges(key, value):
+    with pytest.raises(ValueError, match=f"sites.{key}"):
+        validate_config(evolve(make_config(mode="pdb_query"), f"sites.{key}", value))
