@@ -135,13 +135,23 @@ def _features(csv_path: Path) -> np.ndarray:
     """Raw feature columns of a featurised point table, in its row order.
 
     Args:
-        csv_path: ``featurized.csv``.
+        csv_path: ``featurized.csv``; ``binding_site.csv`` sits beside it.
 
     Returns:
         (N, D) features without the x, y, z columns.
+
+    Raises:
+        ValueError: If the table has no feature columns or its points are not the cloud's.
     """
-    df = pd.read_csv(csv_path).drop(columns=["x", "y", "z"])
-    return df.to_numpy(dtype=float)
+    table = pd.read_csv(csv_path)
+    _, cloud = tables.read_point_table(csv_path.with_name("binding_site.csv"))
+    name = csv_path.parent.name
+    if table.shape[1] <= 3:
+        raise ValueError(f"{name}: featurized.csv has no feature columns")
+    points = table[["x", "y", "z"]].to_numpy(dtype=float)
+    if points.shape != cloud.shape or not np.allclose(points, cloud):
+        raise ValueError(f"{name}: featurized.csv is not binding_site.csv's points in the same order")
+    return table.drop(columns=["x", "y", "z"]).to_numpy(dtype=float)
 
 
 def data_processing_spectral(
@@ -160,7 +170,7 @@ def data_processing_spectral(
         Mapping from pocket ID to ``(eigenvalues, spectral_feature_vector)``.
 
     Raises:
-        ValueError: If a pocket's ``featurized.csv`` row count differs from its geodesic.
+        ValueError: If a pocket's ``featurized.csv`` does not match its cloud or geodesic.
     """
     with start_action(
         action_type="data_processing_spectral",
@@ -174,6 +184,8 @@ def data_processing_spectral(
                 pid = p.parent.name if p.name == "geospectral_cache.npz" else p.stem
                 D = cache.load_geodesic(p)
                 F = _features(p.with_name("featurized.csv"))
+            except ValueError:
+                raise
             except Exception as e:
                 log_message(
                     message_type="load_error",

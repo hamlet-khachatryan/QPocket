@@ -198,7 +198,8 @@ def test_compute_spectral_fingerprint_symmetric_d_geo():
 # ---------------------------------------------------------------------------
 
 
-def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0, n_feat_rows: int = None) -> Path:
+def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0, n_feat_rows: int = None,
+               permute: bool = False) -> Path:
     """Write a geodesic cache at ``path`` and the ``featurized.csv`` beside it."""
     rng = np.random.default_rng(seed)
     coords = rng.uniform(0, 5, (n, 3))
@@ -210,7 +211,13 @@ def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0, n_feat_r
     weights = np.ones(n) / n
     np.savez_compressed(path, D_geo=D, weights=weights)
     feats = pd.DataFrame(F[: n_feat_rows or n], columns=[f"f{i}" for i in range(k_feat)])
-    feats.insert(0, "z", 0.0), feats.insert(0, "y", 0.0), feats.insert(0, "x", 0.0)
+    cloud = pd.DataFrame(coords, columns=list("xyz"))
+    cloud.to_csv(path.with_name("binding_site.csv"), index=False)
+    feats = pd.concat([cloud.iloc[: n_feat_rows or n], feats], axis=1)
+    if permute:
+        feats[list("xyz")] = coords[::-1]
+    if k_feat == 0:
+        feats = cloud.iloc[: n_feat_rows or n]
     feats.to_csv(path.with_name("featurized.csv"), index=False)
     return path
 
@@ -224,6 +231,20 @@ def test_feature_rows_must_match(tmp_path):
     p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1, n_feat_rows=7)
     cfg = evolve(make_config(), "distance.parallel_jobs", 1)
     with pytest.raises(ValueError):
+        data_processing_spectral(cfg, [p1])
+
+
+def test_features_must_belong_to_the_cloud(tmp_path):
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1, permute=True)
+    cfg = evolve(make_config(), "distance.parallel_jobs", 1)
+    with pytest.raises(ValueError, match="a"):
+        data_processing_spectral(cfg, [p1])
+
+
+def test_featurized_csv_needs_feature_columns(tmp_path):
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1, k_feat=0)
+    cfg = evolve(make_config(), "distance.parallel_jobs", 1)
+    with pytest.raises(ValueError, match="no feature"):
         data_processing_spectral(cfg, [p1])
 
 
