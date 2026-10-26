@@ -281,7 +281,11 @@ def _repoint(site_dir: Path) -> None:
         site_dir: The site folder, under its new name.
     """
     for path in (site_dir / "metadata").rglob("*.csv"):
-        if not path.stat().st_size or "pocket_file" not in pd.read_csv(path, nrows=0).columns:
+        try:
+            columns = pd.read_csv(path, nrows=0).columns
+        except pd.errors.EmptyDataError:  # an empty table (no header at all) holds no paths
+            continue
+        if "pocket_file" not in columns:
             continue
         table = pd.read_csv(path, dtype=str, keep_default_na=False)
         # pocket_file is <site>/pockets/<pdb_id>/<file>; crossdock files hold folder-relative paths only.

@@ -198,6 +198,7 @@ def test_repoint_skips_empty_tables(tmp_path):
     site = tmp_path / "S2-Y1"
     (site / "metadata").mkdir(parents=True)
     (site / "metadata" / "failures.csv").write_text("")
+    (site / "metadata" / "binding_pocket_utilization.csv").write_text("\n")
     pd.DataFrame({"pocket_file": [str(tmp_path / "S1-Y1" / "pockets" / "P1" / "binding_site.csv")]}).to_csv(
         site / "metadata" / "clustering_metadata.csv", index=False)
     _repoint(site)
