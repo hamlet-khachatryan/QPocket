@@ -68,7 +68,7 @@ def test_shape_then_featurise_then_two_stage(tmp_path, monkeypatch, fake_feature
     root = _finished_run(tmp_path, monkeypatch)
     status = steps.site_status(root, "site_01")
     assert status == {"clouds": True, "geodesics": True, "shape_clustered": False, "featurised": False,
-                      "two_stage": False, "crossdock": False}
+                      "two_stage": False, "crossdock": False, "n_featurised": 0, "n_clouds": 3}
 
     steps.shape_cluster_site(root, "site_01")
     status = steps.site_status(root, "site_01")
@@ -82,6 +82,16 @@ def test_shape_then_featurise_then_two_stage(tmp_path, monkeypatch, fake_feature
     status = steps.site_status(root, "site_01")
     assert status["two_stage"] and status["shape_clustered"] and not status["crossdock"]
     assert list((root / "sites" / "site_01" / "metadata" / "clustering_history").iterdir())
+
+
+def test_one_failed_featurisation_still_allows_two_stage(tmp_path, monkeypatch, fake_features):
+    root = _finished_run(tmp_path, monkeypatch)
+    steps.featurize_site(root, "site_01")
+    (root / "sites" / "site_01" / "pockets" / "P2" / "featurized.csv").unlink()
+    status = steps.site_status(root, "site_01")
+    assert not status["featurised"] and (status["n_featurised"], status["n_clouds"]) == (2, 3)
+    steps.two_stage_site(root, "site_01")
+    assert steps.site_status(root, "site_01")["two_stage"]
 
 
 def test_two_stage_before_featurise_raises(tmp_path, monkeypatch):

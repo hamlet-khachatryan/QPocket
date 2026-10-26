@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -248,7 +248,7 @@ def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
     return table
 
 
-def site_status(run_dir: Path, site_id: str) -> Dict[str, bool]:
+def site_status(run_dir: Path, site_id: str) -> Dict[str, Union[bool, int]]:
     """Which steps a site has been through, read from its files.
 
     Args:
@@ -257,7 +257,8 @@ def site_status(run_dir: Path, site_id: str) -> Dict[str, bool]:
 
     Returns:
         ``clouds, geodesics, shape_clustered, featurised, two_stage, crossdock`` to whether it is done;
-        shape_clustered means any clustering, two_stage a two-stage or single one over featurised pockets.
+        shape_clustered means any clustering, two_stage a two-stage or single one over featurised pockets,
+        featurised that every cloud is. ``n_featurised`` and ``n_clouds`` count the featurised and all clouds.
 
     Raises:
         SiteError: If the directory is not a run or the site is not in sites.csv.
@@ -266,11 +267,14 @@ def site_status(run_dir: Path, site_id: str) -> Dict[str, bool]:
     clouds = list(ws.pockets.glob("*/binding_site.csv"))
     params = ws.metadata / "clustering_params.json"
     mode = json.loads(params.read_text(encoding="utf-8")).get("mode") if params.exists() else None
+    n_featurised = sum(c.with_name("featurized.csv").exists() for c in clouds)
     return {
         "clouds": bool(clouds),
         "geodesics": bool(clouds) and all(c.with_name("geospectral_cache.npz").exists() for c in clouds),
         "shape_clustered": params.exists(),
-        "featurised": bool(clouds) and all(c.with_name("featurized.csv").exists() for c in clouds),
+        "featurised": bool(clouds) and n_featurised == len(clouds),
         "two_stage": mode in ("two_stage", "single") and (ws.metadata / "feature_distance_matrix.csv").exists(),
         "crossdock": (ws.screening / "crossdock" / "docking_jobs.csv").exists(),
+        "n_featurised": n_featurised,
+        "n_clouds": len(clouds),
     }

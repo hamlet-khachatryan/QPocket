@@ -225,10 +225,12 @@ def _(get_site_steps, mo, qsites, run_dir, site_dir):
     _no_clouds = " (needs clouds)" if not site_steps["clouds"] else ""
     shape_button = mo.ui.run_button(label="Shape clustering" + _no_clouds, disabled=bool(_no_clouds))
     featurise_button = mo.ui.run_button(label="Featurise" + _no_clouds, disabled=bool(_no_clouds))
+    # two_stage_site's own precondition: two featurised pockets, not every cloud.
     two_stage_button = mo.ui.run_button(
-        label="Two-stage clustering" if site_steps["featurised"] else "Two-stage clustering (needs Featurise)",
-        disabled=not site_steps["featurised"])
-    _done = " · ".join(f"{name.replace('_', ' ')} {'✓' if ok else '—'}" for name, ok in site_steps.items())
+        label=f"Two-stage clustering ({site_steps['n_featurised']}/{site_steps['n_clouds']} featurised)",
+        disabled=site_steps["n_featurised"] < 2)
+    _done = " · ".join(f"{name.replace('_', ' ')} {'✓' if ok else '—'}"
+                       for name, ok in site_steps.items() if isinstance(ok, bool))
     _commands = "\n".join([
         f"qpocket site shape {run_dir} --site {_sid}",
         f"qpocket site featurize {run_dir} --site {_sid}",
