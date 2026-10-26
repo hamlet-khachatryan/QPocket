@@ -58,3 +58,8 @@ def test_site_workspace_keeps_run_structures(tmp_path):
 def test_layout_version_is_3(tmp_path):
     ws = layout.create(str(tmp_path), "run")
     assert layout.read_run_record(ws.root)["layout_version"] == 3
+
+
+def test_run_inside_a_directory_named_sites_is_not_a_site(tmp_path):
+    ws = layout.create(str(tmp_path / "sites"), "1ABC")
+    assert ws.structures == ws.root / "structures" and layout.run_root(ws) == ws.root

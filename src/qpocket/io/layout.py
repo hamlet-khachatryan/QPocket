@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import NamedTuple, Optional, Union
@@ -60,13 +61,16 @@ def workspace(root: Union[str, Path]) -> Workspace:
         Its Workspace; a site shares the run's structures and owns its own pockets and screening.
     """
     root = Path(root)
-    run = root.parent.parent if root.parent.name == "sites" else root
+    # A site is <run>/sites/site_NN of a recorded run; a run merely living in a "sites" folder is not.
+    is_site = (root.parent.name == "sites" and re.fullmatch(r"site_\d+", root.name) is not None
+               and (root.parent.parent / "metadata" / RUN_RECORD).is_file())
+    run = root.parent.parent if is_site else root
     structures = run / "structures"
     screening = root / "screening"
     return Workspace(root, structures, structures / "original", structures / "aligned",
                      structures / "cleaned", structures / "extracted_ligands", root / "pockets",
                      root / "metadata", screening, screening / "decoys", screening / "actives",
-                     run / "sites" if run == root else root.parent, structures / "cavities")
+                     run / "sites", structures / "cavities")
 
 
 def run_root(ws: Workspace) -> Path:
