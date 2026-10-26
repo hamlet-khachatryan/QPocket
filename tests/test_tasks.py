@@ -206,10 +206,10 @@ def test_featurize_skips_a_structure_that_already_has_a_sidecar(cfg, dirs, manif
     assert (layout.parts_dir(dirs) / "1ABC.json").exists()
 
 
-def test_geodesic_refuses_a_pocket_that_was_never_featurised(cfg, dirs, tmp_path):
+def test_geodesic_refuses_a_structure_without_a_pocket(cfg, dirs, tmp_path):
     path = tmp_path / "geodesic.txt"
     path.write_text("1ABC\n")
-    with pytest.raises(TaskError, match="not featurised"):
+    with pytest.raises(TaskError, match="has no pocket"):
         run_task("geodesic", cfg, dirs, manifest=path, index=0)
 
 
@@ -218,8 +218,7 @@ def test_geodesic_builds_a_cache_for_a_real_pocket(cfg, dirs, tmp_path):
     pocket.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(0)
     points = rng.random((40, 3)) * 3.0
-    pd.DataFrame({"x": points[:, 0], "y": points[:, 1], "z": points[:, 2],
-                  "apbs": 0.0, "cp": 0.0}).to_csv(pocket / "featurized.csv", index=False)
+    pd.DataFrame({"x": points[:, 0], "y": points[:, 1], "z": points[:, 2]}).to_csv(pocket / "binding_site.csv", index=False)
     path = tmp_path / "geodesic.txt"
     path.write_text("1ABC\n")
     run_task("geodesic", cfg, dirs, manifest=path, index=0)

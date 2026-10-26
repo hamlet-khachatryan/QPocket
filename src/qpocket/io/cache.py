@@ -1,26 +1,23 @@
 """On-disk caches: geodesic matrices and fitted scalers."""
 from pathlib import Path
-from typing import Tuple
-
 import numpy as np
 
 from qpocket.types import Scaler
 
 
-def save_geodesic(path: Path, d_geo: np.ndarray, features: np.ndarray,
+def save_geodesic(path: Path, d_geo: np.ndarray,
                   source_hash: str = "", radius: float = float("nan")) -> None:
-    """Write a pocket's geodesic matrix and raw features, with what they came from.
+    """Write a pocket's geodesic matrix, with what it came from.
 
     Args:
         path: Target .npz file.
         d_geo: (N, N) geodesic matrix.
-        features: (N, D) raw features.
-        source_hash: sha256 of the featurized.csv they were computed from.
+        source_hash: sha256 of the binding_site.csv it was computed from.
         radius: Neighbour radius used.
     """
     n_points = len(d_geo)
     weights = np.ones(n_points) / n_points  # kept for readers of older caches
-    np.savez_compressed(path, D_geo=d_geo, features=features, weights=weights,
+    np.savez_compressed(path, D_geo=d_geo, weights=weights,
                         source_hash=np.array(source_hash), radius=np.array(radius))
 
 
@@ -29,7 +26,7 @@ def is_current(path: Path, source_hash: str, radius: float) -> bool:
 
     Args:
         path: Cache .npz.
-        source_hash: sha256 of the current featurized.csv.
+        source_hash: sha256 of the current binding_site.csv.
         radius: Neighbour radius wanted.
 
     Returns:
@@ -43,17 +40,17 @@ def is_current(path: Path, source_hash: str, radius: float) -> bool:
         return False
 
 
-def load_geodesic(path: Path) -> Tuple[np.ndarray, np.ndarray]:
+def load_geodesic(path: Path) -> np.ndarray:
     """Read a geodesic cache.
 
     Args:
         path: .npz written by save_geodesic.
 
     Returns:
-        (geodesic matrix, raw features).
+        The (N, N) geodesic matrix; features of older caches are ignored.
     """
     with np.load(path) as data:
-        return data["D_geo"], data["features"]
+        return data["D_geo"]
 
 
 def save_scaler(path: Path, scaler: Scaler) -> None:

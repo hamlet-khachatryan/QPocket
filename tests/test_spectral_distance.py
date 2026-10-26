@@ -85,7 +85,7 @@ def test_compute_geodesic_npz_has_expected_keys(tmp_path):
     cache = compute_geodesic(csv_path, neighbor_radius=3.0)
     with np.load(cache) as d:
         assert "D_geo" in d
-        assert "features" in d
+        assert "features" not in d
         assert "weights" in d
 
 
@@ -198,7 +198,8 @@ def test_compute_spectral_fingerprint_symmetric_d_geo():
 # ---------------------------------------------------------------------------
 
 
-def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0) -> Path:
+def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0, n_feat_rows: int = None) -> Path:
+    """Write a geodesic cache at ``path`` and the ``featurized.csv`` beside it."""
     rng = np.random.default_rng(seed)
     coords = rng.uniform(0, 5, (n, 3))
     from scipy.spatial.distance import squareform, pdist
@@ -207,13 +208,36 @@ def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0) -> Path:
         D /= D.max()
     F = rng.standard_normal((n, k_feat))
     weights = np.ones(n) / n
-    np.savez_compressed(path, D_geo=D, features=F, weights=weights)
+    np.savez_compressed(path, D_geo=D, weights=weights)
+    feats = pd.DataFrame(F[: n_feat_rows or n], columns=[f"f{i}" for i in range(k_feat)])
+    feats.insert(0, "z", 0.0), feats.insert(0, "y", 0.0), feats.insert(0, "x", 0.0)
+    feats.to_csv(path.with_name("featurized.csv"), index=False)
     return path
 
 
+def _pocket_dir(root: Path, name: str) -> Path:
+    (root / name).mkdir()
+    return root / name
+
+
+def test_feature_rows_must_match(tmp_path):
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1, n_feat_rows=7)
+    cfg = evolve(make_config(), "distance.parallel_jobs", 1)
+    with pytest.raises(ValueError):
+        data_processing_spectral(cfg, [p1])
+
+
+def test_geodesic_from_unfeaturised_cloud(tmp_path):
+    from qpocket.io.cache import load_geodesic
+    rng = np.random.default_rng(1)
+    csv = tmp_path / "binding_site.csv"
+    pd.DataFrame(rng.random((20, 3)) * 4, columns=list("xyz")).to_csv(csv, index=False)
+    assert load_geodesic(compute_geodesic(csv, 2.0)).shape == (20, 20)
+
+
 def test_data_processing_spectral_runs(tmp_path):
-    p1 = _write_npz(tmp_path / "a.npz", seed=1)
-    p2 = _write_npz(tmp_path / "b.npz", seed=2)
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1)
+    p2 = _write_npz(_pocket_dir(tmp_path, "b") / "geospectral_cache.npz", seed=2)
 
     cfg = make_config()
     cfg = evolve(cfg, "distance.global_k", 5)
@@ -228,8 +252,8 @@ def test_data_processing_spectral_runs(tmp_path):
 
 def test_data_processing_spectral_scaler_applied(tmp_path):
     """Features should be clipped to ±5 after standardisation."""
-    p1 = _write_npz(tmp_path / "a.npz", seed=10)
-    p2 = _write_npz(tmp_path / "b.npz", seed=20)
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=10)
+    p2 = _write_npz(_pocket_dir(tmp_path, "b") / "geospectral_cache.npz", seed=20)
 
     cfg = make_config()
     cfg = evolve(cfg, "distance.global_k", 3)

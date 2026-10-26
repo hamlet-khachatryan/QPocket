@@ -13,6 +13,7 @@ from qpocket.config import QPocketConfig
 from qpocket.core import spectral as sp
 from qpocket.core.spectral import pad_or_truncate  # noqa: F401  (re-exported)
 from qpocket.io import cache, tables
+from qpocket.io.layout import Workspace
 from qpocket.types import Fingerprint
 from qpocket.pipelines.clustering import assign_clusters, write_clustering
 
@@ -33,17 +34,17 @@ def _workers(cfg: QPocketConfig) -> int:
 
 
 def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path, None]:
-    """Builds a geodesic distance matrix from a featurised pocket CSV.
+    """Builds a geodesic distance matrix from a pocket point cloud.
 
     Args:
-        csv_path: Path to a featurised pocket CSV with columns x, y, z, …features….
+        csv_path: Path to a ``binding_site.csv`` with columns x, y, z (any other columns are ignored).
         neighbor_radius: Maximum Euclidean distance (Å) to connect two points in the neighbourhood graph.
 
     Returns:
         Path to the cached ``geospectral_cache.npz`` file, or ``None`` if the point cloud has fewer than 5 points or an error occurs.
     """
     cache_path = csv_path.with_name("geospectral_cache.npz")
-    # Keyed on content: the Interactions pass rewrites featurized.csv after a first geodesic.
+    # Keyed on the point cloud alone, so featurising it afterwards leaves the cache current.
     source_hash = tables.file_hash(csv_path) if csv_path.exists() else ""
     if cache_path.exists() and cache.is_current(cache_path, source_hash, neighbor_radius):
         return cache_path
@@ -58,19 +59,17 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
 
             # Use explicit column names — never rely on positional order.
             coord_cols = ["x", "y", "z"]
-            feature_cols = [c for c in df.columns if c not in coord_cols]
 
             if not all(c in df.columns for c in coord_cols):
                 log_message(
                     message_type="error",
                     stage="compute_geodesic",
                     pocket=csv_path.parent.name,
-                    error="featurized.csv missing x/y/z columns",
+                    error="point cloud missing x/y/z columns",
                 )
                 return None
 
             coords = df[coord_cols].to_numpy(dtype=float)
-            features = df[feature_cols].to_numpy(dtype=float) if feature_cols else np.empty((len(df), 0))
             n_points = len(coords)
 
             if n_points < 5:
@@ -92,7 +91,7 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
                 )
                 return None
 
-            cache.save_geodesic(cache_path, D_geo, features, source_hash, neighbor_radius)
+            cache.save_geodesic(cache_path, D_geo, source_hash, neighbor_radius)
 
             log_message(
                 message_type="geodesic_complete",
@@ -132,6 +131,19 @@ def compute_spectral_fingerprint(
         return sp.spectral_fingerprint(D_geo, F, global_k, sigma)
 
 
+def _features(csv_path: Path) -> np.ndarray:
+    """Raw feature columns of a featurised point table, in its row order.
+
+    Args:
+        csv_path: ``featurized.csv``.
+
+    Returns:
+        (N, D) features without the x, y, z columns.
+    """
+    df = pd.read_csv(csv_path).drop(columns=["x", "y", "z"])
+    return df.to_numpy(dtype=float)
+
+
 def data_processing_spectral(
     cfg: QPocketConfig,
     geo_dist_paths: List[Path],
@@ -141,11 +153,14 @@ def data_processing_spectral(
 
     Args:
         cfg: QPocket configuration.
-        geo_dist_paths: List of paths to ``geospectral_cache.npz`` files.
+        geo_dist_paths: List of paths to ``geospectral_cache.npz`` files, each beside its ``featurized.csv``.
         scaler_out: Where to save the fitted scaler, if given.
 
     Returns:
         Mapping from pocket ID to ``(eigenvalues, spectral_feature_vector)``.
+
+    Raises:
+        ValueError: If a pocket's ``featurized.csv`` row count differs from its geodesic.
     """
     with start_action(
         action_type="data_processing_spectral",
@@ -157,10 +172,8 @@ def data_processing_spectral(
         for p in geo_dist_paths:
             try:
                 pid = p.parent.name if p.name == "geospectral_cache.npz" else p.stem
-                D, F = cache.load_geodesic(p)
-                if D.shape[0] <= cfg.distance.max_points:
-                    raw_data[pid] = (D, F)
-                    valid_ids.append(pid)
+                D = cache.load_geodesic(p)
+                F = _features(p.with_name("featurized.csv"))
             except Exception as e:
                 log_message(
                     message_type="load_error",
@@ -168,6 +181,12 @@ def data_processing_spectral(
                     file=str(p),
                     error=str(e),
                 )
+                continue
+            if len(F) != len(D):
+                raise ValueError(f"{pid}: featurized.csv has {len(F)} rows, the geodesic has {len(D)}")
+            if D.shape[0] <= cfg.distance.max_points:
+                raw_data[pid] = (D, F)
+                valid_ids.append(pid)
 
         log_message(
             message_type="loaded_pockets",
@@ -217,20 +236,22 @@ def data_processing_spectral(
         return processed_cache
 
 
-def pocket_manifest(cfg: QPocketConfig, dirs: Dict[str, Path]) -> Tuple[List[Path], List[str]]:
-    """Featurised pocket files named by ``master.csv``, and their PDB IDs.
+def pocket_manifest(cfg: QPocketConfig, ws: Workspace,
+                    require_features: bool) -> Tuple[List[Path], List[str]]:
+    """Pocket point clouds named by ``master.csv``, and their PDB IDs.
 
     Args:
         cfg: QPocket configuration.
-        dirs: Directory map from ``layout.create``.
+        ws: The run's workspace.
+        require_features: Keep only pockets that also have a ``featurized.csv``.
 
     Returns:
-        Parallel lists of ``featurized.csv`` paths and PDB IDs, in master order.
+        Parallel lists of ``binding_site.csv`` paths and PDB IDs, in master order.
 
     Raises:
         FileNotFoundError: If ``master.csv`` is absent.
     """
-    master_csv_path = dirs["metadata"] / "master.csv"
+    master_csv_path = ws["metadata"] / "master.csv"
     if not master_csv_path.exists():
         raise FileNotFoundError(f"master.csv not found at {master_csv_path}")
 
@@ -240,8 +261,8 @@ def pocket_manifest(cfg: QPocketConfig, dirs: Dict[str, Path]) -> Tuple[List[Pat
 
     for _, row in df_master.iterrows():
         pdb_id = row["pdb_id"]
-        candidate = dirs["pockets"] / pdb_id / "featurized.csv"
-        if candidate.exists():
+        candidate = ws["pockets"] / pdb_id / "binding_site.csv"
+        if candidate.exists() and (not require_features or candidate.with_name("featurized.csv").exists()):
             pocket_files.append(candidate)
             pdb_ids.append(pdb_id)
 
@@ -293,7 +314,7 @@ def compute_spectral_distance_matrix(
     with start_action(action_type="compute_spectral_distance_matrix"):
 
         try:
-            pocket_files, pdb_ids = pocket_manifest(cfg, dirs)
+            pocket_files, pdb_ids = pocket_manifest(cfg, dirs, require_features=True)
         except FileNotFoundError as exc:
             log_message(
                 message_type="error",

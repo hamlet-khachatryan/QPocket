@@ -193,14 +193,12 @@ def task_geodesic(
         force: Delete an existing cache and rebuild it.
 
     Raises:
-        TaskError: If the pocket has no ``featurized.csv``.
+        TaskError: If the pocket has no ``binding_site.csv``.
     """
     with start_action(action_type="task_geodesic", pdb_id=pdb_id):
-        pocket_csv = dirs["pockets"] / pdb_id / "featurized.csv"
+        pocket_csv = dirs["pockets"] / pdb_id / "binding_site.csv"
         if not pocket_csv.exists():
-            raise TaskError(
-                f"{pocket_csv} not found — {pdb_id} was not featurised successfully"
-            )
+            raise TaskError(f"{pocket_csv} not found — {pdb_id} has no pocket")
 
         cache = pocket_csv.with_name("geospectral_cache.npz")
         if force and cache.exists():
@@ -253,7 +251,7 @@ def manifest_ids(cfg: QPocketConfig, dirs: Dict[str, Path], stage: str) -> List[
         return [p.stem for p in layout.structure_files(dirs)]
     csv_path = dirs["metadata"] / "master.csv"
     if stage == "geodesic" and csv_path.exists():
-        _, ids = pocket_manifest(cfg, dirs)
+        _, ids = pocket_manifest(cfg, dirs, require_features=False)
         return ids
     if csv_path.exists():
         return [str(v) for v in pd.read_csv(csv_path)["pdb_id"]]
