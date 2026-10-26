@@ -54,7 +54,7 @@ def collect_docking_scores(
 
 
 def compute_rmsd_mcs(docked_mol: Chem.Mol, crystal_mol: Chem.Mol) -> Optional[float]:
-    """Compute RMSD between a docked pose and the crystal ligand using MCS.
+    """Compute in-place, symmetry-aware RMSD (no superposition) of a pose vs. the crystal ligand via MCS.
 
     Args:
         docked_mol: RDKit Mol from a docked pose.
@@ -76,15 +76,14 @@ def compute_rmsd_mcs(docked_mol: Chem.Mol, crystal_mol: Chem.Mol) -> Optional[fl
             return None
 
         query = Chem.MolFromSmarts(mcs.smartsString)
-        docked_match = docked_mol.GetSubstructMatch(query)
+        docked_matches = docked_mol.GetSubstructMatches(query, uniquify=False, maxMatches=1000)
         crystal_match = crystal_mol.GetSubstructMatch(query)
 
-        if not docked_match or not crystal_match:
+        if not docked_matches or not crystal_match:
             return None
 
-        atom_map = list(zip(docked_match, crystal_match))
-        rmsd = rdMolAlign.GetBestRMS(docked_mol, crystal_mol, map=[atom_map])
-        return rmsd
+        atom_maps = [list(zip(m, crystal_match)) for m in docked_matches]
+        return rdMolAlign.CalcRMS(docked_mol, crystal_mol, map=atom_maps)
 
     except Exception as e:
         log_message(message_type="error", stage="compute_rmsd_mcs", error=str(e))
