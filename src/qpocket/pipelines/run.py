@@ -82,7 +82,6 @@ def run_qpocket_pipeline(
     qpocket_config_path: Optional[Union[str, Path]] = None,
     pdb_id: Optional[str] = None,
     chain_id: Optional[str] = None,
-    ligand_id: Optional[str] = None,
     workdir: Optional[Union[str, Path]] = None,
     sequence_identity: Optional[float] = None,
     resolution_limit: Optional[float] = None,
@@ -114,7 +113,6 @@ def run_qpocket_pipeline(
         qpocket_config_path: Path to a YAML configuration file.
         pdb_id: Reference PDB identifier.
         chain_id: Chain in the reference structure.
-        ligand_id: Ligand residue name in the reference structure.
         workdir: Working directory for all output files.
         sequence_identity: Minimum sequence identity for PDB query.
         resolution_limit: Maximum resolution limit (Å) for PDB query.
@@ -146,8 +144,6 @@ def run_qpocket_pipeline(
         overrides.append(f"reference.pdb_id={pdb_id.upper()}")
     if chain_id:
         overrides.append(f"reference.chain_id={chain_id.upper()}")
-    if ligand_id:
-        overrides.append(f"reference.ligand_id={ligand_id.upper()}")
     if workdir:
         overrides.append(f"paths.workdir={workdir}")
     if sequence_identity is not None:

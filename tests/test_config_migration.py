@@ -20,7 +20,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from qpocket.config import load_qpocket_config
-from qpocket.config import LEGACY_KEYS, fill_defaults, migrate_legacy
+from qpocket.config import LEGACY_KEYS, QPocketConfig, fill_defaults, migrate_legacy
 
 
 def migrate(payload):
@@ -159,3 +159,17 @@ def test_an_existing_config_still_loads(path):
 def test_an_existing_config_reports_at_most_one_rename_notice(path):
     _, notices = load_with_notices(path)
     assert len([n for n in notices if "renamed" in n]) <= 1
+
+
+def test_ligand_id_is_obsolete():
+    cfg = OmegaConf.create({"reference": {"ligand_id": "LKQ", "ligand_chain_id": "A",
+                                          "pocket_mode": "bounding_box"}})
+    warnings = migrate_legacy(cfg)
+    assert any("reference.ligand_id is obsolete" in w for w in warnings)
+    assert any("reference.pocket_mode is obsolete" in w for w in warnings)
+
+
+def test_sites_defaults():
+    s = QPocketConfig().sites
+    assert (s.min_heavy_atoms, s.link_cutoff, s.box_padding) == (6, 4.0, 4.0)
+    assert s.include == [] and s.exclude == []

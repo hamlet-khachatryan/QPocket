@@ -75,18 +75,6 @@ def test_pocket_definition_reaches_the_pipeline(captured):
     assert "reference.pocket_definition=Interactions" in overrides_of(captured)
 
 
-def test_pocket_mode_reaches_the_pipeline(captured):
-    invoke("--pocket-mode", "bounding_box")
-    assert "reference.pocket_mode=bounding_box" in overrides_of(captured)
-
-
-def test_bounding_box_reaches_the_pipeline(captured):
-    invoke("--bbox-center", "1", "--bbox-center", "2", "--bbox-center", "3",
-           "--bbox-dimensions", "10", "--bbox-dimensions", "10",
-           "--bbox-dimensions", "10")
-    assert any("bounding_box.center" in o for o in overrides_of(captured))
-
-
 def test_interaction_padding_reaches_the_pipeline(captured):
     invoke("--interaction-padding", "7.5")
     assert "reference.interaction_padding=7.5" in overrides_of(captured)
@@ -142,8 +130,6 @@ def test_validate_accepts_a_fragment_screen_config(tmp_path):
         "  input_type: paths\n"
         f"  reference_path: {ref}\n"
         "  structure_paths: [/a.pdb]\n"
-        "reference:\n"
-        "  ligand_id: LIG\n"
     )
     result = CliRunner().invoke(cli, ["validate", str(config)])
     assert result.exit_code == 0, result.output
@@ -160,7 +146,6 @@ def config_file(tmp_path):
         "reference:\n"
         "  chain_id: 'B'\n"
         "  pocket_definition: 'Interactions'\n"
-        "  ligand_id: 'LIG'\n"
         "  interaction_padding: 9.0\n"
         "fragment_screen:\n"
         "  input_type: paths\n"

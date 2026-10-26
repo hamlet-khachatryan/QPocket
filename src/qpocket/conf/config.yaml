@@ -7,15 +7,15 @@ reference:
   pdb_id: null                # e.g. "6HP0"
   chain_id: "A"
   auxiliary_chain_ids: null   # e.g. ["B"] — chains forming the interface with chain_id
-  ligand_id: null             # e.g. "LKQ"
-  ligand_chain_id: null       # Chain containing the ligand; null = auto-search all chains
-                              # (required when ligand sits between a separate chain)
   pocket_definition: "Solvent"       # "Interactions" or "Solvent"
-  pocket_mode: "cavity_detection"    # "cavity_detection" or "bounding_box"
-  bounding_box:               # Used only when pocket_mode is "bounding_box"
-    center: null              # [x, y, z] coordinates
-    dimensions: null          # [dx, dy, dz] dimensions
   interaction_padding: 5.0   # Padding around interacting residues (Å) — used when pocket_definition == "Interactions"
+
+sites:                        # Every ligand-occupied binding site is discovered
+  min_heavy_atoms: 6          # Smaller HETATM groups are not ligands
+  include: []                 # Residue names always kept as ligands
+  exclude: []                 # Residue names never kept as ligands
+  link_cutoff: 4.0            # Distance (Å) under which two ligand atoms count as one ligand
+  box_padding: 4.0            # Padding (Å) around a ligand when boxing its site
 
 fragment_screen:
   input_type: "csv"           # "csv" or "paths"

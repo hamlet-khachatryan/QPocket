@@ -273,24 +273,8 @@ def reference_pocket_box(pdb_path: Path, pdb_id: str, ref_centroid: np.ndarray,
 def _reference_pocket(cfg: QPocketConfig, ws: layout.Workspace,
                       record: Structure) -> Tuple[Optional[np.ndarray], Optional[Tuple[np.ndarray, np.ndarray]]]:
     centroid: Optional[np.ndarray] = None
-    aligned = Path(record.aligned_file)
-    if cfg.reference.pocket_mode == "cavity_detection" and cfg.reference.ligand_id and aligned.exists():
-        # An explicit ligand_chain_id wins; interface mode searches every chain, because
-        # a homodimer ligand often sits in a third one; otherwise the primary chain.
-        if cfg.reference.ligand_chain_id:
-            search_chains: Optional[List[str]] = [cfg.reference.ligand_chain_id]
-        elif cfg.reference.auxiliary_chain_ids:
-            search_chains = None
-        else:
-            search_chains = [cfg.reference.chain_id]
-        centroid = ligand_centroid(aligned, cfg.reference.ligand_id, search_chains=search_chains)
-        if centroid is None:
-            log_message(message_type="error", stage="build_extraction_context",
-                        error="could not compute reference ligand centroid")
-            raise ValueError(f"reference ligand {cfg.reference.ligand_id!r} not found in "
-                             f"{aligned.name}, so the reference pocket cannot be located")
     box = None
-    if cfg.reference.pocket_mode == "cavity_detection" and centroid is not None:
+    if centroid is not None:
         box = reference_pocket_box(Path(record.cleaned_file), record.pdb_id, centroid,
                                    ws.pockets / record.pdb_id, cfg.io.save_intermediate, 1.0)
         if box is not None:

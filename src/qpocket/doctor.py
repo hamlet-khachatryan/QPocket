@@ -144,7 +144,7 @@ def required_tools(cfg) -> Dict[str, Tuple[str, ...]]:
     """
     from qpocket.core.ports import CHARGES, CONTACTS, FEATURES, POCKETS
 
-    pocket = "box" if cfg.reference.pocket_mode == "bounding_box" else "cavities"
+    pocket = "cavities"
     plugins = (list(FEATURES.resolve(list(cfg.features.enabled))) + [CHARGES.get(cfg.charges.use)]
                + list(CONTACTS.resolve(list(cfg.contacts.use))) + [POCKETS.get(pocket)])
     needs: Dict[str, Tuple[str, ...]] = {}

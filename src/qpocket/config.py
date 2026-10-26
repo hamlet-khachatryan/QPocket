@@ -19,13 +19,6 @@ from qpocket.io.layout import STRUCTURE_SUFFIXES  # noqa: F401  (re-exported)
 
 
 @dataclass(frozen=True)
-class BoundingBoxParams:
-    """Parameters for user-defined bounding box pocket definition."""
-    center: Optional[List[float]] = None
-    dimensions: Optional[List[float]] = None
-
-
-@dataclass(frozen=True)
 class ReferenceParams:
     """Parameters for the reference structure."""
     pdb_id: Optional[str] = None
@@ -34,14 +27,7 @@ class ReferenceParams:
     # binding-site interface together with chain_id.  Chain IDs may differ across
     # structures — matching is done by sequence identity + spatial proximity.
     auxiliary_chain_ids: Optional[List[str]] = None
-    ligand_id: Optional[str] = None
-    # Chain that contains the reference ligand.  When null the pipeline searches
-    # chain_id first; if the ligand is not found there it falls back to searching
-    # all chains (required for homodimers where the ligand sits in a third chain).
-    ligand_chain_id: Optional[str] = None
     pocket_definition: Literal["Interactions", "Solvent"] = "Solvent"
-    pocket_mode: Literal["cavity_detection", "bounding_box"] = "cavity_detection"
-    bounding_box: BoundingBoxParams = field(default_factory=BoundingBoxParams)
     # Padding (Å) around interacting residues when pocket_definition == "Interactions".
     # Applies in both pdb_query and fragment_screen modes.
     interaction_padding: float = 5.0
@@ -331,10 +317,30 @@ class ComputeConfig:
 
 
 @dataclass(frozen=True)
+class SitesConfig:
+    """Which ligand-occupied binding sites to discover.
+
+    Attributes:
+        min_heavy_atoms: Smaller HETATM groups are not ligands.
+        include: Residue names always kept as ligands.
+        exclude: Residue names never kept as ligands.
+        link_cutoff: Distance (A) under which two ligand atoms count as one ligand.
+        box_padding: Padding (A) around a ligand when boxing its site.
+    """
+
+    min_heavy_atoms: int = 6
+    include: List[str] = field(default_factory=list)
+    exclude: List[str] = field(default_factory=list)
+    link_cutoff: float = 4.0
+    box_padding: float = 4.0
+
+
+@dataclass(frozen=True)
 class QPocketConfig:
     """Aggregated configuration for QPocket pipeline execution."""
     mode: Literal["pdb_query", "fragment_screen"] = "pdb_query"
     reference: ReferenceParams = field(default_factory=ReferenceParams)
+    sites: SitesConfig = field(default_factory=SitesConfig)
     paths: PathConfig = field(default_factory=PathConfig)
     fragment_screen: FragmentScreenParams = field(default_factory=FragmentScreenParams)
     pdb_query: QueryParams = field(default_factory=QueryParams)
@@ -385,6 +391,11 @@ LEGACY_KEYS: Dict[str, Optional[str]] = {
     # experiments/USP7.yaml. There is nowhere to send it.
     "spectral_distance_matrix.max_clusters": None,
     "slurm.enabled": None,
+    # Replaced by binding-site discovery: every ligand-occupied site is found.
+    "reference.ligand_id": None,
+    "reference.ligand_chain_id": None,
+    "reference.pocket_mode": None,
+    "reference.bounding_box": None,
 }
 
 
@@ -528,6 +539,14 @@ def validate_config(cfg: "QPocketConfig") -> None:
     Raises:
         ValueError: with a descriptive message on the first failed rule.
     """
+    sites = cfg.sites
+    if sites.min_heavy_atoms < 1:
+        raise ValueError(f"sites.min_heavy_atoms must be >= 1, got: {sites.min_heavy_atoms}")
+    if sites.link_cutoff <= 0:
+        raise ValueError(f"sites.link_cutoff must be > 0, got: {sites.link_cutoff}")
+    if sites.box_padding < 0:
+        raise ValueError(f"sites.box_padding must be >= 0, got: {sites.box_padding}")
+
     # --- ReferenceParams ---
     ref = cfg.reference
 
@@ -549,42 +568,9 @@ def validate_config(cfg: "QPocketConfig") -> None:
             f"reference.chain_id must be 1-2 uppercase letters, got: {ref.chain_id!r}"
         )
 
-    if ref.pocket_mode == "bounding_box":
-        bb = ref.bounding_box
-        if bb.center is None or bb.dimensions is None:
-            raise ValueError(
-                "reference.bounding_box.center and .dimensions must both be set "
-                "when pocket_mode == 'bounding_box'"
-            )
-        if len(bb.center) != 3:
-            raise ValueError(
-                f"reference.bounding_box.center must be a list of 3 values, got {len(bb.center)}"
-            )
-        if len(bb.dimensions) != 3:
-            raise ValueError(
-                f"reference.bounding_box.dimensions must be a list of 3 values, got {len(bb.dimensions)}"
-            )
-        if any(d <= 0 for d in bb.dimensions):
-            raise ValueError(
-                "All values in reference.bounding_box.dimensions must be positive"
-            )
-
-    if ref.pocket_definition == "Interactions" and ref.pocket_mode == "cavity_detection":
-        if not ref.ligand_id:
-            raise ValueError(
-                "reference.ligand_id must be provided when pocket_definition == 'Interactions' "
-                "and pocket_mode == 'cavity_detection'"
-            )
-
     if ref.interaction_padding <= 0:
         raise ValueError(
             f"reference.interaction_padding must be > 0, got: {ref.interaction_padding}"
-        )
-
-    if ref.ligand_chain_id is not None and not re.fullmatch(r"[A-Z]{1,2}", ref.ligand_chain_id):
-        raise ValueError(
-            f"reference.ligand_chain_id must be 1–2 uppercase letters, "
-            f"got: {ref.ligand_chain_id!r}"
         )
 
     if ref.auxiliary_chain_ids is not None:

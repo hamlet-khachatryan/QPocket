@@ -41,13 +41,7 @@ reference:
   pdb_id: null                # required in pdb_query mode; 4 characters, e.g. "6HP0"
   chain_id: "A"
   auxiliary_chain_ids: null   # e.g. ["B"] — chains forming an interface with chain_id
-  ligand_id: null             # e.g. "LKQ" — marks the pocket
-  ligand_chain_id: null       # null = search every chain (homodimers keep the ligand elsewhere)
   pocket_definition: "Solvent"       # "Interactions" or "Solvent"
-  pocket_mode: "cavity_detection"    # "cavity_detection" or "bounding_box"
-  bounding_box:               # only when pocket_mode is "bounding_box"
-    center: null              # [x, y, z]
-    dimensions: null          # [dx, dy, dz]
   interaction_padding: 5.0    # Å around contacting residues, when pocket_definition
                               # is "Interactions"
 ```
@@ -55,9 +49,19 @@ reference:
 | setting | meaning |
 |---|---|
 | `pocket_definition: Solvent` | The whole solvent-accessible cavity. |
-| `pocket_definition: Interactions` | The cavity cropped to residues the ligand actually contacts. Requires `ligand_id`. |
-| `pocket_mode: cavity_detection` | Find the cavity geometrically, ranked against the reference pocket. |
-| `pocket_mode: bounding_box` | Use the box given in `bounding_box`. |
+| `pocket_definition: Interactions` | The cavity cropped to residues the ligand actually contacts. |
+
+```yaml
+sites:                        # every ligand-occupied binding site is discovered
+  min_heavy_atoms: 6          # smaller HETATM groups are not ligands
+  include: []                 # residue names always kept as ligands
+  exclude: []                 # residue names never kept as ligands
+  link_cutoff: 4.0            # Å under which two ligand atoms count as one ligand
+  box_padding: 4.0            # Å around a ligand when boxing its site
+```
+
+`reference.ligand_id`, `ligand_chain_id`, `pocket_mode` and `bounding_box` are
+obsolete: they are ignored with a warning.
 
 In `fragment_screen` mode `pdb_id` is optional: the run is named after the
 reference filename instead.

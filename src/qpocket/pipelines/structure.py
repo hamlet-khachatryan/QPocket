@@ -85,14 +85,7 @@ def structure_params(cfg: QPocketConfig) -> StructureParams:
     Returns:
         Frozen parameters.
     """
-    if cfg.reference.pocket_mode == "bounding_box":
-        box = cfg.reference.bounding_box
-        pocket_name = "box"
-        pocket_params = POCKETS.get("box").params(
-            center=tuple(box.center) if box.center else None,
-            dimensions=tuple(box.dimensions) if box.dimensions else None)
-    else:
-        pocket_name, pocket_params = "cavities", POCKETS.get("cavities").params()
+    pocket_name, pocket_params = "cavities", POCKETS.get("cavities").params()
     prolif_params = CONTACTS.get("prolif").params(
         enabled=tuple(cfg.interactions.enabled), parameters=cfg.interactions.parameters)
     return StructureParams(
@@ -100,7 +93,7 @@ def structure_params(cfg: QPocketConfig) -> StructureParams:
         pocket=pocket_name, pocket_params=pocket_params,
         pocket_definition=cfg.reference.pocket_definition,
         interaction_padding=cfg.reference.interaction_padding,
-        reference_ligand_id=cfg.reference.ligand_id or None,
+        reference_ligand_id=None,
         save_intermediate=bool(cfg.io.save_intermediate),
         features=tuple(cfg.features.enabled), feature_options=dict(cfg.features.options or {}),
         charges=cfg.charges.use,
