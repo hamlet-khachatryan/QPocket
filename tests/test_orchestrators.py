@@ -83,8 +83,10 @@ def test_rerun_keeps_site_results(tmp_path, monkeypatch):
     marker = root / "sites" / "site_01" / "metadata" / "keep.txt"
     marker.write_text("x")
     cloud = root / "sites" / "site_01" / "pockets" / "APO1" / "binding_site.csv"
+    text, mtime = cloud.read_text(), cloud.stat().st_mtime_ns
     run.run(cfg)
-    assert marker.exists() and cloud.exists()
+    assert marker.read_text() == "x"
+    assert cloud.read_text() == text and cloud.stat().st_mtime_ns == mtime
 
 
 def test_rerun_reconciles_renumbered_sites(tmp_path, monkeypatch):

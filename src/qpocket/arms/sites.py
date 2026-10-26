@@ -14,12 +14,15 @@ from qpocket.core.result import Failure, guarded
 from qpocket.core.types import Structure
 from qpocket.io import layout
 from qpocket.io.layout import Workspace
+from qpocket.io.tables import file_hash
 from qpocket.pipelines import parallel, structure
 from qpocket.pipelines.clustering import archive_clustering, cluster_shape_only, write_clustering
 from qpocket.pipelines.distance import compute_shape_matrix, compute_spectral_distance_matrix, pocket_manifest
 from qpocket.pipelines.sites import extract_all_sites, read_sites, sync_sites
 from qpocket.pipelines.tasks import TaskError, resolve_pdb_id
 
+#: Beside featurized.csv: the sha256 of the binding_site.csv it was built from.
+SOURCE = "featurized.source"
 NEEDS_FEATURES = "two-stage clustering needs featurised pockets; run Featurise first"
 
 
@@ -60,8 +63,15 @@ def _site(run_dir: Path, site_id: str) -> Tuple[QPocketConfig, Workspace]:
 
 def _featurize_pocket(cfg: QPocketConfig, job: Tuple[Path, str]) -> str:
     csv_path, cleaned_file = job
+    done, source = csv_path.with_name("featurized.csv"), csv_path.with_name(SOURCE)
+    # Gone first, so a failed featurisation leaves no earlier result that looks current.
+    done.unlink(missing_ok=True)
+    source.unlink(missing_ok=True)
+    cloud_hash = file_hash(csv_path)
     structure.featurize(csv_path, Path(cleaned_file), cfg.features.enabled, cfg.charges.use, cfg.features.options,
                         plugin_params(CHARGES, cfg.charges.use, cfg.charges.options))
+    if done.exists():
+        source.write_text(cloud_hash + "\n", encoding="utf-8")
     return csv_path.parent.name
 
 
@@ -74,8 +84,9 @@ def _cleaned(ws: Workspace) -> Dict[str, str]:
 
 
 def _stale(cloud: Path) -> bool:
-    done = cloud.with_name("featurized.csv")
-    return not done.exists() or done.stat().st_mtime < cloud.stat().st_mtime
+    source = cloud.with_name(SOURCE)
+    return not (cloud.with_name("featurized.csv").exists() and source.exists()) \
+        or source.read_text(encoding="utf-8").strip() != file_hash(cloud)
 
 
 def featurize_site(run_dir: Path, site_id: str, workers: Optional[int] = None) -> List[str]:
@@ -87,7 +98,7 @@ def featurize_site(run_dir: Path, site_id: str, workers: Optional[int] = None) -
         workers: Parallel workers; the run's ``compute.workers`` when None.
 
     Returns:
-        The pdb_ids featurised now; a cloud whose featurized.csv is newer than it is skipped.
+        The pdb_ids featurised now; a cloud whose featurized.csv was built from its current content is skipped.
 
     Raises:
         SiteError: If the directory is not a run or the site is not in sites.csv.
@@ -112,7 +123,7 @@ def featurize_pocket(run_dir: Path, site_id: str, pdb_id: str, force: bool = Fal
         run_dir: The run directory.
         site_id: The site.
         pdb_id: The structure whose cloud to featurise.
-        force: Featurise even when featurized.csv is newer than the cloud.
+        force: Featurise even when featurized.csv was built from the cloud's current content.
 
     Returns:
         Whether the cloud was featurised now; False when it was already up to date.

@@ -366,7 +366,9 @@ def extract_site(cfg: QPocketConfig, ws: Workspace, site: pd.Series, record: Str
             return out._replace(protein_state=state)
         pocket_dir.mkdir(parents=True, exist_ok=True)
         csv_path = pocket_dir / "binding_site.csv"
-        pd.DataFrame(cloud, columns=["x", "y", "z"]).to_csv(csv_path, index=False)
+        text = pd.DataFrame(cloud, columns=["x", "y", "z"]).to_csv(index=False)
+        if not csv_path.is_file() or csv_path.read_text(encoding="utf-8") != text:  # an unchanged cloud keeps its mtime
+            csv_path.write_text(text, encoding="utf-8")
         compute_geodesic(csv_path, cfg.distance.geo_graph_neighbor_radius)
         return out._replace(protein_state=state, potential=_potential(record.cleaned_file, cloud))
 

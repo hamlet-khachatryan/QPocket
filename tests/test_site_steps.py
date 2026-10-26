@@ -96,8 +96,20 @@ def test_featurise_skips_done(tmp_path, monkeypatch, fake_features):
     assert steps.featurize_site(root, "site_01") == []
     cloud = root / "sites" / "site_01" / "pockets" / "P2" / "binding_site.csv"
     later = cloud.with_name("featurized.csv").stat().st_mtime + 10
-    os.utime(cloud, (later, later))
+    os.utime(cloud, (later, later))  # a touched but unchanged cloud is still featurised
+    assert steps.featurize_site(root, "site_01") == []
+    cloud.write_text(cloud.read_text() + "0.0,0.0,0.0\n")
     assert steps.featurize_site(root, "site_01") == ["P2"]
+
+
+def test_rerun_leaves_features_current(tmp_path, monkeypatch, fake_features):
+    root = _finished_run(tmp_path, monkeypatch)
+    steps.featurize_site(root, "site_01")
+    cloud = root / "sites" / "site_01" / "pockets" / "P2" / "binding_site.csv"
+    before = cloud.stat().st_mtime_ns
+    run.run(load_run_config(root))
+    assert cloud.stat().st_mtime_ns == before
+    assert steps.featurize_site(root, "site_01") == []
 
 
 def test_regroup_keeps_unchanged_site(tmp_path, monkeypatch):
