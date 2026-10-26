@@ -49,6 +49,15 @@ qpocket screen analyze --workdir runs/7KG6 --site site_01
 Writes scores, pose RMSD, enrichment metrics (virtual-screening mode) and
 interaction statistics to `sites/site_01/screening/analysis/`.
 
+## Pose RMSD
+
+Pose RMSD is measured in place: the docked pose is compared with the crystal
+ligand over the atoms of their maximum common substructure, with no
+superposition and no best fit, so a pose that sits in the wrong place scores a
+large RMSD. Symmetric ligands are scored against their best equivalent atom
+matching. Values for misplaced poses are therefore larger than in earlier
+versions, which fitted the pose onto the ligand first.
+
 ## Cross-docking
 
 Cross-docking snapshots the representatives it used, under

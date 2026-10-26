@@ -252,17 +252,16 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
     shape:                  # stage one: shape distances
       method: "hierarchical"  # "hierarchical", "kmedoids" or "affinity"
       linkage: "average"      # average | complete | single | weighted
-      k: null                 # null = choose by silhouette over k_range
-      k_range: [2, 10]        # inclusive, lower bound >= 2
-      criterion: "count"      # "count" (k / silhouette) or "threshold"
-      threshold: null         # cut height when criterion is "threshold"
+      k: null                 # cluster count; needed only for criterion "count"
+      criterion: "relative"   # "relative", "threshold" or "count"
+      threshold: 0.5          # relative: fraction (0, 1]; threshold: absolute height
 
     chem:                   # stage two: within each shape cluster
-      method: "kmedoids"
+      method: "hierarchical"
+      linkage: "average"
       k: null
-      k_range: [2, 6]
-      criterion: "count"      # "threshold" needs method "hierarchical"
-      threshold: null
+      criterion: "relative"
+      threshold: 0.5
 
     single:                 # only when mode == "single"
       method: "affinity"
@@ -276,14 +275,29 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
 | `single` | Cluster the blended matrix in one pass. Reproduces pre-0.2 runs exactly. |
 
 A stage ignores the settings its method does not use: `linkage` applies only to
-`hierarchical`, `k`/`k_range` only to `hierarchical` and `kmedoids`, and
+`hierarchical`, `k` only to `hierarchical` and `kmedoids`, and
 `damping`/`max_iter` only to `affinity`. They are still accepted, so switching
 method needs no other edit.
 
-`criterion: "threshold"` cuts a hierarchical stage at `threshold` instead of
-choosing a cluster count; for the chemistry stage the cut applies within each shape
-cluster. Pick the heights by eye with the sliders in the explorer notebook, or try
-them on a finished run with `qpocket recluster RUN_DIR --shape-threshold ...`.
+`criterion` says how a hierarchical stage is cut:
+
+| criterion | cut |
+|---|---|
+| `relative` (default) | at `threshold` times the height of the stage's highest merge, with `threshold` in (0, 1]. Scale-free, so `0.5` means about the same on any site. |
+| `threshold` | at the absolute height `threshold` (> 0). |
+| `count` | into exactly `k` clusters (`k >= 2`; required, there is no automatic choice). |
+
+`threshold` and `relative` need method `hierarchical`; `affinity` ignores the
+criterion. For the chemistry stage the cut applies within each shape cluster. Pick
+the cut by eye with the sliders in the explorer notebook, or try it on a finished
+run with `qpocket recluster RUN_DIR --shape-criterion relative --shape-threshold 0.5`.
+
+!!! warning "Removed: `k_range` and the silhouette choice"
+    The number of clusters is no longer chosen by silhouette. `k_range` is
+    obsolete; a config that still sets it gets a warning and the key is ignored.
+    A run saved by an older version with `k: null` and `criterion: "count"` cannot
+    be reclustered as it is: pass `--shape-criterion relative --chem-criterion
+    relative` (threshold defaults to 0.5) or an explicit `--shape-k`/`--chem-k`.
 
 ---
 

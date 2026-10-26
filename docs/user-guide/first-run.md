@@ -161,9 +161,10 @@ the one you choose.
 | Two stages | groups by shape, then splits each group by chemistry | shape cut, chemistry cut, minimum group to split |
 
 The dendrogram draws the tree being cut, with a dashed line at the height, so
-moving a slider shows you what it does. Each result reports its cluster count,
-its silhouette, and how far it sits from the clustering stored with the run
-(ARI, and how many pockets moved).
+moving a slider shows you what it does. The "Cut by" choice picks the rule:
+relative (a fraction of the tree's highest merge, the default), an absolute height,
+or a cluster count. Each result reports its cluster count and how far it sits from
+the clustering stored with the run (ARI, and how many pockets moved).
 
 Only the two-stage result can be **saved** as the run's clustering, because that
 is the form a run stores.

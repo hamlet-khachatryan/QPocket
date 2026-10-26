@@ -81,6 +81,15 @@ $$
 d(i,j) = \alpha \|\boldsymbol{\lambda}_i - \boldsymbol{\lambda}_j\| + (1-\alpha)\,\beta\,\|\mathbf{f}_i - \mathbf{f}_j\|
 $$
 
+## Clustering
+
+The default two-stage mode cuts a hierarchical (average-linkage) tree on shape,
+then another within each shape cluster on chemistry. Each cut is by default
+`relative` at 0.5: half the height of that tree's highest merge. `threshold` (an
+absolute height) and `count` (a fixed `k >= 2`) are the alternatives; see
+[Configuration](../configuration.md#distanceclustering). The cluster count is
+never chosen by silhouette.
+
 ## Clustering — Affinity Propagation
 
 Affinity Propagation is applied to the precomputed distance matrix (converted to a similarity matrix via negation).  The number of clusters is determined **automatically** — no `k` needs to be specified.
