@@ -181,6 +181,13 @@ def test_the_old_slurm_stages_load_with_a_warning(tmp_path):
         assert any(f"{key} is obsolete" in n for n in notices), key
 
 
+def test_an_obsolete_slurm_stage_names_its_successors():
+    cfg = OmegaConf.create({"slurm": {"stages": {"featurize": {"cpus": 1}}}})
+    warnings = migrate_legacy(cfg)
+    assert ("slurm.stages.featurize is obsolete; set slurm.stages.structure (per-structure chain), "
+            "slurm.stages.site_featurize (features/APBS) or slurm.stages.site_cluster instead") in warnings
+
+
 def test_sites_defaults():
     s = QPocketConfig().sites
     assert (s.min_heavy_atoms, s.link_cutoff, s.box_padding) == (6, 4.0, 4.0)

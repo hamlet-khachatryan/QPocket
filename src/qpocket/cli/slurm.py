@@ -91,7 +91,7 @@ def slurm_generate(config: str, workdir: Optional[str], stages: Optional[str],
     for name, paths in scripts.items():
         for path in paths:
             click.echo(f"  {path.name}")
-    click.echo(f"\n{len(pdb_ids)} structures in the array stage.")
+    click.echo(f"\n{len(pdb_ids)} {'clouds' if site else 'structures'} in the array stage.")
 
     if not submit:
         click.echo(f"\nReview them, then submit:\n  bash {driver}")

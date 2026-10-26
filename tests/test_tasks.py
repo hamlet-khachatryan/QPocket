@@ -118,6 +118,15 @@ def test_a_site_featurize_task_on_an_unknown_run_is_a_task_error(dirs, manifest)
         run_site_task("site_featurize", dirs.root, "site_01", manifest=manifest, index=0)
 
 
+def test_a_site_cluster_that_writes_no_matrix_fails_loudly(dirs, monkeypatch):
+    """two_stage_site can return without a matrix; the array chain must not read that as success."""
+    from qpocket.arms import sites
+
+    monkeypatch.setattr(sites, "two_stage_site", lambda run_dir, site_id: None)
+    with pytest.raises(TaskError, match="spectral_distance_matrix.csv"):
+        sites.run_site_task("site_cluster", dirs.root, "site_01")
+
+
 def test_apbs_is_no_longer_a_task(cfg, dirs, manifest):
     with pytest.raises(TaskError, match="unknown stage"):
         run_task("apbs", cfg, dirs, manifest=manifest, index=0)

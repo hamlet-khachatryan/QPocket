@@ -447,7 +447,12 @@ def migrate_legacy(cfg: DictConfig) -> List[str]:
         if value is None:
             continue
 
-        if replacement is None:
+        if replacement is None and legacy.startswith("slurm.stages."):
+            warnings.append(
+                f"{legacy} is obsolete; set slurm.stages.structure (per-structure chain), "
+                "slurm.stages.site_featurize (features/APBS) or slurm.stages.site_cluster instead"
+            )
+        elif replacement is None:
             warnings.append(
                 f"{legacy} is obsolete and is being ignored; remove it"
             )

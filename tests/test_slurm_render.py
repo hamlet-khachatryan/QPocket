@@ -363,6 +363,7 @@ def test_generate_with_a_site_writes_that_sites_stages(tmp_path):
     slurm = tmp_path / "1ABC" / "slurm"
     assert read_manifest(slurm / "manifests" / "site_01_site_featurize.txt") == ["1ABC"]
     assert (slurm / "submit_site_01.sh").exists()
+    assert "1 clouds in the array stage" in result.output
     status = CliRunner().invoke(cli, ["slurm", "status", "--config", str(config), "--site", "site_01"])
     assert "site_featurize" in status.output and "structure" not in status.output
 

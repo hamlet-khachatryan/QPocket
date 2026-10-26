@@ -152,6 +152,9 @@ def run_site_task(name: str, run_dir: Path, site_id: Optional[str], manifest: Op
     try:
         if name == "site_cluster":
             two_stage_site(run_dir, site_id)
+            matrix = Path(run_dir) / "sites" / site_id / "metadata" / "spectral_distance_matrix.csv"
+            if not matrix.exists():  # the distance step returns early on too few pockets
+                raise TaskError(f"clustering {site_id} wrote no {matrix}")
             return
         if manifest is None or index is None:
             raise TaskError(f"stage {name!r} needs --manifest and --index")
