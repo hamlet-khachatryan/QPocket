@@ -90,3 +90,26 @@ def test_distinct_actives_reads_ligand_file_column(tmp_path):
     pd.DataFrame({"pdb_id": ["P1"], "ligand_file": ["other.pdb"]}).to_csv(master, index=False)
     df = distinct_actives(smi, master)
     assert df.loc[0, "crystal_files"] == "lig_a.pdb;lig_b.pdb"
+
+
+def _four_columns(tmp_path):
+    smi = tmp_path / "actives.smi"
+    smi.write_text("SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCCO\tP1\tETH\tlig_a.pdb\n")
+    return smi
+
+
+def test_read_actives_skips_the_header_and_the_file_column(tmp_path):
+    from qpocket.io.screening import read_actives
+
+    df = read_actives(_four_columns(tmp_path))
+    assert df.values.tolist() == [["CCO", "P1", "ETH"]]
+
+
+def test_ligand_preparation_reads_only_the_actives(tmp_path, monkeypatch):
+    from qpocket.arms.screen import receptors
+    from qpocket.screen_config import ScreenConfig
+
+    seen = []
+    monkeypatch.setattr(receptors, "prepare_ligand_pdbqt", lambda smiles, out, *a, **k: seen.append(smiles))
+    receptors.prepare_all_ligands(tmp_path, _four_columns(tmp_path), None, ScreenConfig())
+    assert seen == ["CCO"]

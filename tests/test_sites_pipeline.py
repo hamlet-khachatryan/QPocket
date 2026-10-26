@@ -1,4 +1,6 @@
 """Site discovery: ligands from every structure grouped into sites and tabulated."""
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -157,3 +159,39 @@ def test_extract_all_sites_crops_to_contacts_and_collects_per_site(tmp_path):
     assert list(master["protein_state"]) == ["BOUND_STATE", "UNBOUND_STATE", "FAILED"]
     assert (site / "screening" / "actives.smi").read_text() == (
         f"SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCC\tP1\tLIG\t{holo.ligands[0].file}\n")
+
+
+def _interactions_cfg():
+    from dataclasses import replace
+
+    base = QPocketConfig()
+    return replace(base, reference=replace(base.reference, pocket_definition="Interactions", interaction_padding=2.5),
+                   compute=replace(base.compute, workers=1))
+
+
+def test_a_site_without_contacts_is_not_cropped(tmp_path):
+    cfg = _interactions_cfg()
+    ws = layout.create(str(tmp_path), "run")
+    lig = _lig(tmp_path, "P1", "LIG", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 3, 0, 0)])
+    holo = _structure(tmp_path, "P1", [lig], contacts=())
+    discover_sites(cfg, ws, [holo])
+    apo = _structure(tmp_path, "APO1", state="UNBOUND_STATE")
+    extract_all_sites(cfg, ws, read_sites(ws), [holo, apo])
+    master = pd.read_csv(ws.sites / "site_01" / "metadata" / "master.csv")
+    assert list(master["protein_state"]) == ["BOUND_STATE", "UNBOUND_STATE"]
+    assert len(pd.read_csv(ws.sites / "site_01" / "pockets" / "APO1" / "binding_site.csv")) == len(INSIDE)
+
+
+def test_a_pair_that_raises_is_still_listed_at_the_site(tmp_path):
+    cfg, ws, _, holo = _site_run(tmp_path, _interactions_cfg())
+    broken = _structure(tmp_path, "BAD", state="UNBOUND_STATE")
+    Path(broken.cavities_file).write_text("not,a,cloud\n1,2,3\n")
+    extract_all_sites(cfg, ws, read_sites(ws), [holo, broken])
+    site = ws.sites / "site_01" / "metadata"
+    master = pd.read_csv(site / "master.csv").set_index("pdb_id")
+    assert list(master.index) == ["P1", "BAD"] and master.loc["BAD", "protein_state"] == "FAILED"
+    assert master.loc["BAD", "rmsd_to_ref"] == 0.5 and master.loc["BAD", "aligned_file"] == broken.aligned_file
+    assert list(pd.read_csv(site / "failures.csv")["pdb_id"]) == ["BAD"]
+    from qpocket.io import hdf5
+
+    assert list(hdf5.read_interactions(site / "observed_interactions.h5")["BAD"]) == ["no_ligand_found"]

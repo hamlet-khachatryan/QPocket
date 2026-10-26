@@ -14,7 +14,7 @@ from rdkit.Chem import AllChem
 
 from qpocket.core.ports import DECOYS
 from qpocket.core.screening import calc_descriptors, standardize_molecule
-from qpocket.io.screening import download_chembl_dataset
+from qpocket.io.screening import download_chembl_dataset, read_actives
 from qpocket.screen_config import DecoyConfig
 
 
@@ -38,9 +38,7 @@ def generate_decoys_lude(
         log_message(message_type="error", error="Actives file missing", path=str(actives_path))
         return
 
-    # actives.smi format: SMILES\tPDB_ID\tLigand_Name  (no header)
-    df_actives = pd.read_csv(actives_path, sep="\t", header=None, names=["SMILES", "PDB_ID", "Ligand_Name"],
-                             usecols=[0, 1, 2])
+    df_actives = read_actives(actives_path)
     actives_smiles = df_actives["SMILES"].tolist()
     active_ids = df_actives["PDB_ID"].tolist()
 

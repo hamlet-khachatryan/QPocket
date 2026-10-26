@@ -18,6 +18,19 @@ from qpocket.core.screening import calculate_box, pdbqt_lines_to_mol
 from qpocket.screen_config import PreparationConfig
 
 
+def read_actives(actives_smi: Path) -> pd.DataFrame:
+    """The actives of a run or site, without the crystal-file column.
+
+    Args:
+        actives_smi: screening/actives.smi (header SMILES, PDB_ID, Ligand_Name, optionally Ligand_File).
+
+    Returns:
+        SMILES, PDB_ID and Ligand_Name columns.
+    """
+    return pd.read_csv(actives_smi, sep="\t", header=0, usecols=[0, 1, 2],
+                       names=["SMILES", "PDB_ID", "Ligand_Name"], dtype=str, keep_default_na=False)
+
+
 def parse_vina_output(pdbqt_path: Path) -> Tuple[Optional[float], Optional[Chem.Mol]]:
     """Parse an AutoDock Vina output PDBQT file.
 
