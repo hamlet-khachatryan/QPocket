@@ -114,15 +114,44 @@ def test_reclustering_after_prepare_does_not_change_docking(site, monkeypatch):
     ws, _ = site
     crossdock.prepare(ws.root)
     folder = ws.screening / "crossdock"
+    assert not list(folder.glob(".representatives_used*"))  # the staging folder is gone
     pd.DataFrame({"pdb_id": ["R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
     (ws.metadata / "clustering_params.json").write_text(json.dumps({"mode": "two_stage"}))
-    seen = {}
-    monkeypatch.setattr(crossdock, "pose_table",
-                        lambda folder, jobs, actives: seen.setdefault("reps", set(jobs["representative"]))
-                        and pd.DataFrame(columns=["job_id", "representative", "active_id", "rank", "score",
-                                                  "rmsd"]))
+    jobs = pd.read_csv(folder / "docking_jobs.csv")
+    stray = jobs.iloc[[0]].assign(job_id="job_stray", representative="R9")
+    pd.concat([jobs, stray]).to_csv(folder / "docking_jobs.csv", index=False)
+    scored, logged = [], []
+
+    def fake_pose_table(folder, jobs, actives):
+        scored.extend(jobs["representative"])
+        return pd.DataFrame(columns=["job_id", "representative", "active_id", "rank", "score", "rmsd"])
+
+    def record(**fields):
+        logged.append(fields)
+
+    monkeypatch.setattr(crossdock, "pose_table", fake_pose_table)
+    monkeypatch.setattr(crossdock, "log_message", record)
     crossdock.analyze(ws.root)
-    assert seen["reps"] == {"R1", "R2"}
-    assert pd.read_csv(folder / "representatives_used" / "selected_representatives.csv")["pdb_id"].tolist() == [
-        "R1", "R2"]
+    assert sorted(scored) == ["R1", "R2"]  # the snapshot, not the re-clustered R2 alone; R9 dropped
+    assert {"message_type": "crossdock_jobs_outside_snapshot", "dropped": 1} in logged
+    used = folder / "representatives_used"
+    assert pd.read_csv(used / "selected_representatives.csv")["pdb_id"].tolist() == ["R1", "R2"]
+    assert json.loads((used / "clustering_params.json").read_text())["mode"] == "shape_only"
     assert json.loads((folder / "box.json").read_text())["clustering_mode"] == "shape_only"
+
+
+def test_a_failed_prepare_leaves_the_previous_snapshot(site, monkeypatch):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    crossdock.prepare(ws.root)
+    used = ws.screening / "crossdock" / "representatives_used"
+    pd.DataFrame({"pdb_id": ["R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("ligand preparation failed")
+
+    monkeypatch.setattr(crossdock, "prepare_ligands", broken)
+    with pytest.raises(RuntimeError):
+        crossdock.prepare(ws.root)
+    assert pd.read_csv(used / "selected_representatives.csv")["pdb_id"].tolist() == ["R1", "R2"]

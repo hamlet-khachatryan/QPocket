@@ -31,6 +31,25 @@ def read_actives(actives_smi: Path) -> pd.DataFrame:
                        names=["SMILES", "PDB_ID", "Ligand_Name"], dtype=str, keep_default_na=False)
 
 
+def active_ligand_files(actives_smi: Path) -> Dict[str, List[Path]]:
+    """Each active's crystal pose files at this run or site, keyed like its PDBQT.
+
+    Args:
+        actives_smi: screening/actives.smi.
+
+    Returns:
+        ``{PDB_ID}_{Ligand_Name}`` to its Ligand_File paths; empty when the file or the column is missing.
+    """
+    if not Path(actives_smi).exists():
+        return {}
+    rows = pd.read_csv(actives_smi, sep="\t", dtype=str, keep_default_na=False)
+    out: Dict[str, List[Path]] = {}
+    for row in rows.to_dict("records"):
+        if row.get("Ligand_File"):
+            out.setdefault(f"{row['PDB_ID']}_{row['Ligand_Name']}", []).append(Path(row["Ligand_File"]))
+    return out
+
+
 def parse_vina_output(pdbqt_path: Path) -> Tuple[Optional[float], Optional[Chem.Mol]]:
     """Parse an AutoDock Vina output PDBQT file.
 
@@ -116,8 +135,8 @@ def extract_vina_box(
     all_points = []
 
     if mode == 'ligand_based':
-        # Iterate all extracted ligands in metadata/ligands
-        ligand_files = list(dirs['ligands'].glob("*.pdb"))
+        # A site's own ligands when given; otherwise every extracted ligand of the run.
+        ligand_files = dirs.get('ligand_files') or list(dirs['ligands'].glob("*.pdb"))
         if not ligand_files:
             log_message(message_type="error", error_message="No ligands found for box calculation.")
             return

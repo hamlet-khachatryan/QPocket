@@ -119,8 +119,8 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
         # 1. Box. Known issue (spec §6): its glob of cavity files never matches.
         sio_screen.extract_vina_box(
             {"box_mode": cfg.box.mode, "padding": cfg.box.padding, "exhaustiveness": cfg.docking.exhaustiveness},
-            {"ligands": ws.extracted_ligands, "cavities": ws.pockets,
-             "screening": screening_dir},
+            {"ligands": ws.extracted_ligands, "cavities": ws.pockets, "screening": screening_dir,
+             "ligand_files": [f for files in sio_screen.active_ligand_files(actives_smi).values() for f in files]},
         )
         vina_box_txt = screening_dir / "vina_box.txt"
 
