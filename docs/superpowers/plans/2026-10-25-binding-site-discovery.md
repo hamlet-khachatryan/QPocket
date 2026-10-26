@@ -14,7 +14,7 @@
 
 - Layout version 3 (`io/layout.py` `LAYOUT_VERSION = 3`); layout-2 runs are not readable and must be re-run.
 - `reference.ligand_id`, `reference.ligand_chain_id`, `reference.pocket_mode`, `reference.bounding_box` are obsolete: warn and ignore (via `LEGACY_KEYS` → `None`).
-- A ligand: non-polymer, non-water HET residue, not in `cleaning.allowed_cofactors` (the per-run cleaning set), with ≥ `sites.min_heavy_atoms` heavy atoms. No built-in name list (`constants.HET_TO_REMOVE` is not used for sites) and no `sites.include`/`sites.exclude` (user decision 2026-10-26).
+- A ligand: non-polymer, non-water HET residue, not in `cleaning.allowed_cofactors` (the per-run cleaning set), with ≥ `sites.min_heavy_atoms` heavy atoms. Carbon-free groups (ions, SO4, PO4, NO3, …) are never ligands. No built-in name list (`constants.HET_TO_REMOVE` is not used for sites) and no `sites.include`/`sites.exclude` (user decision 2026-10-26).
 - Allowed cofactors stay in the protein and never define a site.
 - Every site seen at least once is kept.
 - Every structure gets a cloud at every site; `protein_state` per site is `BOUND_STATE` (≥1 ligand of the site) or `UNBOUND_STATE`, or `CAVITY_CLOSED` when the box holds no cavity points.

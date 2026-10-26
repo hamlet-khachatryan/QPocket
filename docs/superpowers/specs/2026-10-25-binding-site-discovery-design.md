@@ -53,7 +53,8 @@ button, so the notebook controls the order of consecutive steps.
    Otherwise one is picked automatically.
 2. **What is a ligand.** Non-polymer, non-water HET groups not kept by the
    run's cleaning set (`cleaning.allowed_cofactors`), with a minimum heavy-atom
-   count. No built-in name list and no include/exclude lists (revised by the
+   count. Carbon-free groups (ions such as Na, Cl, Zn; SO4, PO4, NO3) are
+   never sites. No built-in name list and no include/exclude lists (revised by the
    user 2026-10-26: additives that pass the size cut show up as small sites).
 3. **Grouping ligands into sites.** After alignment, two ligands belong to the
    same site if any of their heavy atoms lie within a cutoff (Å); sites are the
