@@ -1,6 +1,8 @@
 """CLI entry point for QPocket-Screen."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 
@@ -10,11 +12,14 @@ _SITE = click.option("--site", default=None,
 
 def _target(workdir: str, site: str | None) -> str:
     """The directory to screen: the workdir, or one of its sites."""
-    if not site:
-        return workdir
     from qpocket.arms.sites import SiteError, site_table
     from qpocket.io import layout
 
+    if not site:
+        if (Path(workdir) / "sites" / "sites.csv").is_file():
+            known = ", ".join(site_table(workdir)["site_id"]) or "none"
+            raise click.UsageError(f"this is a run with sites; pass --site (known: {known})")
+        return workdir
     try:
         known = list(site_table(workdir)["site_id"])
     except SiteError as exc:

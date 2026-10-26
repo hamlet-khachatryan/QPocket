@@ -191,3 +191,17 @@ def test_an_obsolete_slurm_stage_names_its_successors():
 def test_sites_defaults():
     s = QPocketConfig().sites
     assert (s.min_heavy_atoms, s.link_cutoff, s.box_padding) == (6, 4.0, 4.0)
+
+
+def test_save_intermediate_is_obsolete(tmp_path):
+    import inspect
+
+    from qpocket.config import IOConfig
+    from qpocket.pipelines.run import run_qpocket_pipeline
+
+    path = tmp_path / "old.yaml"
+    path.write_text("reference:\n  pdb_id: 1ABC\nio:\n  save_intermediate: true\n", encoding="utf-8")
+    _, notices = load_with_notices(str(path))
+    assert any("io.save_intermediate is obsolete" in n for n in notices)
+    assert not hasattr(IOConfig(), "save_intermediate")
+    assert "save_intermediate" not in inspect.signature(run_qpocket_pipeline).parameters

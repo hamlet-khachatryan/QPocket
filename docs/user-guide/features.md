@@ -41,7 +41,8 @@ Two things follow automatically:
 
 ## What a run records
 
-`metadata/features.json` names the set a run used:
+Featurising a site writes `sites/site_NN/metadata/features.json`, naming the set
+it used:
 
 ```json
 {"enabled": ["hbond", "aromatic"], "columns": ["h_donor", "h_acceptor", "aromatic"]}

@@ -60,8 +60,8 @@ reference:
 ```yaml
 sites:                        # every ligand-occupied binding site is discovered
   min_heavy_atoms: 6          # smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites
-  link_cutoff: 4.0            # Å under which two ligand atoms count as one ligand
-  box_padding: 4.0            # Å around a ligand when boxing its site
+  link_cutoff: 4.0            # ligands closer than this (Å, any heavy atoms) join one site
+  box_padding: 4.0            # Å around the union of a site's ligands
 ```
 
 `reference.ligand_id`, `ligand_chain_id`, `pocket_mode` and `bounding_box` are
@@ -138,7 +138,6 @@ cleaning:
 ```yaml
 io:
   log_format: "json"        # "json" or "text"
-  save_intermediate: false  # currently has no effect: site runs write no pre-crop cloud
   compression: "gzip"       # HDF5 compression: "gzip" or "none"
 ```
 
@@ -163,8 +162,8 @@ features:
 
 Dropping a provider drops its columns, and a set that needs no PQR skips pdb2pqr
 and APBS altogether — the fastest way to a geometry-only run. `qpocket run
---features hbond,aromatic` and `--no-apbs` set this from the command line. A run
-records what it used in `metadata/features.json`; fingerprints built from
+--features hbond,aromatic` and `--no-apbs` set this from the command line.
+Featurising a site records what it used in `sites/site_NN/metadata/features.json`; fingerprints built from
 different sets are not comparable. See [Features](user-guide/features.md).
 
 ## `interactions`

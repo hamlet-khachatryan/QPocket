@@ -117,10 +117,14 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
         actives_smi = screening_dir / "actives.smi"
 
         # 1. Box. Known issue (spec §6): its glob of cavity files never matches.
+        ligand_files = [f for files in sio_screen.active_ligand_files(actives_smi).values() for f in files]
+        if not ligand_files and (ws.root / "ligands.pdb").exists():
+            # A site whose actives carry no SMILES: its own ligands, never the run's.
+            ligand_files = [ws.root / "ligands.pdb"]
         sio_screen.extract_vina_box(
             {"box_mode": cfg.box.mode, "padding": cfg.box.padding, "exhaustiveness": cfg.docking.exhaustiveness},
             {"ligands": ws.extracted_ligands, "cavities": ws.pockets, "screening": screening_dir,
-             "ligand_files": [f for files in sio_screen.active_ligand_files(actives_smi).values() for f in files]},
+             "ligand_files": ligand_files},
         )
         vina_box_txt = screening_dir / "vina_box.txt"
 

@@ -107,24 +107,3 @@ def compute_pocket_bounding_box(
         np.max(pocket_coords, axis=0) + padding,
     )
 
-
-def compute_volumetric_overlap(
-    cavity_coords: np.ndarray,
-    bbox_min: np.ndarray,
-    bbox_max: np.ndarray,
-) -> int:
-    """Counts cavity points that fall inside a reference bounding box.
-
-    Args:
-        cavity_coords: Point cloud to test ``(N, 3)``.
-        bbox_min: Lower corner of the reference bounding box ``(3,)``.
-        bbox_max: Upper corner of the reference bounding box ``(3,)``.
-
-    Returns:
-        Integer count of points strictly inside the box.
-    """
-    inside = np.all(
-        (cavity_coords >= bbox_min) & (cavity_coords <= bbox_max),
-        axis=1,
-    )
-    return int(np.sum(inside))

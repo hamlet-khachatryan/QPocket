@@ -16,6 +16,7 @@ from qpocket.io import layout
 from qpocket.io.layout import Workspace
 from qpocket.io.tables import file_hash
 from qpocket.pipelines import parallel, structure
+from qpocket.pipelines.collect import write_feature_record
 from qpocket.pipelines.clustering import archive_clustering, cluster_shape_only, write_clustering
 from qpocket.pipelines.distance import compute_shape_matrix, compute_spectral_distance_matrix, pocket_manifest
 from qpocket.pipelines.sites import extract_all_sites, read_sites, sync_sites
@@ -107,6 +108,8 @@ def featurize_site(run_dir: Path, site_id: str, workers: Optional[int] = None) -
     cleaned = _cleaned(ws)
     clouds, _ = pocket_manifest(cfg, ws, require_features=False)
     jobs = [(p, cleaned[p.parent.name]) for p in clouds if _stale(p)]
+    if jobs:
+        write_feature_record(ws.metadata, cfg.features.enabled)
     results = parallel.run_map(
         guarded("featurize", partial(_featurize_pocket, cfg), _job_pdb), jobs,
         workers=cfg.compute.workers if workers is None else workers, backend=cfg.compute.backend,
@@ -137,6 +140,7 @@ def featurize_pocket(run_dir: Path, site_id: str, pdb_id: str, force: bool = Fal
         raise SiteError(f"{pdb_id} has no cloud at {site_id} ({cloud} not found)")
     if not (force or _stale(cloud)):
         return False
+    write_feature_record(ws.metadata, cfg.features.enabled)
     _featurize_pocket(cfg, (cloud, _cleaned(ws)[pdb_id]))
     return True
 
@@ -188,10 +192,13 @@ def shape_cluster_site(run_dir: Path, site_id: str) -> Path:
         Path of the site's clustering_metadata.csv.
 
     Raises:
-        SiteError: If the directory is not a run or the site is not in sites.csv.
+        SiteError: If the run or site is unknown, or the site has fewer than two pockets.
     """
     cfg, ws = _site(run_dir, site_id)
-    d_shape = pd.read_csv(compute_shape_matrix(cfg, ws), index_col=0)
+    try:
+        d_shape = pd.read_csv(compute_shape_matrix(cfg, ws), index_col=0)
+    except ValueError as e:  # fewer than 2 pockets: the user's to fix, not a crash
+        raise SiteError(str(e)) from e
     ids = [str(i) for i in d_shape.index]
     matrix = d_shape.to_numpy(float)
     assignment = cluster_shape_only(cfg.distance.clustering.shape, matrix)
@@ -211,7 +218,7 @@ def two_stage_site(run_dir: Path, site_id: str) -> Path:
         Path of the site's clustering_metadata.csv.
 
     Raises:
-        SiteError: If the run or site is unknown, or fewer than two of the site's pockets are featurised.
+        SiteError: If the run or site is unknown, under two pockets are featurised, or no matrix was written.
     """
     cfg, ws = _site(run_dir, site_id)
     if len(pocket_manifest(cfg, ws, require_features=True)[0]) < 2:
@@ -219,7 +226,11 @@ def two_stage_site(run_dir: Path, site_id: str) -> Path:
     if cfg.distance.clustering.mode == "shape_only":  # this step is the two-stage one, whatever the run chose
         cfg = evolve(cfg, "distance.clustering.mode", "two_stage")
     archive_clustering(ws.metadata)
-    compute_spectral_distance_matrix(cfg, ws)
+    matrix = ws.metadata / "spectral_distance_matrix.csv"
+    before = matrix.stat().st_mtime_ns if matrix.exists() else None
+    compute_spectral_distance_matrix(cfg, ws)  # returns early, writing nothing, on a failure it logs
+    if not matrix.exists() or matrix.stat().st_mtime_ns == before:
+        raise SiteError(f"clustering {site_id} wrote no {matrix}; see the run log")
     return ws.metadata / "clustering_metadata.csv"
 
 

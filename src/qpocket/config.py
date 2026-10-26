@@ -104,11 +104,9 @@ class IOConfig:
 
     Attributes:
         log_format: Eliot log serialisation format.
-        save_intermediate: When ``True`` the initial (pre-cropping) pocket point cloud is written alongside the final one.
         compression: Compression algorithm used when writing HDF5 datasets.
     """
     log_format: Literal["json", "text"] = "json"
-    save_intermediate: bool = False
     compression: Literal["gzip", "none"] = "gzip"
 
 
@@ -320,8 +318,8 @@ class SitesConfig:
 
     Attributes:
         min_heavy_atoms: Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites.
-        link_cutoff: Distance (A) under which two ligand atoms count as one ligand.
-        box_padding: Padding (A) around a ligand when boxing its site.
+        link_cutoff: Distance (A) between any heavy atoms of two ligands under which they join one site.
+        box_padding: Padding (A) added around the union of a site's ligands when boxing the site.
     """
 
     min_heavy_atoms: int = 6
@@ -390,6 +388,8 @@ LEGACY_KEYS: Dict[str, Optional[str]] = {
     "reference.ligand_chain_id": None,
     "reference.pocket_mode": None,
     "reference.bounding_box": None,
+    # Site runs write no pre-crop cloud, so there is nothing left to save.
+    "io.save_intermediate": None,
     # The SLURM stages were rebuilt around sites. featurize, collect and distance
     # have no 1:1 successor whose base default would not mask the user's value.
     "slurm.split_apbs_stage": None,

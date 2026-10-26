@@ -134,14 +134,13 @@ def collect_structures(ws: "layout.Workspace", records: Sequence[Any], failures:
 
 
 def collect_run(ws: "layout.Workspace", records: Sequence[Any], failures: Sequence[Failure],
-                features: Sequence[str], compression: str) -> None:
+                compression: str) -> None:
     """Write the master, actives and interaction tables of a site.
 
     Args:
         ws: The site.
         records: Records with pdb_id, master_row(), potential, observed and actives, in input order.
         failures: Structures that dropped out.
-        features: Feature plug-in names.
         compression: HDF5 compression.
     """
     with start_action(action_type="collect_structure_results"):
@@ -154,7 +153,6 @@ def collect_run(ws: "layout.Workspace", records: Sequence[Any], failures: Sequen
                     if smiles:
                         f.write(f"{smiles}\t{r.pdb_id}\t{name}\t{ligand_file}\n")
 
-        write_feature_record(ws.metadata, features)
         obs_h5 = ws.metadata / "observed_interactions.h5"
         pot_h5 = ws.metadata / "potential_interactions.h5"
         hdf5.save_interactions({r.pdb_id: list(r.potential) for r in records}, pot_h5,

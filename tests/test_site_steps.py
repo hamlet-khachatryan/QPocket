@@ -94,6 +94,33 @@ def test_one_failed_featurisation_still_allows_two_stage(tmp_path, monkeypatch, 
     assert steps.site_status(root, "site_01")["two_stage"]
 
 
+def test_shape_clustering_one_pocket_is_a_site_error(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    for pid in ("P1", "APO1"):
+        (root / "sites" / "site_01" / "pockets" / pid / "binding_site.csv").unlink()
+    with pytest.raises(steps.SiteError, match="fewer than 2 pockets"):
+        steps.shape_cluster_site(root, "site_01")
+
+
+def test_two_stage_that_writes_no_matrix_raises(tmp_path, monkeypatch, fake_features):
+    root = _finished_run(tmp_path, monkeypatch)
+    steps.featurize_site(root, "site_01")
+    steps.two_stage_site(root, "site_01")  # an earlier matrix must not pass for this run's
+    monkeypatch.setattr(steps, "compute_spectral_distance_matrix", lambda cfg, ws: None)
+    with pytest.raises(steps.SiteError, match="wrote no"):
+        steps.two_stage_site(root, "site_01")
+
+
+def test_featurise_records_the_feature_set(tmp_path, monkeypatch, fake_features):
+    import json
+
+    root = _finished_run(tmp_path, monkeypatch)
+    record = root / "sites" / "site_01" / "metadata" / "features.json"
+    assert not record.exists()
+    steps.featurize_site(root, "site_01")
+    assert json.loads(record.read_text())["enabled"] == list(load_run_config(root).features.enabled)
+
+
 def test_two_stage_before_featurise_raises(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     with pytest.raises(steps.SiteError, match="Featurise"):

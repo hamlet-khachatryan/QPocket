@@ -125,8 +125,8 @@ uv run qpocket run ... --no-apbs
 ```
 
 That skips pdb2pqr too, when nothing else needs it. Fingerprints from different
-feature sets are **not comparable**, and each run records the set it used in
-`metadata/features.json`.
+feature sets are **not comparable**, and featurising a site records the set it
+used in `sites/site_NN/metadata/features.json`.
 
 ---
 

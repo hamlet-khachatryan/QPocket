@@ -163,11 +163,6 @@ from qpocket.pipelines.run import run_qpocket_pipeline
     help="Eliot log format"
 )
 @click.option(
-    "--save-intermediate",
-    is_flag=True,
-    help="Save intermediate (pre-crop) pocket point clouds"
-)
-@click.option(
     "--compression",
     type=click.Choice(["gzip", "none"]),
     help="HDF5 compression for interaction data"
@@ -236,7 +231,6 @@ def run(
     alpha: Optional[float],
     beta: Optional[float],
     log_format: Optional[str],
-    save_intermediate: bool,
     compression: Optional[str],
 ):
     """Run the QPocket pipeline with specified parameters.
@@ -338,8 +332,6 @@ def run(
         overrides.append(f"distance.chem_scale={beta}")
     if log_format:
         overrides.append(f"io.log_format={log_format}")
-    if save_intermediate:
-        overrides.append("io.save_intermediate=true")
     if compression:
         overrides.append(f"io.compression={compression}")
 
@@ -374,7 +366,6 @@ def run(
         alpha=alpha,
         beta=beta,
         log_format=log_format,
-        save_intermediate=save_intermediate or None,
         compression=compression,
     )
 

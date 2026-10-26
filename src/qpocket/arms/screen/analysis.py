@@ -204,6 +204,10 @@ def _run_rmsd_analysis_from_jobs(
 
         # The active's own crystal poses; the structure's first ligand only for inputs without Ligand_File.
         paths = crystal_files.get(row["ligand_id"]) or sorted(crystal_ligands_dir.glob(f"{pdb_id}_*.pdb"))[:1]
+        for missing in [p for p in paths if not Path(p).exists()]:
+            log_message(message_type="warning", stage="rmsd", ligand_id=row["ligand_id"],
+                        warning=f"crystal pose {missing} not found; skipped")
+        paths = [p for p in paths if Path(p).exists()]
         crystals = [m for m in (Chem.MolFromPDBFile(str(p), sanitize=False, removeHs=True) for p in paths)
                     if m is not None]
 

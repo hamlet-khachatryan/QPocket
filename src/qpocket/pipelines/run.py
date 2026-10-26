@@ -103,7 +103,6 @@ def run_qpocket_pipeline(
     affinity_damping: Optional[float] = None,
     affinity_max_iter: Optional[int] = None,
     log_format: Optional[str] = None,
-    save_intermediate: Optional[bool] = None,
     compression: Optional[str] = None,
     interaction_padding: Optional[float] = None,
     extra_overrides: Optional[List[str]] = None,
@@ -134,7 +133,6 @@ def run_qpocket_pipeline(
         affinity_damping: Affinity Propagation damping factor.
         affinity_max_iter: Maximum Affinity Propagation iterations.
         log_format: Eliot log format — ``"json"`` or ``"text"``.
-        save_intermediate: Persist intermediate pocket files.
         compression: HDF5 compression — ``"gzip"`` or ``"none"``.
         interaction_padding: Crop radius (Å) around interacting residues for ``pocket_definition == "Interactions"`` mode.
         extra_overrides: Dot-list overrides applied last.
@@ -187,8 +185,6 @@ def run_qpocket_pipeline(
         overrides.append(f"distance.clustering.single.max_iter={affinity_max_iter}")
     if log_format:
         overrides.append(f"io.log_format={log_format}")
-    if save_intermediate is not None:
-        overrides.append(f"io.save_intermediate={save_intermediate}")
     if compression:
         overrides.append(f"io.compression={compression}")
     if interaction_padding is not None:

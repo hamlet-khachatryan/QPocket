@@ -12,8 +12,8 @@ reference:
 
 sites:                        # Every ligand-occupied binding site is discovered
   min_heavy_atoms: 6          # Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites
-  link_cutoff: 4.0            # Distance (Å) under which two ligand atoms count as one ligand
-  box_padding: 4.0            # Padding (Å) around a ligand when boxing its site
+  link_cutoff: 4.0            # Ligands closer than this (Å, any heavy atoms) join one site
+  box_padding: 4.0            # Padding (Å) around the union of a site's ligands
 
 fragment_screen:
   input_type: "csv"           # "csv" or "paths"
@@ -48,7 +48,6 @@ cleaning:
 
 io:
   log_format: "json"          # Eliot log format: "json" or "text"
-  save_intermediate: false    # Save intermediate pocket point clouds (binding_site_initial.csv)
   compression: "gzip"         # HDF5 compression: "gzip" or "none"
 
 features:

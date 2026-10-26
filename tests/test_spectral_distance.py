@@ -235,9 +235,9 @@ def test_feature_rows_must_match(tmp_path):
 
 
 def test_features_must_belong_to_the_cloud(tmp_path):
-    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1, permute=True)
+    p1 = _write_npz(_pocket_dir(tmp_path, "P7XY") / "geospectral_cache.npz", seed=1, permute=True)
     cfg = evolve(make_config(), "distance.parallel_jobs", 1)
-    with pytest.raises(ValueError, match="a"):
+    with pytest.raises(ValueError, match=r"^P7XY: featurized.csv is not binding_site.csv's points"):
         data_processing_spectral(cfg, [p1])
 
 

@@ -423,5 +423,5 @@ def extract_all_sites(cfg: QPocketConfig, ws: Workspace, sites: pd.DataFrame,
         failures = [res for _, res in mine if isinstance(res, Failure)]
         # A pair that raised is still a structure at this site: list it as FAILED.
         site_records = [_failed(rec) if isinstance(res, Failure) else res for rec, res in mine]
-        collect_run(layout.site_workspace(ws, row["site_id"]), site_records, failures, features=(),
+        collect_run(layout.site_workspace(ws, row["site_id"]), site_records, failures,
                     compression=cfg.io.compression)
