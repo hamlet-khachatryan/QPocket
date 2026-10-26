@@ -5,7 +5,7 @@ In **pdb_query** mode QPocket queries the RCSB PDB REST API for structures that 
 ## Minimal example
 
 ```bash
-qpocket run --pdb-id 6HP0 --chain-id A --ligand-id LKQ --workdir ./results
+qpocket run --pdb-id 6HP0 --chain-id A --workdir ./results
 ```
 
 ## Filtering options
@@ -25,3 +25,8 @@ qpocket run --pdb-id 6HP0 --chain-id A --ligand-id LKQ --workdir ./results
 2. A sequence-similarity search is executed with the supplied filters.
 3. The reference PDB ID is added to the hit list if not already present.
 4. All structures are downloaded as `.cif` files to `structures/original/`.
+
+The reference is the structure the others are aligned to. It does not choose the
+pocket: every ligand-occupied site in the hits is found, see
+[Pocket extraction](pocket-extraction.md). Analyse a site with `qpocket explore` or
+`qpocket site …`.

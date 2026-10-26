@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import json
-from typing import Dict, List, NamedTuple, Tuple
+import shutil
+from datetime import datetime, timezone
+from typing import Dict, List, NamedTuple, Optional, Tuple
 import numpy as np
 from pathlib import Path
 import pandas as pd
@@ -14,7 +16,7 @@ from qpocket.core.ports import CLUSTERING
 
 
 
-def stage_labels(distances, method, linkage, k, k_range, criterion="count", threshold=None,
+def stage_labels(distances, method, linkage, k, criterion="count", threshold=None,
                  damping=cl.PIPELINE_DAMPING, max_iter=cl.PIPELINE_MAX_ITER) -> cl.Clustering:
     """One clustering stage through the CLUSTERING registry.
 
@@ -22,17 +24,16 @@ def stage_labels(distances, method, linkage, k, k_range, criterion="count", thre
         distances: Square distance matrix.
         method: Plug-in name.
         linkage: Linkage for hierarchical.
-        k: Pinned count, or None.
-        k_range: Counts scanned when k is None.
-        criterion: "count" or "threshold".
-        threshold: Cut height for a threshold stage.
+        k: Cluster count for a count stage.
+        criterion: "count", "threshold" or "relative".
+        threshold: Cut height for a threshold stage; the fraction of the tallest merge for a relative one.
         damping: Affinity damping.
         max_iter: Affinity iteration cap.
 
     Returns:
         The clustering.
     """
-    stage = SimpleNamespace(linkage=linkage, k=k, k_range=k_range, criterion=criterion,
+    stage = SimpleNamespace(linkage=linkage, k=k, criterion=criterion,
                             threshold=threshold, damping=damping, max_iter=max_iter)
     return CLUSTERING.get(method).fn(distances, stage)
 
@@ -61,11 +62,10 @@ def _stage_params(stage) -> Dict[str, object]:
         "method": stage.method,
         "linkage": stage.linkage,
         "k": None if stage.k is None else int(stage.k),
-        "k_range": [int(v) for v in stage.k_range],
         "damping": float(stage.damping),
         "max_iter": int(stage.max_iter),
-        "criterion": getattr(stage, "criterion", "count"),
-        "threshold": None if getattr(stage, "threshold", None) is None else float(stage.threshold),
+        "criterion": stage.criterion,
+        "threshold": None if stage.threshold is None else float(stage.threshold),
     }
 
 
@@ -85,28 +85,63 @@ def assign_clusters(cfg: QPocketConfig, d_shape: np.ndarray, d_chem: np.ndarray,
     return cluster_pockets(cfg.distance.clustering, d_shape, d_chem, combined)
 
 
+def cluster_shape_only(stage, d_shape: np.ndarray) -> ClusterAssignment:
+    """Group the pockets on shape alone, one representative per shape cluster.
+
+    Args:
+        stage: Stage-one settings (StageClustering).
+        d_shape: Shape distance matrix.
+
+    Returns:
+        The assignment; representatives are the medoids on d_shape.
+    """
+    result = stage_labels(d_shape, stage.method, stage.linkage, stage.k,
+                          stage.criterion, stage.threshold,
+                          stage.damping, stage.max_iter)
+    zeros = np.zeros(len(result.labels), dtype=int)
+    exemplar_map = cl.exemplars(d_shape, result.labels)
+    log_message(message_type="clustering_result", mode="shape_only", algorithm=result.method,
+                n_clusters=result.n_clusters)
+    return ClusterAssignment(
+        labels=result.labels,
+        shape_labels=result.labels,
+        chem_labels=zeros,
+        exemplar_positions=tuple(exemplar_map[c] for c in sorted(exemplar_map)),
+        params={
+            "mode": "shape_only",
+            "shape": {**_stage_params(stage), "n_clusters": result.n_clusters},
+            "n_clusters": result.n_clusters,
+        },
+    )
+
+
 def cluster_pockets(
     settings,
     d_shape: np.ndarray,
-    d_chem: np.ndarray,
-    combined: np.ndarray,
+    d_chem: Optional[np.ndarray],
+    combined: Optional[np.ndarray],
 ) -> ClusterAssignment:
     """Group the pockets, in one pass or two depending on the config.
 
     Args:
         settings: distance.clustering settings (ClusteringParams).
         d_shape: Shape distance matrix.
-        d_chem: Physicochemical distance matrix.
-        combined: The blend, used for representatives and for single-stage mode.
+        d_chem: Physicochemical distance matrix; None in shape-only mode.
+        combined: The blend, used for representatives and for single-stage mode; None in shape-only mode.
 
     Returns:
         The assignment, with a record of what was run.
     """
+    if settings.mode == "shape_only":
+        return cluster_shape_only(settings.shape, d_shape)
+
+    if d_chem is None or combined is None:
+        raise ValueError("two-stage clustering needs featurised pockets; run Featurise first")
+
     if settings.mode == "single":
         stage = settings.single
-        # Single mode has never honoured a threshold cut, so it always counts.
-        result = stage_labels(combined, stage.method, stage.linkage, stage.k, stage.k_range,
-                              "count", None, stage.damping, stage.max_iter)
+        result = stage_labels(combined, stage.method, stage.linkage, stage.k,
+                              stage.criterion, stage.threshold, stage.damping, stage.max_iter)
 
         zeros = np.zeros(len(result.labels), dtype=int)
         exemplar_map = cl.exemplars(combined, result.labels)
@@ -115,7 +150,6 @@ def cluster_pockets(
             mode="single",
             algorithm=result.method,
             n_clusters=result.n_clusters,
-            silhouette=result.silhouette,
         )
         return ClusterAssignment(
             labels=result.labels,
@@ -126,7 +160,6 @@ def cluster_pockets(
                 "mode": "single",
                 "single": _stage_params(stage),
                 "n_clusters": result.n_clusters,
-                "silhouette": result.silhouette,
             },
         )
 
@@ -137,19 +170,17 @@ def cluster_pockets(
         shape_method=shape_cfg.method,
         shape_linkage=shape_cfg.linkage,
         shape_k=None if shape_cfg.k is None else int(shape_cfg.k),
-        shape_k_range=shape_cfg.k_range,
         chem_method=chem_cfg.method,
         chem_linkage=chem_cfg.linkage,
         chem_k=None if chem_cfg.k is None else int(chem_cfg.k),
-        chem_k_range=chem_cfg.k_range,
         min_cluster_size=int(settings.min_cluster_size),
         combined_distances=combined,
-        shape_criterion=getattr(shape_cfg, "criterion", "count"),
-        shape_threshold=getattr(shape_cfg, "threshold", None),
+        shape_criterion=shape_cfg.criterion,
+        shape_threshold=shape_cfg.threshold,
         shape_damping=float(shape_cfg.damping),
         shape_max_iter=int(shape_cfg.max_iter),
-        chem_criterion=getattr(chem_cfg, "criterion", "count"),
-        chem_threshold=getattr(chem_cfg, "threshold", None),
+        chem_criterion=chem_cfg.criterion,
+        chem_threshold=chem_cfg.threshold,
         chem_damping=float(chem_cfg.damping),
         chem_max_iter=int(chem_cfg.max_iter),
         stage_labels=stage_labels,
@@ -161,7 +192,6 @@ def cluster_pockets(
         mode="two_stage",
         n_shape_clusters=result.shape_clustering.n_clusters,
         n_clusters=n_final,
-        shape_silhouette=result.shape_clustering.silhouette,
     )
     return ClusterAssignment(
         labels=result.labels,
@@ -173,7 +203,6 @@ def cluster_pockets(
             "shape": {
                 **_stage_params(shape_cfg),
                 "n_clusters": result.shape_clustering.n_clusters,
-                "silhouette": result.shape_clustering.silhouette,
             },
             "chem": {
                 **_stage_params(chem_cfg),
@@ -185,6 +214,23 @@ def cluster_pockets(
             "n_clusters": n_final,
         },
     )
+
+
+CLUSTERING_FILES = ("clustering_metadata.csv", "selected_representatives.csv", "clustering_params.json")
+
+
+def archive_clustering(meta: Path) -> None:
+    """Copy the current clustering, if any, into ``clustering_history/<UTC stamp>/``.
+
+    Args:
+        meta: A run's or a site's metadata directory.
+    """
+    present = [meta / f for f in CLUSTERING_FILES if (meta / f).exists()]
+    if present:
+        archive = meta / "clustering_history" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        archive.mkdir(parents=True)
+        for path in present:
+            shutil.copy2(path, archive / path.name)
 
 
 def write_clustering(meta_dir: Path, ids: List[str], assignment: ClusterAssignment,

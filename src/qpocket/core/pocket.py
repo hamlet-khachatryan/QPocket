@@ -1,35 +1,12 @@
-"""Pocket definition: cavity choice, cropping residues and ligand choice (pure)."""
+"""Pocket definition: cavity choice and cropping residues (pure)."""
 from __future__ import annotations
 
-from typing import List, NamedTuple, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
 
-from qpocket.constants import HET_TO_REMOVE
-from qpocket.core.geometry import check_overlap, compute_volumetric_overlap, crop_pocket_by_interactions
-
-
-def is_residue_ligand(residue, allowed_cofactors: List[str]) -> bool:
-    """Determines whether a residue is a candidate ligand.
-
-    Args:
-        residue: BioPython residue object.
-        allowed_cofactors: List of cofactor residue names to exclude.
-
-    Returns:
-        ``True`` if the residue is a potential drug-like ligand.
-    """
-    if residue.id[0] == " ":
-        return False  # standard amino acid
-    if residue.id[0] == "W":
-        return False  # water
-    resname = residue.get_resname().strip().upper()
-    if resname in allowed_cofactors:
-        return False
-    if resname in HET_TO_REMOVE:
-        return False
-    return True
+from qpocket.core.geometry import check_overlap, crop_pocket_by_interactions
 
 
 def extract_pdb_block(residue, chain_id: str) -> str:
@@ -99,80 +76,6 @@ def select_cavity_by_centroid(
         if check_overlap(centroid, coords, use_majority=True):
             return coords
     return None
-
-
-def select_cavity_by_bbox(
-    cavities: Sequence[np.ndarray], bbox_min: np.ndarray, bbox_max: np.ndarray
-) -> Tuple[Optional[np.ndarray], int]:
-    """Cavity with the most points inside a reference box.
-
-    Args:
-        cavities: Cavity point clouds, in detection order.
-        bbox_min: Lower box corner.
-        bbox_max: Upper box corner.
-
-    Returns:
-        (best cavity or None, its overlap count); None when nothing overlaps.
-    """
-    best_coords: Optional[np.ndarray] = None
-    best_overlap: int = 0
-
-    for coords in cavities:
-        if len(coords) == 0:
-            continue
-        overlap = compute_volumetric_overlap(coords, bbox_min, bbox_max)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_coords = coords
-
-    if best_coords is None or best_overlap == 0:
-        return None, 0
-    return best_coords, best_overlap
-
-
-class LigandChoice(NamedTuple):
-    """The ligand chosen for a pocket.
-
-    Attributes:
-        residue: Biopython residue.
-        chain_id: Its chain.
-        n_atoms: Its atom count.
-        n_candidates: Ligands that overlapped the pocket.
-    """
-
-    residue: object
-    chain_id: str
-    n_atoms: int
-    n_candidates: int
-
-
-def pick_ligand(structure, pocket_coords: np.ndarray, allowed_cofactors: List[str]) -> Optional[LigandChoice]:
-    """Largest non-cofactor heteroatom residue overlapping a pocket.
-
-    Args:
-        structure: Parsed Biopython structure.
-        pocket_coords: (N, 3) pocket points.
-        allowed_cofactors: Residue names never picked.
-
-    Returns:
-        The choice, or None when no ligand overlaps.
-    """
-    candidates: List[Tuple] = []
-    for model in structure:
-        for chain in model:
-            for res in chain:
-                if not is_residue_ligand(res, allowed_cofactors):
-                    continue
-                atoms = np.array([a.get_coord() for a in res])
-                if len(atoms) == 0:
-                    continue
-                if check_overlap(atoms, pocket_coords, use_majority=True):
-                    candidates.append((res, chain.id, len(atoms)))
-
-    if not candidates:
-        return None
-    best_res, best_chain_id, n_atoms = max(candidates, key=lambda x: x[2])
-    return LigandChoice(best_res, best_chain_id, n_atoms, len(candidates))
 
 
 def ligand_centroid(

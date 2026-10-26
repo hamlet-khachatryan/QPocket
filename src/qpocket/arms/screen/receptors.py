@@ -10,7 +10,7 @@ import pandas as pd
 from eliot import log_message
 
 from qpocket.io.repair import repair
-from qpocket.io.screening import prepare_ligand_pdbqt, prepare_protein_pdbqt, receptor_from_pqr
+from qpocket.io.screening import prepare_ligand_pdbqt, prepare_protein_pdbqt, read_actives, receptor_from_pqr
 from qpocket.screen_config import ScreenConfig
 
 
@@ -111,7 +111,7 @@ def prepare_all_ligands(
 
     # Actives
     if actives_smi.exists():
-        df_act = pd.read_csv(actives_smi, sep="\t", header=None, names=["SMILES", "PDB_ID", "Ligand_Name"])
+        df_act = read_actives(actives_smi)
         for _, row in df_act.iterrows():
             smiles = row["SMILES"]
             lig_id = f"{row['PDB_ID']}_{row['Ligand_Name']}"

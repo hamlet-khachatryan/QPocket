@@ -15,7 +15,7 @@ from qpocket.core.geometry import (
     create_bounding_box_pocket,
     crop_pocket_by_interactions,
 )
-from qpocket.core.pocket import extract_pdb_block, is_residue_ligand
+from qpocket.core.pocket import extract_pdb_block
 from qpocket.io.hdf5 import save_interactions as save_to_hdf5_ascii
 
 
@@ -144,48 +144,6 @@ def test_crop_pocket_all_within_padding():
     interacting = np.array([[1, 1, 1]], dtype=float)
     result = crop_pocket_by_interactions(pocket, interacting, padding=10.0)
     assert result.shape[0] == 3
-
-
-# ---------------------------------------------------------------------------
-# is_residue_ligand
-# ---------------------------------------------------------------------------
-
-
-class _MockResidue:
-    """Minimal mock of a BioPython Residue."""
-    def __init__(self, het_flag: str, resname: str):
-        self.id = (het_flag, 1, " ")
-        self._resname = resname
-
-    def get_resname(self):
-        return self._resname
-
-
-def test_is_residue_ligand_standard_aa():
-    res = _MockResidue(" ", "ALA")
-    assert is_residue_ligand(res, allowed_cofactors=[]) is False
-
-
-def test_is_residue_ligand_water():
-    res = _MockResidue("W", "HOH")
-    assert is_residue_ligand(res, allowed_cofactors=[]) is False
-
-
-def test_is_residue_ligand_real_ligand():
-    res = _MockResidue("H_LIG", "LIG")
-    assert is_residue_ligand(res, allowed_cofactors=[]) is True
-
-
-def test_is_residue_ligand_excluded_cofactor():
-    res = _MockResidue("H_ATP", "ATP")
-    # ATP is in HET_TO_REMOVE
-    assert is_residue_ligand(res, allowed_cofactors=[]) is False
-
-
-def test_is_residue_ligand_allowed_cofactor_excluded():
-    res = _MockResidue("H_NAD", "NAD")
-    # NAD is in HET_TO_REMOVE list
-    assert is_residue_ligand(res, allowed_cofactors=[]) is False
 
 
 # ---------------------------------------------------------------------------

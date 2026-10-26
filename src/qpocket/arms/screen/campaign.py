@@ -11,6 +11,7 @@ import pandas as pd
 from eliot import log_message, start_action
 
 from qpocket.core import screening as scr
+from qpocket.io import layout
 from qpocket.io import screening as sio_screen
 from qpocket.pipelines.parallel import resolve_workers
 from qpocket.pipelines.slurm import chunk_bounds
@@ -91,7 +92,7 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
     """Prepare every input of a docking campaign from a finished pipeline run.
 
     Args:
-        pipeline_workdir: Run root (holds metadata/, structures/, pockets/).
+        pipeline_workdir: Run root or site directory (holds metadata/, pockets/, screening/).
         config_path: screen_config.yaml, or None for defaults.
         submit: "slurm" or "local" to also write scripts; None writes only the task list.
         **overrides: Config overrides.
@@ -109,17 +110,21 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
         # Submission artefacts are opt-in: preparing inputs writes the task list.
         submit = submit or ("slurm" if cfg.slurm.enabled else None)
 
-        base = Path(pipeline_workdir).resolve()
-        screening_dir = base / "screening"
-        metadata_dir = base / "metadata"
+        ws = layout.workspace(Path(pipeline_workdir).resolve())
+        screening_dir = ws.screening
+        metadata_dir = ws.metadata
         screening_dir.mkdir(parents=True, exist_ok=True)
         actives_smi = screening_dir / "actives.smi"
 
         # 1. Box. Known issue (spec §6): its glob of cavity files never matches.
+        ligand_files = [f for files in sio_screen.active_ligand_files(actives_smi).values() for f in files]
+        if not ligand_files and (ws.root / "ligands.pdb").exists():
+            # A site whose actives carry no SMILES: its own ligands, never the run's.
+            ligand_files = [ws.root / "ligands.pdb"]
         sio_screen.extract_vina_box(
             {"box_mode": cfg.box.mode, "padding": cfg.box.padding, "exhaustiveness": cfg.docking.exhaustiveness},
-            {"ligands": base / "structures" / "extracted_ligands", "cavities": base / "pockets",
-             "screening": screening_dir},
+            {"ligands": ws.extracted_ligands, "cavities": ws.pockets, "screening": screening_dir,
+             "ligand_files": ligand_files},
         )
         vina_box_txt = screening_dir / "vina_box.txt"
 
@@ -153,7 +158,7 @@ def prepare(pipeline_workdir, config_path: Optional[str] = None, submit: Optiona
 
         # 5. Submission.
         plan = write_submission(jobs_csv, len(jobs), cfg, submit)
-        log_message(message_type="prepare_complete", workdir=str(base), run_mode=cfg.run_mode,
+        log_message(message_type="prepare_complete", workdir=str(ws.root), run_mode=cfg.run_mode,
                     n_jobs=len(jobs), n_proteins=len(proteins), n_actives=len(lig_result["actives"]),
                     n_decoys=len(lig_result["decoys"]), submit=submit)
         return plan
@@ -279,7 +284,7 @@ def analyze(pipeline_workdir, config_path: Optional[str] = None, **overrides) ->
     """Post-docking analysis: scores, pose RMSD, enrichment, interactions.
 
     Args:
-        pipeline_workdir: Run root.
+        pipeline_workdir: Run root or site directory.
         config_path: screen_config.yaml, or None for defaults.
         **overrides: Config overrides.
 
@@ -293,8 +298,8 @@ def analyze(pipeline_workdir, config_path: Optional[str] = None, **overrides) ->
             from qpocket.arms.screen import crossdock
 
             return crossdock.analyze(pipeline_workdir, config_path, **overrides).folder
-        base = Path(pipeline_workdir).resolve()
+        ws = layout.workspace(Path(pipeline_workdir).resolve())
         from qpocket.arms.screen.analysis import run_full_analysis
 
-        run_full_analysis(base / "screening", base, cfg)
-        return base / "screening" / "analysis"
+        run_full_analysis(ws.screening, ws.root, cfg)
+        return ws.screening / "analysis"

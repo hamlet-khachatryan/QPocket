@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from qpocket.config import evolve, plugin_params, validate_config
-from qpocket.core.ports import CHARGES, CONTACTS, FEATURES
+from qpocket.core.ports import FEATURES
 from tests.conftest import make_config
 
 
@@ -44,10 +44,8 @@ def test_feature_options_reach_the_channel():
 def test_the_chain_reads_its_plugins_from_config():
     from qpocket.pipelines.structure import structure_params
 
-    cfg = evolve(make_config(), "features.options", {"template": {"value": 3.0}})
-    p = structure_params(cfg)
-    assert p.charges == "pdb2pqr" and p.contacts == ("prolif",)
-    assert p.feature_options == {"template": {"value": 3.0}}
+    p = structure_params(make_config())
+    assert p.contacts == ("prolif",) and set(p.contact_params) == {"prolif"}
 
 
 def test_the_yaml_declares_both_sections():

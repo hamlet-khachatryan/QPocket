@@ -17,6 +17,12 @@ command line (`qpocket run --sigma 8.0`).
 An unrecognised key is reported and ignored rather than failing the run, so a
 typo tells you about itself instead of silently doing nothing.
 
+The per-site steps (`qpocket site …`, the explorer's site buttons and
+`qpocket slurm generate --site`) read the settings saved with the run in
+`<run>/metadata/config.yaml`, not the file you passed to `qpocket run`. Edit that
+file to change `features`, `charges`, `distance` or `distance.clustering` for later
+site steps.
+
 ---
 
 ## `mode`
@@ -41,13 +47,7 @@ reference:
   pdb_id: null                # required in pdb_query mode; 4 characters, e.g. "6HP0"
   chain_id: "A"
   auxiliary_chain_ids: null   # e.g. ["B"] — chains forming an interface with chain_id
-  ligand_id: null             # e.g. "LKQ" — marks the pocket
-  ligand_chain_id: null       # null = search every chain (homodimers keep the ligand elsewhere)
   pocket_definition: "Solvent"       # "Interactions" or "Solvent"
-  pocket_mode: "cavity_detection"    # "cavity_detection" or "bounding_box"
-  bounding_box:               # only when pocket_mode is "bounding_box"
-    center: null              # [x, y, z]
-    dimensions: null          # [dx, dy, dz]
   interaction_padding: 5.0    # Å around contacting residues, when pocket_definition
                               # is "Interactions"
 ```
@@ -55,9 +55,17 @@ reference:
 | setting | meaning |
 |---|---|
 | `pocket_definition: Solvent` | The whole solvent-accessible cavity. |
-| `pocket_definition: Interactions` | The cavity cropped to residues the ligand actually contacts. Requires `ligand_id`. |
-| `pocket_mode: cavity_detection` | Find the cavity geometrically, ranked against the reference pocket. |
-| `pocket_mode: bounding_box` | Use the box given in `bounding_box`. |
+| `pocket_definition: Interactions` | The cavity cropped to residues the ligand actually contacts. |
+
+```yaml
+sites:                        # every ligand-occupied binding site is discovered
+  min_heavy_atoms: 6          # smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites
+  link_cutoff: 4.0            # ligands closer than this (Å, any heavy atoms) join one site
+  box_padding: 4.0            # Å around the union of a site's ligands
+```
+
+`reference.ligand_id`, `ligand_chain_id`, `pocket_mode` and `bounding_box` are
+obsolete: they are ignored with a warning.
 
 In `fragment_screen` mode `pdb_id` is optional: the run is named after the
 reference filename instead.
@@ -130,7 +138,6 @@ cleaning:
 ```yaml
 io:
   log_format: "json"        # "json" or "text"
-  save_intermediate: false  # also write the pre-crop pocket cloud
   compression: "gzip"       # HDF5 compression: "gzip" or "none"
 ```
 
@@ -155,8 +162,8 @@ features:
 
 Dropping a provider drops its columns, and a set that needs no PQR skips pdb2pqr
 and APBS altogether — the fastest way to a geometry-only run. `qpocket run
---features hbond,aromatic` and `--no-apbs` set this from the command line. A run
-records what it used in `metadata/features.json`; fingerprints built from
+--features hbond,aromatic` and `--no-apbs` set this from the command line.
+Featurising a site records what it used in `sites/site_NN/metadata/features.json`; fingerprints built from
 different sets are not comparable. See [Features](user-guide/features.md).
 
 ## `interactions`
@@ -239,23 +246,22 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
 
 ```yaml
   clustering:
-    mode: "two_stage"       # "two_stage" or "single"
+    mode: "two_stage"       # "two_stage", "single" or "shape_only"
     min_cluster_size: 4     # stage-one clusters smaller than this are not subdivided
 
     shape:                  # stage one: shape distances
       method: "hierarchical"  # "hierarchical", "kmedoids" or "affinity"
       linkage: "average"      # average | complete | single | weighted
-      k: null                 # null = choose by silhouette over k_range
-      k_range: [2, 10]        # inclusive, lower bound >= 2
-      criterion: "count"      # "count" (k / silhouette) or "threshold"
-      threshold: null         # cut height when criterion is "threshold"
+      k: null                 # cluster count; needed only for criterion "count"
+      criterion: "relative"   # "relative", "threshold" or "count"
+      threshold: 0.5          # relative: fraction (0, 1]; threshold: absolute height
 
     chem:                   # stage two: within each shape cluster
-      method: "kmedoids"
+      method: "hierarchical"
+      linkage: "average"
       k: null
-      k_range: [2, 6]
-      criterion: "count"      # "threshold" needs method "hierarchical"
-      threshold: null
+      criterion: "relative"
+      threshold: 0.5
 
     single:                 # only when mode == "single"
       method: "affinity"
@@ -267,16 +273,37 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
 |---|---|
 | `two_stage` | Group on shape, then subdivide each group on physicochemistry. `clustering_metadata.csv` gains `shape_cluster_id` and `chem_cluster_id`. |
 | `single` | Cluster the blended matrix in one pass. Reproduces pre-0.2 runs exactly. |
+| `shape_only` | Run stage one only: group on shape, with no physicochemical subdivision. |
 
 A stage ignores the settings its method does not use: `linkage` applies only to
-`hierarchical`, `k`/`k_range` only to `hierarchical` and `kmedoids`, and
+`hierarchical`, `k` only to `hierarchical` and `kmedoids`, and
 `damping`/`max_iter` only to `affinity`. They are still accepted, so switching
 method needs no other edit.
 
-`criterion: "threshold"` cuts a hierarchical stage at `threshold` instead of
-choosing a cluster count; for the chemistry stage the cut applies within each shape
-cluster. Pick the heights by eye with the sliders in the explorer notebook, or try
-them on a finished run with `qpocket recluster RUN_DIR --shape-threshold ...`.
+`criterion` says how a hierarchical stage is cut:
+
+| criterion | cut |
+|---|---|
+| `relative` (default) | at `threshold` times the height of the stage's highest merge, with `threshold` in (0, 1]. Scale-free, so `0.5` means about the same on any site. |
+| `threshold` | at the absolute height `threshold` (> 0). |
+| `count` | into exactly `k` clusters (`k >= 2`; required, there is no automatic choice). |
+
+`threshold` and `relative` need method `hierarchical`; `affinity` ignores the
+criterion. For the chemistry stage the cut applies within each shape cluster. Pick
+the cut by eye with the sliders in the explorer notebook, or try it on a finished
+run with `qpocket recluster RUN_DIR --shape-criterion relative --shape-threshold 0.5`.
+
+!!! warning "Removed: `k_range` and the silhouette choice"
+    The number of clusters is no longer chosen by silhouette. `k_range` is
+    obsolete; a config that still sets it gets a warning and the key is ignored.
+    A config, or a run's saved `metadata/config.yaml`, from an older version
+    with `k: null` and `criterion: "count"` is converted automatically to a
+    hierarchical relative cut at 0.5, with a warning naming the stage; set `k` or
+    a threshold to choose otherwise. A setting that gives `k` but no `criterion`
+    means `criterion: "count"`. Reclustering such a run's saved
+    `clustering_params.json` still needs `--shape-criterion relative
+    --chem-criterion relative` (threshold defaults to 0.5) or an explicit
+    `--shape-k`/`--chem-k`.
 
 ---
 
@@ -292,7 +319,6 @@ slurm:
   max_concurrent: 20      # simultaneously running array tasks (the %N)
   max_array_size: 1000    # cluster MaxArraySize; larger stages are split
   dependency: "afterany"  # "afterany" or "afterok"
-  split_apbs_stage: false # not yet implemented
 
   environment: []         # shell lines injected verbatim into every script
   # environment:
@@ -304,20 +330,26 @@ slurm:
     mem: "4G"
     time: "01:00:00"
 
-  stages:                 # keys: prepare, apbs, featurize, collect, geodesic, distance
-    featurize:
+  stages:                 # keys: prepare, structure, sites, site_featurize, site_cluster
+    structure:
+      cpus: 1
+      mem: "4G"
+      time: "02:00:00"
+    site_featurize:       # APBS runs here
       cpus: 1
       mem: "8G"
       time: "04:00:00"
-    geodesic:
-      cpus: 1
-      mem: "8G"
-      time: "02:00:00"
-    distance:
+    site_cluster:
       cpus: 16
       mem: "32G"
       time: "06:00:00"
 ```
+
+The run's stages are `prepare`, `structure` (one task per structure) and
+`sites`; `qpocket slurm generate --site site_01` writes that site's
+`site_featurize` (one task per cloud) and `site_cluster`. The old stage keys
+`apbs`, `featurize`, `collect`, `geodesic` and `distance`, and
+`split_apbs_stage`, are ignored with a warning; move their values to the new keys.
 
 `dependency: afterany` lets later stages start once an array finishes and skip
 whatever is missing; `afterok` blocks the whole chain if any single task fails.

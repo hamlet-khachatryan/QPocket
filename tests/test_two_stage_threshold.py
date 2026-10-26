@@ -31,10 +31,11 @@ def test_lower_chem_threshold_splits_each_shape_group():
     assert len(set(loose.labels)) == 2 and len(set(tight.labels)) == 4
 
 
-def test_count_criterion_is_the_default_and_unchanged():
+def test_relative_half_height_is_the_default():
     shape, chem = _two_blobs_with_substructure()
     a = two_stage_labels(shape, chem)
-    b = two_stage_labels(shape, chem, shape_criterion="count", chem_criterion="count")
+    b = two_stage_labels(shape, chem, shape_criterion="relative", shape_threshold=0.5,
+                         chem_method="hierarchical", chem_criterion="relative", chem_threshold=0.5)
     assert np.array_equal(a.labels, b.labels)
 
 

@@ -67,7 +67,7 @@ def test_every_bound_structure_reaches_actives_smi(tmp_path_factory):
          "--reference-path", str(source / "7KG6.cif"),
          "--structure-paths", str(source / "7KG6.cif"),
          "--structure-paths", str(source / "4B1H.cif"),
-         "--ligand-id", "WDG", "--chain-id", "A", "--workdir", str(workdir)],
+         "--chain-id", "A", "--workdir", str(workdir)],
         cwd=REPO, capture_output=True, text=True, timeout=2400,
     )
     run = workdir / "7KG6"
@@ -75,4 +75,41 @@ def test_every_bound_structure_reaches_actives_smi(tmp_path_factory):
     bound = set(master.loc[master["protein_state"] == "BOUND_STATE", "pdb_id"].astype(str))
     actives = pd.read_csv(run / "screening/actives.smi", sep="\t")
     assert set(actives["PDB_ID"].astype(str)) == bound, "a bound structure is missing"
-    assert all("=O" in s for s in actives["SMILES"]), "bond orders lost"
+    assert all("=O" in s for s in actives.loc[actives["Ligand_Name"] == "WDG", "SMILES"]), "bond orders lost"
+
+
+def test_distinct_actives_reads_ligand_file_column(tmp_path):
+    """Per-site actives carry their own crystal pose; master.csv holds only one per structure."""
+    import pandas as pd
+
+    from qpocket.arms.screen.ligands import distinct_actives
+
+    smi = tmp_path / "actives.smi"
+    smi.write_text("SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCCO\tP1\tETH\tlig_a.pdb\nOCC\tP1\tETH\tlig_b.pdb\n")
+    master = tmp_path / "master.csv"
+    pd.DataFrame({"pdb_id": ["P1"], "ligand_file": ["other.pdb"]}).to_csv(master, index=False)
+    df = distinct_actives(smi, master)
+    assert df.loc[0, "crystal_files"] == "lig_a.pdb;lig_b.pdb"
+
+
+def _four_columns(tmp_path):
+    smi = tmp_path / "actives.smi"
+    smi.write_text("SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCCO\tP1\tETH\tlig_a.pdb\n")
+    return smi
+
+
+def test_read_actives_skips_the_header_and_the_file_column(tmp_path):
+    from qpocket.io.screening import read_actives
+
+    df = read_actives(_four_columns(tmp_path))
+    assert df.values.tolist() == [["CCO", "P1", "ETH"]]
+
+
+def test_ligand_preparation_reads_only_the_actives(tmp_path, monkeypatch):
+    from qpocket.arms.screen import receptors
+    from qpocket.screen_config import ScreenConfig
+
+    seen = []
+    monkeypatch.setattr(receptors, "prepare_ligand_pdbqt", lambda smiles, out, *a, **k: seen.append(smiles))
+    receptors.prepare_all_ligands(tmp_path, _four_columns(tmp_path), None, ScreenConfig())
+    assert seen == ["CCO"]

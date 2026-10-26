@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 from eliot import log_message, start_action
 from rdkit import Chem
 
-from qpocket.io.screening import parse_vina_output
+from qpocket.io import layout
+from qpocket.io.screening import active_ligand_files, parse_vina_output
 from qpocket.screen_config import AnalysisConfig, ScreenConfig
 
 
@@ -53,7 +54,7 @@ def collect_docking_scores(
 
 
 def compute_rmsd_mcs(docked_mol: Chem.Mol, crystal_mol: Chem.Mol) -> Optional[float]:
-    """Compute RMSD between a docked pose and the crystal ligand using MCS.
+    """Compute in-place, symmetry-aware RMSD (no superposition) of a pose vs. the crystal ligand via MCS.
 
     Args:
         docked_mol: RDKit Mol from a docked pose.
@@ -75,15 +76,18 @@ def compute_rmsd_mcs(docked_mol: Chem.Mol, crystal_mol: Chem.Mol) -> Optional[fl
             return None
 
         query = Chem.MolFromSmarts(mcs.smartsString)
-        docked_match = docked_mol.GetSubstructMatch(query)
+        max_matches = 10000
+        docked_matches = docked_mol.GetSubstructMatches(query, uniquify=False, maxMatches=max_matches)
+        if len(docked_matches) >= max_matches:  # the symmetry-equivalent map giving the lowest RMSD may be missed
+            log_message(message_type="warning", stage="compute_rmsd_mcs",
+                        notice=f"maxMatches={max_matches} reached; RMSD may be overestimated")
         crystal_match = crystal_mol.GetSubstructMatch(query)
 
-        if not docked_match or not crystal_match:
+        if not docked_matches or not crystal_match:
             return None
 
-        atom_map = list(zip(docked_match, crystal_match))
-        rmsd = rdMolAlign.GetBestRMS(docked_mol, crystal_mol, map=[atom_map])
-        return rmsd
+        atom_maps = [list(zip(m, crystal_match)) for m in docked_matches]
+        return rdMolAlign.CalcRMS(docked_mol, crystal_mol, map=atom_maps)
 
     except Exception as e:
         log_message(message_type="error", stage="compute_rmsd_mcs", error=str(e))
@@ -179,8 +183,21 @@ def _run_rmsd_analysis_from_jobs(
     scores_df: pd.DataFrame,
     crystal_ligands_dir: Path,
     cfg: AnalysisConfig,
+    crystal_files: Optional[Dict[str, List[Path]]] = None,
 ) -> pd.DataFrame:
-    """Internal: compute RMSD using job DataFrame output PDBQT paths."""
+    """Internal: compute RMSD using job DataFrame output PDBQT paths.
+
+    Args:
+        jobs_df: docking_jobs.csv.
+        scores_df: Output of :func:`collect_docking_scores`.
+        crystal_ligands_dir: ``structures/extracted_ligands/``, searched by pdb_id when an active has no files.
+        cfg: Analysis config.
+        crystal_files: Each active's crystal poses at this site, from :func:`active_ligand_files`.
+
+    Returns:
+        DataFrame with columns: pdb_id, ligand_id, best_score, rmsd, success.
+    """
+    crystal_files = crystal_files or {}
     records = []
     df_merged = scores_df.merge(jobs_df[["job_id", "output_pdbqt"]], on="job_id", how="left")
 
@@ -188,19 +205,21 @@ def _run_rmsd_analysis_from_jobs(
         pdb_id = row["pdb_id"]
         out_pdbqt = Path(row["output_pdbqt"])
 
-        crystal_files = list(crystal_ligands_dir.glob(f"{pdb_id}_*.pdb"))
-        crystal_mol = None
-        if crystal_files:
-            crystal_mol = Chem.MolFromPDBFile(str(crystal_files[0]), sanitize=False, removeHs=True)
+        # The active's own crystal poses; the structure's first ligand only for inputs without Ligand_File.
+        paths = crystal_files.get(row["ligand_id"]) or sorted(crystal_ligands_dir.glob(f"{pdb_id}_*.pdb"))[:1]
+        for missing in [p for p in paths if not Path(p).exists()]:
+            log_message(message_type="warning", stage="rmsd", ligand_id=row["ligand_id"],
+                        warning=f"crystal pose {missing} not found; skipped")
+        paths = [p for p in paths if Path(p).exists()]
+        crystals = [m for m in (Chem.MolFromPDBFile(str(p), sanitize=False, removeHs=True) for p in paths)
+                    if m is not None]
 
         _, docked_mol = parse_vina_output(out_pdbqt)
 
-        rmsd = None
-        success = False
-        if docked_mol is not None and crystal_mol is not None:
-            rmsd = compute_rmsd_mcs(docked_mol, crystal_mol)
-            if rmsd is not None:
-                success = rmsd <= cfg.rmsd_threshold
+        values = [compute_rmsd_mcs(docked_mol, c) for c in crystals] if docked_mol is not None else []
+        values = [v for v in values if v is not None]
+        rmsd = min(values) if values else None
+        success = rmsd is not None and rmsd <= cfg.rmsd_threshold
 
         records.append(
             {
@@ -370,7 +389,7 @@ def run_full_analysis(
 
     Args:
         screening_dir: Root screening directory.
-        pipeline_dir: Root pipeline output directory (for crystal ligands etc.).
+        pipeline_dir: Run root or site directory (for crystal ligands etc.).
         cfg: Full screen config.
     """
     analysis_dir = screening_dir / "analysis"
@@ -389,11 +408,11 @@ def run_full_analysis(
         scores_df.to_csv(analysis_dir / "docking_scores.csv", index=False)
 
     # 2. RMSD analysis
-    crystal_ligands_dir = pipeline_dir / "structures" / "extracted_ligands"
-    master_csv = pipeline_dir / "metadata" / "master.csv"
+    crystal_ligands_dir = layout.workspace(pipeline_dir).extracted_ligands
 
     with start_action(action_type="rmsd_analysis"):
-        rmsd_df = _run_rmsd_analysis_from_jobs(jobs_df, scores_df, crystal_ligands_dir, cfg.analysis)
+        rmsd_df = _run_rmsd_analysis_from_jobs(jobs_df, scores_df, crystal_ligands_dir, cfg.analysis,
+                                               active_ligand_files(screening_dir / "actives.smi"))
         rmsd_df.to_csv(analysis_dir / "rmsd_analysis.csv", index=False)
 
     # 3. Enrichment metrics (virtual_screening only)

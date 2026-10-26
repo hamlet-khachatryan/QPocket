@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from qpocket.config import (
-    BoundingBoxParams,
     DistanceConfig,
     FragmentScreenParams,
     IOConfig,
@@ -24,9 +23,7 @@ def _ref(**kw) -> ReferenceParams:
     defaults = dict(
         pdb_id="1ABC",
         chain_id="A",
-        ligand_id="LIG",
         pocket_definition="Interactions",
-        pocket_mode="cavity_detection",
     )
     defaults.update(kw)
     return ReferenceParams(**defaults)
@@ -125,75 +122,6 @@ def test_chain_id_three_chars():
 
 def test_chain_id_two_uppercase_ok():
     cfg = make_config(reference=_ref(chain_id="AB"))
-    validate_config(cfg)
-
-
-# ---------------------------------------------------------------------------
-# ReferenceParams — bounding_box mode
-# ---------------------------------------------------------------------------
-
-def test_bounding_box_mode_missing_center_and_dims():
-    ref = _ref(pocket_mode="bounding_box", bounding_box=BoundingBoxParams(center=None, dimensions=None))
-    cfg = make_config(reference=ref)
-    with pytest.raises(ValueError, match="bounding_box"):
-        validate_config(cfg)
-
-
-def test_bounding_box_mode_missing_dims():
-    ref = _ref(
-        pocket_mode="bounding_box",
-        bounding_box=BoundingBoxParams(center=[1.0, 2.0, 3.0], dimensions=None),
-    )
-    cfg = make_config(reference=ref)
-    with pytest.raises(ValueError, match="bounding_box"):
-        validate_config(cfg)
-
-
-def test_bounding_box_wrong_center_length():
-    ref = _ref(
-        pocket_mode="bounding_box",
-        bounding_box=BoundingBoxParams(center=[1.0, 2.0], dimensions=[5.0, 5.0, 5.0]),
-    )
-    cfg = make_config(reference=ref)
-    with pytest.raises(ValueError, match="center"):
-        validate_config(cfg)
-
-
-def test_bounding_box_negative_dimension():
-    ref = _ref(
-        pocket_mode="bounding_box",
-        bounding_box=BoundingBoxParams(center=[1.0, 2.0, 3.0], dimensions=[5.0, -1.0, 5.0]),
-    )
-    cfg = make_config(reference=ref)
-    with pytest.raises(ValueError, match="dimensions"):
-        validate_config(cfg)
-
-
-def test_bounding_box_valid():
-    ref = _ref(
-        pocket_mode="bounding_box",
-        pocket_definition="Solvent",
-        ligand_id=None,
-        bounding_box=BoundingBoxParams(center=[0.0, 0.0, 0.0], dimensions=[10.0, 10.0, 10.0]),
-    )
-    cfg = make_config(reference=ref)
-    validate_config(cfg)
-
-
-# ---------------------------------------------------------------------------
-# ReferenceParams — ligand_id requirement
-# ---------------------------------------------------------------------------
-
-def test_interactions_cavity_no_ligand_id():
-    ref = _ref(pocket_definition="Interactions", pocket_mode="cavity_detection", ligand_id=None)
-    cfg = make_config(reference=ref)
-    with pytest.raises(ValueError, match="ligand_id"):
-        validate_config(cfg)
-
-
-def test_solvent_pocket_no_ligand_id_ok():
-    ref = _ref(pocket_definition="Solvent", pocket_mode="cavity_detection", ligand_id=None)
-    cfg = make_config(reference=ref)
     validate_config(cfg)
 
 
@@ -452,3 +380,43 @@ def test_compute_defaults_and_validation():
     cfg = evolve(cfg, "compute.workers", -2)
     with pytest.raises(ValueError, match="compute.workers"):
         validate_config(cfg)
+
+
+@pytest.mark.parametrize("key,value", [("link_cutoff", 0.0), ("box_padding", -1.0), ("min_heavy_atoms", 0)])
+def test_sites_validation(key, value):
+    from qpocket.config import QPocketConfig
+    base = evolve(QPocketConfig(), "reference.pdb_id", "1ABC")
+    with pytest.raises(ValueError, match=f"sites.{key}"):
+        validate_config(evolve(base, f"sites.{key}", value))
+
+
+def _stage(**kw):
+    from qpocket.config import ClusteringParams, StageClustering
+
+    return evolve(_dm(), "clustering", ClusteringParams(shape=StageClustering(**kw)))
+
+
+@pytest.mark.parametrize("kw", [
+    dict(criterion="relative", threshold=0.0),
+    dict(criterion="relative", threshold=1.5),
+    dict(criterion="relative", threshold=None),
+    dict(method="kmedoids", criterion="relative", threshold=0.5),
+    dict(criterion="count", k=None),
+    dict(criterion="threshold", threshold=0.0),
+    dict(criterion="silhouette"),
+])
+def test_bad_stage_criteria_are_refused(kw):
+    with pytest.raises(ValueError, match="distance.clustering.shape"):
+        validate_config(make_config(distance=_stage(**kw)))
+
+
+@pytest.mark.parametrize("kw", [
+    dict(criterion="relative", threshold=1.0),
+    dict(criterion="relative", threshold=0.05),
+    dict(criterion="count", k=2),
+    dict(method="kmedoids", criterion="count", k=3),
+    dict(criterion="threshold", threshold=4.0),
+    dict(method="affinity"),
+])
+def test_good_stage_criteria_pass(kw):
+    validate_config(make_config(distance=_stage(**kw)))

@@ -2,8 +2,8 @@
 
 Fragment-screening mode analyses structures you already have on disk — a soaking
 campaign, a set of in-house models — instead of querying the PDB. You supply the
-structure files, the reference structure, and the ligand that marks the pocket in
-that reference.
+structure files and the reference structure they are aligned to. Binding sites
+are discovered from the ligands in the structures; no ligand is named.
 
 ## Configuration
 
@@ -19,7 +19,6 @@ fragment_screen:
     - "/data/frag/soak_C03.pdb"
 
 reference:
-  ligand_id: "LIG"                          # ligand marking the pocket in the reference
   chain_id: "A"
   pocket_definition: "Interactions"
 
@@ -33,17 +32,18 @@ qpocket run --config campaign.yaml
 
 `.pdb`, `.cif` and `.ent` inputs are accepted.
 
-!!! important "The reference must still contain its ligand"
-    The pocket is located from the reference ligand's centroid, so point
-    `reference_path` at a structure that still has the ligand in it. A *cleaned*
-    structure has had its ligands stripped and will fail with
-    `ligand 'LIG' not found`.
+Run `qpocket explore /data/frag/out` afterwards to pick a site and analyse it, or
+use `qpocket site …`; see [Distance analysis](distance-analysis.md).
+
+!!! note "Ligands must be present in the inputs"
+    Sites come from the ligands in the structure files. Point the inputs at
+    structures that still have their ligands; a *cleaned* structure has had them
+    stripped and yields no sites.
 
 ### The reference
 
-`reference_path` names the structure every other one is measured against. It
-defines the pocket bounding box that constrains cavity selection for the whole
-campaign, and it names the run.
+`reference_path` names the structure every other one is aligned to, and it names
+the run.
 
 It does not have to appear in `structure_paths`; if it does, it is still ingested
 only once. When `reference_path` is omitted, `reference_index` selects one from
@@ -109,7 +109,6 @@ qpocket run \
   --reference-path /data/frag/reference.pdb \
   --structure-paths /data/frag/soak_A07.pdb \
   --structure-paths /data/frag/soak_B11.pdb \
-  --ligand-id LIG \
   --workdir /data/frag/out
 ```
 
@@ -119,7 +118,8 @@ work.
 ## On a cluster
 
 Fragment mode uses the same SLURM path as everything else. Run `prepare` first so
-the array stages know how many structures there are, then generate:
+the array stages know how many structures there are, then generate the `prepare`,
+`structure` and `sites` stages (per-site stages are generated with `--site`):
 
 ```bash
 qpocket task prepare --config campaign.yaml

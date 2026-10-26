@@ -18,18 +18,18 @@ class RunMatrices(NamedTuple):
     Attributes:
         ids: Pocket IDs.
         shape: Shape distances.
-        chem: Physicochemical distances.
-        combined: Blended distances.
+        chem: Physicochemical distances, None when the pockets were never featurised.
+        combined: Blended distances; the shape distances when chem is None.
     """
 
     ids: List[str]
     shape: np.ndarray
-    chem: np.ndarray
-    combined: np.ndarray
+    chem: Optional[np.ndarray]
+    combined: Optional[np.ndarray]
 
 
 def load_matrices(run_dir: Path) -> Optional[RunMatrices]:
-    """Read shape, chemistry and combined matrices from metadata/.
+    """Read shape, chemistry and combined matrices from metadata/ (the shape matrix alone for an unfeaturised site).
 
     Args:
         run_dir: Run root.
@@ -39,6 +39,9 @@ def load_matrices(run_dir: Path) -> Optional[RunMatrices]:
     """
     meta = Path(run_dir) / "metadata"
     names = ("shape_distance_matrix", "feature_distance_matrix", "spectral_distance_matrix")
+    if (meta / f"{names[0]}.csv").exists() and not (meta / f"{names[1]}.csv").exists():
+        shape = pd.read_csv(meta / f"{names[0]}.csv", index_col=0)
+        return RunMatrices([str(i) for i in shape.index], shape.to_numpy(float), None, shape.to_numpy(float))
     if not all((meta / f"{n}.csv").exists() for n in names):
         return None
     combined = pd.read_csv(meta / "spectral_distance_matrix.csv", index_col=0)
@@ -87,6 +90,8 @@ def chem_height_range(m: RunMatrices, shape_labels: np.ndarray, linkage: str = "
     Returns:
         (min height, max height); (0, 1) when no cluster can be split.
     """
+    if m.chem is None:
+        return 0.0, 1.0
     lows, highs = [], []
     for value in np.unique(shape_labels):
         members = np.flatnonzero(shape_labels == value)
@@ -115,6 +120,21 @@ def threshold_settings(settings, shape_threshold: float, chem_threshold: Optiona
         settings.chem, method="hierarchical", criterion="threshold", threshold=float(chem_threshold))
     return replace(settings, mode="two_stage", shape=shape, chem=chem,
                    min_cluster_size=min_cluster_size or settings.min_cluster_size)
+
+
+def shape_only_settings(settings, shape_threshold: float, criterion: str = "threshold"):
+    """Clustering settings that cut the shape tree and stop there.
+
+    Args:
+        settings: Starting ClusteringParams (usually the run's own).
+        shape_threshold: Shape tree cut height, or the fraction of its tallest merge when criterion is "relative".
+        criterion: "threshold" or "relative".
+
+    Returns:
+        New ClusteringParams in shape-only mode.
+    """
+    shape = replace(settings.shape, method="hierarchical", criterion=criterion, threshold=float(shape_threshold))
+    return replace(settings, mode="shape_only", shape=shape)
 
 
 def regroup(m: RunMatrices, settings) -> pd.DataFrame:
@@ -195,7 +215,8 @@ METHODS: Dict[str, str] = {
 
 def settings_for(base, method: str, combined_cut: Optional[float] = None,
                  shape_cut: Optional[float] = None, chem_cut: Optional[float] = None,
-                 damping: float = 0.9, min_cluster_size: Optional[int] = None):
+                 damping: float = 0.9, min_cluster_size: Optional[int] = None,
+                 criterion: str = "threshold"):
     """Clustering settings for one of the offered methods.
 
     Args:
@@ -206,6 +227,7 @@ def settings_for(base, method: str, combined_cut: Optional[float] = None,
         chem_cut: Stage-two cut height.
         damping: Affinity propagation damping.
         min_cluster_size: Smallest shape group that is still subdivided.
+        criterion: "threshold" reads the cuts as heights; "relative" as fractions of each tree's tallest merge.
 
     Returns:
         ClusteringParams the pipeline can run and recluster can save.
@@ -222,15 +244,15 @@ def settings_for(base, method: str, combined_cut: Optional[float] = None,
     if method == "hierarchical":
         return replace(base, mode="single",
                        single=replace(base.single, method="hierarchical",
-                                      criterion="threshold", threshold=float(combined_cut)))
+                                      criterion=criterion, threshold=float(combined_cut)))
     return replace(
         base,
         mode="two_stage",
         min_cluster_size=int(min_cluster_size if min_cluster_size is not None
                              else base.min_cluster_size),
-        shape=replace(base.shape, method="hierarchical", criterion="threshold",
+        shape=replace(base.shape, method="hierarchical", criterion=criterion,
                       threshold=float(shape_cut)),
-        chem=replace(base.chem, method="hierarchical", criterion="threshold",
+        chem=replace(base.chem, method="hierarchical", criterion=criterion,
                      threshold=float(chem_cut)),
     )
 
@@ -241,14 +263,12 @@ class Preview(NamedTuple):
     Attributes:
         frame: pdb_id, cluster_id, shape_cluster_id, chem_cluster_id.
         n_clusters: Number of clusters.
-        silhouette: Mean silhouette on the combined distances, or None.
         shape_labels: Stage-one label per pocket, in matrix order.
         labels: Final label per pocket, in matrix order.
     """
 
     frame: pd.DataFrame
     n_clusters: int
-    silhouette: Optional[float]
     shape_labels: np.ndarray
     labels: np.ndarray
 
@@ -263,8 +283,6 @@ def preview(m: RunMatrices, settings) -> Preview:
     Returns:
         The grouping these settings produce.
     """
-    from qpocket.core.clustering import silhouette
-
     assignment = cluster_pockets(settings, m.shape, m.chem, m.combined)
     labels = np.asarray(assignment.labels, dtype=int)
     frame = pd.DataFrame({
@@ -273,15 +291,8 @@ def preview(m: RunMatrices, settings) -> Preview:
         "shape_cluster_id": np.asarray(assignment.shape_labels, dtype=int),
         "chem_cluster_id": np.asarray(assignment.chem_labels, dtype=int),
     })
-    score = None
-    if len(set(labels.tolist())) > 1 and len(labels) > 2:
-        try:
-            mean, _per_structure = silhouette(symmetrise(m.combined), labels)
-            score = None if mean is None else float(mean)
-        except Exception:
-            score = None
     return Preview(frame=frame, n_clusters=int(len(set(labels.tolist()))),
-                   silhouette=score, shape_labels=np.asarray(assignment.shape_labels, dtype=int),
+                   shape_labels=np.asarray(assignment.shape_labels, dtype=int),
                    labels=labels)
 
 

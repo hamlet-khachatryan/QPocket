@@ -14,11 +14,6 @@ def affinity(distances: np.ndarray, stage) -> cl.Clustering:
         stage: damping and max_iter.
 
     Returns:
-        The clustering.
-
-    Raises:
-        ValueError: If a threshold cut is asked for.
+        The clustering; Affinity Propagation chooses its own count, so the stage's criterion is ignored.
     """
-    if stage.criterion in ("threshold", cl.THRESHOLD):
-        raise ValueError("a threshold cut needs a hierarchical stage, not 'affinity'")
     return cl.affinity_labels(distances, damping=stage.damping, max_iter=stage.max_iter)

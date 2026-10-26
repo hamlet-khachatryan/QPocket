@@ -44,7 +44,6 @@ def campaign(tmp_path):
         structure_paths=[str(a), str(b)],
         reference_path=str(ref),
     ))
-    cfg = evolve(cfg, "reference.ligand_id", "LIG")
     return cfg, dirs, {"ref": ref, "a": a, "b": b}
 
 

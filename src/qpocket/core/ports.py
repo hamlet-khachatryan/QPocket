@@ -10,7 +10,6 @@ def _load_builtins() -> None:
 
 
 SOURCES = Registry("structure source", _load_builtins)
-POCKETS = Registry("pocket detector", _load_builtins)
 CHARGES = Registry("charge model", _load_builtins)
 FEATURES = Registry("feature channel", _load_builtins)
 CONTACTS = Registry("contact detector", _load_builtins)

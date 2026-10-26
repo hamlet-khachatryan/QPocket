@@ -198,9 +198,7 @@ class TestConfigValidationAuxiliaryChains:
             pdb_id="1ABC",
             chain_id="A",
             auxiliary_chain_ids=["B"],
-            ligand_id="LIG",
             pocket_definition="Interactions",
-            pocket_mode="cavity_detection",
         )
         cfg = make_config(reference=ref)
         validate_config(cfg)  # must not raise
@@ -210,9 +208,7 @@ class TestConfigValidationAuxiliaryChains:
             pdb_id="1ABC",
             chain_id="A",
             auxiliary_chain_ids=["B", "C"],
-            ligand_id="LIG",
             pocket_definition="Interactions",
-            pocket_mode="cavity_detection",
         )
         cfg = make_config(reference=ref)
         validate_config(cfg)
@@ -222,9 +218,7 @@ class TestConfigValidationAuxiliaryChains:
             pdb_id="1ABC",
             chain_id="A",
             auxiliary_chain_ids=None,
-            ligand_id="LIG",
             pocket_definition="Interactions",
-            pocket_mode="cavity_detection",
         )
         cfg = make_config(reference=ref)
         validate_config(cfg)
@@ -234,9 +228,7 @@ class TestConfigValidationAuxiliaryChains:
             pdb_id="1ABC",
             chain_id="A",
             auxiliary_chain_ids=["b"],  # lowercase — invalid
-            ligand_id="LIG",
             pocket_definition="Interactions",
-            pocket_mode="cavity_detection",
         )
         cfg = make_config(reference=ref)
         with pytest.raises(ValueError, match="auxiliary_chain_ids"):
@@ -247,9 +239,7 @@ class TestConfigValidationAuxiliaryChains:
             pdb_id="1ABC",
             chain_id="A",
             auxiliary_chain_ids=["BCD"],  # 3 chars — invalid
-            ligand_id="LIG",
             pocket_definition="Interactions",
-            pocket_mode="cavity_detection",
         )
         cfg = make_config(reference=ref)
         with pytest.raises(ValueError, match="auxiliary_chain_ids"):
@@ -261,9 +251,7 @@ class TestConfigValidationAuxiliaryChains:
             pdb_id="1ABC",
             chain_id="A",
             auxiliary_chain_ids=["A", "B"],  # A is primary — invalid
-            ligand_id="LIG",
             pocket_definition="Interactions",
-            pocket_mode="cavity_detection",
         )
         cfg = make_config(reference=ref)
         with pytest.raises(ValueError, match="auxiliary_chain_ids"):

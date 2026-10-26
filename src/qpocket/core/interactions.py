@@ -5,7 +5,7 @@
 # one side and five on the other, a residue contacted by six and two looks decisive
 # and is not.
 #
-# Three questions are worth separating, and this module answers each with its own
+# Two questions are worth separating, and this module answers each with its own
 # test:
 #
 # *Which residues differ?*
@@ -18,10 +18,6 @@
 #     different ways — an H-bond donor in one, a hydrophobic contact in the other.
 #     Presence/absence is blind to this, which is why both tests exist.
 #
-# *Are the repertoires disjoint?*
-#     :func:`exclusivity` is the direct answer to "mutually exclusive": the Jaccard
-#     overlap of the residue sets the two clusters engage. Near zero means disjoint.
-#
 # Every p-value is corrected across residues with Benjamini-Hochberg, and anything
 # resting on too few structures is returned with ``underpowered`` set rather than a
 # q-value near one — those two look identical on a plot and mean opposite things.
@@ -31,7 +27,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from itertools import combinations
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import pandas as pd
@@ -44,10 +39,6 @@ MIN_TESTABLE = 3
 
 #: Expected cell count below which the chi-square approximation is not trusted.
 MIN_EXPECTED = 5.0
-
-#: Fraction of a cluster's structures that must show a residue for it to count as
-#: engaged by that cluster, when reducing a profile to a set.
-ENGAGED_FRAC = 0.5
 
 
 class Profile(NamedTuple):
@@ -121,28 +112,6 @@ class TypeShiftTest(NamedTuple):
     p_value: float
     q_value: float
     significant: bool
-    underpowered: bool
-
-
-class Exclusivity(NamedTuple):
-    """How far two clusters' engaged-residue sets overlap.
-
-    Attributes:
-        jaccard: ``|A and B| / |A or B|``.
-        shared: Residues engaged by both.
-        a_only: Residues engaged only by cluster A.
-        b_only: Residues engaged only by cluster B.
-        n_structures_a: Members of cluster A.
-        n_structures_b: Members of cluster B.
-        underpowered: Either cluster has fewer than :data:`MIN_TESTABLE` members.
-    """
-
-    jaccard: float
-    shared: Tuple[str, ...]
-    a_only: Tuple[str, ...]
-    b_only: Tuple[str, ...]
-    n_structures_a: int
-    n_structures_b: int
     underpowered: bool
 
 
@@ -356,83 +325,6 @@ def interaction_type_shift(
         )
     results.sort(key=lambda r: (np.isnan(r.q_value), r.q_value))
     return results
-
-
-def engaged_set(
-    profile: Profile, members: Sequence[str], engaged_frac: float = ENGAGED_FRAC
-) -> Tuple[str, ...]:
-    """Residues a cluster engages in at least ``engaged_frac`` of its members.
-
-    Args:
-        profile: An engagement profile.
-        members: PDB IDs in the cluster.
-        engaged_frac: Fraction of members that must show the residue.
-
-    Returns:
-        Residue keys, sorted.
-    """
-    rows, _ = _split_rows(profile, members, [])
-    if len(rows) == 0:
-        return ()
-    frequency = profile.presence[rows].mean(axis=0)
-    return tuple(
-        profile.residues[c] for c in np.flatnonzero(frequency >= engaged_frac)
-    )
-
-
-def exclusivity(
-    profile: Profile,
-    members_a: Sequence[str],
-    members_b: Sequence[str],
-    engaged_frac: float = ENGAGED_FRAC,
-) -> Exclusivity:
-    """How far two clusters' engaged-residue sets overlap.
-
-    Args:
-        profile: An engagement profile.
-        members_a: PDB IDs in cluster A.
-        members_b: PDB IDs in cluster B.
-        engaged_frac: Fraction of a cluster that must show a residue for it to count as engaged by that cluster.
-
-    Returns:
-        The overlap, with the residues on each side named.
-    """
-    set_a = set(engaged_set(profile, members_a, engaged_frac))
-    set_b = set(engaged_set(profile, members_b, engaged_frac))
-    rows_a, rows_b = _split_rows(profile, members_a, members_b)
-
-    union = set_a | set_b
-    shared = set_a & set_b
-    return Exclusivity(
-        jaccard=float("nan") if not union else len(shared) / len(union),
-        shared=tuple(sorted(shared)),
-        a_only=tuple(sorted(set_a - set_b)),
-        b_only=tuple(sorted(set_b - set_a)),
-        n_structures_a=len(rows_a),
-        n_structures_b=len(rows_b),
-        underpowered=len(rows_a) < MIN_TESTABLE or len(rows_b) < MIN_TESTABLE,
-    )
-
-
-def pairwise_exclusivity(
-    profile: Profile,
-    clusters: Dict[int, Sequence[str]],
-    engaged_frac: float = ENGAGED_FRAC,
-) -> Dict[Tuple[int, int], Exclusivity]:
-    """Exclusivity for every unordered pair of clusters.
-
-    Args:
-        profile: An engagement profile.
-        clusters: Cluster index to the PDB IDs it contains.
-        engaged_frac: Passed through to :func:`exclusivity`.
-
-    Returns:
-        ``(a, b)`` with ``a < b`` to the overlap between them.
-    """
-    return {
-        (a, b): exclusivity(profile, clusters[a], clusters[b], engaged_frac)
-        for a, b in combinations(sorted(clusters), 2)
-    }
 
 
 def observed_frequencies(entries: Dict[str, List[str]]) -> Optional[pd.DataFrame]:

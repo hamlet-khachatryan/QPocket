@@ -15,7 +15,10 @@ run_dir = run(cfg)
 
 `run` ingests the structures (`pdb_query` searches RCSB; `fragment_screen` copies
 local files), builds the reference once, takes every structure through the same
-per-structure chain, and writes the run tables, distances and clusters.
+per-structure chain (align, clean, find every site ligand, protonate, read contacts,
+detect cavities), groups the ligands into binding sites and cuts one point cloud per
+site per structure. It names no reference ligand and computes no features or
+distances; those are per-site steps (`qpocket site …`, or the explorer).
 
 ## Pockets without a run
 
@@ -35,7 +38,6 @@ config value:
 | Registry | Config | Built-ins |
 |---|---|---|
 | `SOURCES` | `mode` | `pdb_query`, `local` |
-| `POCKETS` | `reference.pocket_mode` | `cavities`, `box` |
 | `CHARGES` | `charges.use` | `pdb2pqr` |
 | `FEATURES` | `features.enabled` | `apbs`, `cp_lp`, `hbond`, `aromatic`, `template` |
 | `CONTACTS` | `contacts.use` | `prolif` |

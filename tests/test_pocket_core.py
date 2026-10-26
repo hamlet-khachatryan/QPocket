@@ -12,14 +12,6 @@ def test_select_cavity_by_centroid_picks_the_first_overlapping_one():
     assert pocket.select_cavity_by_centroid([b], np.array([0.5, 0, 0])) is None
 
 
-def test_select_cavity_by_bbox_maximises_points_inside():
-    small = np.array([[0.5, 0.5, 0.5]])
-    big = np.array([[0.2, 0.2, 0.2], [0.8, 0.8, 0.8], [5, 5, 5]])
-    best, overlap = pocket.select_cavity_by_bbox([small, big], np.zeros(3), np.ones(3))
-    assert best is big and overlap == 2
-    assert pocket.select_cavity_by_bbox([np.array([[9.0, 9, 9]])], np.zeros(3), np.ones(3)) == (None, 0)
-
-
 def test_interacting_residue_coords_honours_chain_tags():
     atoms = pd.DataFrame({"residue_name": ["TYR", "TYR"], "residue_number": [795, 795],
                           "chain_id": ["A", "B"], "x_coord": [1.0, 9.0],

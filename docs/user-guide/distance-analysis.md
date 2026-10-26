@@ -1,9 +1,37 @@
 # Distance Analysis
 
+`qpocket run` computes no distances. Distance analysis is a per-site step, run after
+the sites exist, either in the explorer or from the command line.
+
+## Running it
+
+In the explorer (`qpocket explore RUNS`), the **Binding sites** section has a site
+picker, a status line and three buttons: **Shape clustering**, **Featurise** and
+**Two-stage clustering**. **Regroup sites** changes the site grouping itself.
+
+From the command line:
+
+```bash
+qpocket site list      runs/7KG6
+qpocket site shape     runs/7KG6 --site site_01   # shape only, no features
+qpocket site featurize runs/7KG6 --site site_01
+qpocket site cluster   runs/7KG6 --site site_01   # shape, then chemistry
+qpocket site regroup   runs/7KG6 --cutoff 5.0
+```
+
+Shape clustering (clustering mode `shape_only`) needs no featurisation, so it is the
+quick first look. Featurise writes `featurized.csv` beside each cloud; two-stage
+clustering needs it. Results land in `sites/site_NN/metadata/`. On a cluster, see
+[Running on a cluster](hpc.md).
+
+These steps read the settings saved with the run in `<run>/metadata/config.yaml`.
+Edit that file to change features, charges, distance or clustering settings for
+later site steps; the YAML you passed to `qpocket run` is not read again.
+
 ## Pipeline
 
 ```
-featurized.csv  (per pocket)
+sites/site_NN/pockets/<pdb_id>/featurized.csv  (per pocket)
       │
       ▼
 compute_geodesic()        ← shortest-path distances on neighbourhood graph
@@ -18,7 +46,7 @@ pairwise L2 distance matrix
 Affinity Propagation clustering
       │
       ▼
-  spectral_distance_matrix.csv
+  sites/site_NN/metadata/spectral_distance_matrix.csv
   clustering_metadata.csv
   selected_representatives.csv
 ```
@@ -52,6 +80,15 @@ Eigenvalues $\boldsymbol{\lambda} \in \mathbb{R}^k$ and GFT power spectrum $|\ma
 $$
 d(i,j) = \alpha \|\boldsymbol{\lambda}_i - \boldsymbol{\lambda}_j\| + (1-\alpha)\,\beta\,\|\mathbf{f}_i - \mathbf{f}_j\|
 $$
+
+## Clustering
+
+The default two-stage mode cuts a hierarchical (average-linkage) tree on shape,
+then another within each shape cluster on chemistry. Each cut is by default
+`relative` at 0.5: half the height of that tree's highest merge. `threshold` (an
+absolute height) and `count` (a fixed `k >= 2`) are the alternatives; see
+[Configuration](../configuration.md#distanceclustering). The cluster count is
+never chosen by silhouette.
 
 ## Clustering — Affinity Propagation
 

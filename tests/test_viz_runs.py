@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 import pytest
 
+from qpocket.io import layout
 from qpocket.viz.runs import (
     default_roots,
     find_runs,
@@ -19,33 +22,43 @@ from qpocket.viz.runs import (
     is_run,
     resolve_location,
     run_label,
+    site_link_cutoff,
 )
 
 
 def make_run(path: Path, complete: bool = True) -> Path:
     (path / "metadata").mkdir(parents=True)
-    (path / "pockets").mkdir()
+    (path / "sites").mkdir()
     (path / "metadata" / "master.csv").write_text("pdb_id\n")
-    (path / "metadata" / "run.json").write_text('{"layout_version": 2}')
+    (path / "metadata" / "run.json").write_text(json.dumps({"layout_version": layout.LAYOUT_VERSION}))
     if complete:
-        (path / "metadata" / "spectral_distance_matrix.csv").write_text(",\n")
+        (path / "sites" / "sites.csv").write_text("site_id\n")
     return path
 
 
 # --- recognising a run ----------------------------------------------------
 
 
-def test_a_directory_with_master_and_pockets_is_a_run(tmp_path):
-    assert is_run(make_run(tmp_path / "7KG6"))
+def test_v3_run_listed(tmp_path):
+    run = make_run(tmp_path / "7KG6")
+    assert is_run(run)
+    assert find_runs([tmp_path]) == [run.resolve()]
 
 
-def test_master_without_pockets_is_not_a_run(tmp_path):
+def test_layout2_run_not_listed(tmp_path):
+    run = make_run(tmp_path / "7KG6")
+    (run / "metadata" / "run.json").write_text(json.dumps({"layout_version": 2}))
+    assert not is_run(run)
+    assert find_runs([tmp_path]) == []
+
+
+def test_master_without_sites_is_not_a_run(tmp_path):
     (tmp_path / "metadata").mkdir()
     (tmp_path / "metadata" / "master.csv").write_text("pdb_id\n")
     assert not is_run(tmp_path)
 
 
-def test_a_run_without_a_distance_matrix_is_incomplete(tmp_path):
+def test_a_run_without_a_site_table_is_incomplete(tmp_path):
     assert not is_complete(make_run(tmp_path / "r", complete=False))
 
 
@@ -63,9 +76,9 @@ def test_runs_nested_under_a_project_are_found(tmp_path):
 
 
 def test_the_walk_never_enters_a_run(tmp_path):
-    """A run's pockets/ can hold thousands of files; none should be visited."""
+    """A run's sites/ can hold thousands of files; none should be visited."""
     run = make_run(tmp_path / "7KG6")
-    make_run(run / "pockets" / "decoy")  # would be found if the walk descended
+    make_run(run / "sites" / "decoy")  # would be found if the walk descended
     assert find_runs([tmp_path]) == [run.resolve()]
 
 
@@ -134,3 +147,28 @@ def test_the_environment_variable_adds_search_roots(tmp_path, monkeypatch):
 
 def test_command_line_roots_are_included(tmp_path):
     assert tmp_path / "cli" in default_roots(tmp_path, extra=[str(tmp_path / "cli")])
+
+
+# --- the regroup control's starting cutoff --------------------------------
+
+
+def test_the_cutoff_starts_at_the_runs_own(tmp_path):
+    from qpocket.config import QPocketConfig, evolve, save_run_config
+
+    ws = layout.create(str(tmp_path), "r")
+    save_run_config(evolve(evolve(QPocketConfig(), "reference.pdb_id", "1ABC"), "sites.link_cutoff", 6.5), ws)
+    assert site_link_cutoff(ws.root, 0.5, 20.0) == 6.5
+
+
+def test_a_cutoff_outside_the_control_is_clamped(tmp_path):
+    from qpocket.config import QPocketConfig, evolve, save_run_config
+
+    ws = layout.create(str(tmp_path), "r")
+    save_run_config(evolve(evolve(QPocketConfig(), "reference.pdb_id", "1ABC"), "sites.link_cutoff", 25.0), ws)
+    assert site_link_cutoff(ws.root, 0.5, 20.0) == 20.0
+
+
+def test_an_unreadable_config_falls_back_to_the_default(tmp_path):
+    from qpocket.config import QPocketConfig
+
+    assert site_link_cutoff(tmp_path, 0.5, 20.0) == QPocketConfig().sites.link_cutoff

@@ -8,11 +8,13 @@ from pathlib import Path
 import pandas as pd
 from eliot import log_message, start_action
 from joblib import Parallel, delayed
+from scipy.spatial.distance import pdist, squareform
 
 from qpocket.config import QPocketConfig
 from qpocket.core import spectral as sp
 from qpocket.core.spectral import pad_or_truncate  # noqa: F401  (re-exported)
 from qpocket.io import cache, tables
+from qpocket.io.layout import Workspace
 from qpocket.types import Fingerprint
 from qpocket.pipelines.clustering import assign_clusters, write_clustering
 
@@ -33,17 +35,17 @@ def _workers(cfg: QPocketConfig) -> int:
 
 
 def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path, None]:
-    """Builds a geodesic distance matrix from a featurised pocket CSV.
+    """Builds a geodesic distance matrix from a pocket point cloud.
 
     Args:
-        csv_path: Path to a featurised pocket CSV with columns x, y, z, …features….
+        csv_path: Path to a ``binding_site.csv`` with columns x, y, z (any other columns are ignored).
         neighbor_radius: Maximum Euclidean distance (Å) to connect two points in the neighbourhood graph.
 
     Returns:
         Path to the cached ``geospectral_cache.npz`` file, or ``None`` if the point cloud has fewer than 5 points or an error occurs.
     """
     cache_path = csv_path.with_name("geospectral_cache.npz")
-    # Keyed on content: the Interactions pass rewrites featurized.csv after a first geodesic.
+    # Keyed on the point cloud alone, so featurising it afterwards leaves the cache current.
     source_hash = tables.file_hash(csv_path) if csv_path.exists() else ""
     if cache_path.exists() and cache.is_current(cache_path, source_hash, neighbor_radius):
         return cache_path
@@ -58,19 +60,17 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
 
             # Use explicit column names — never rely on positional order.
             coord_cols = ["x", "y", "z"]
-            feature_cols = [c for c in df.columns if c not in coord_cols]
 
             if not all(c in df.columns for c in coord_cols):
                 log_message(
                     message_type="error",
                     stage="compute_geodesic",
                     pocket=csv_path.parent.name,
-                    error="featurized.csv missing x/y/z columns",
+                    error="point cloud missing x/y/z columns",
                 )
                 return None
 
             coords = df[coord_cols].to_numpy(dtype=float)
-            features = df[feature_cols].to_numpy(dtype=float) if feature_cols else np.empty((len(df), 0))
             n_points = len(coords)
 
             if n_points < 5:
@@ -92,7 +92,7 @@ def compute_geodesic(csv_path: Path, neighbor_radius: float = 2.0) -> Union[Path
                 )
                 return None
 
-            cache.save_geodesic(cache_path, D_geo, features, source_hash, neighbor_radius)
+            cache.save_geodesic(cache_path, D_geo, source_hash, neighbor_radius)
 
             log_message(
                 message_type="geodesic_complete",
@@ -132,6 +132,29 @@ def compute_spectral_fingerprint(
         return sp.spectral_fingerprint(D_geo, F, global_k, sigma)
 
 
+def _features(csv_path: Path) -> np.ndarray:
+    """Raw feature columns of a featurised point table, in its row order.
+
+    Args:
+        csv_path: ``featurized.csv``; ``binding_site.csv`` sits beside it.
+
+    Returns:
+        (N, D) features without the x, y, z columns.
+
+    Raises:
+        ValueError: If the table has no feature columns or its points are not the cloud's.
+    """
+    table = pd.read_csv(csv_path)
+    _, cloud = tables.read_point_table(csv_path.with_name("binding_site.csv"))
+    name = csv_path.parent.name
+    if table.shape[1] <= 3:
+        raise ValueError(f"{name}: featurized.csv has no feature columns")
+    points = table[["x", "y", "z"]].to_numpy(dtype=float)
+    if points.shape != cloud.shape or not np.allclose(points, cloud):
+        raise ValueError(f"{name}: featurized.csv is not binding_site.csv's points in the same order")
+    return table.drop(columns=["x", "y", "z"]).to_numpy(dtype=float)
+
+
 def data_processing_spectral(
     cfg: QPocketConfig,
     geo_dist_paths: List[Path],
@@ -141,11 +164,14 @@ def data_processing_spectral(
 
     Args:
         cfg: QPocket configuration.
-        geo_dist_paths: List of paths to ``geospectral_cache.npz`` files.
+        geo_dist_paths: List of paths to ``geospectral_cache.npz`` files, each beside its ``featurized.csv``.
         scaler_out: Where to save the fitted scaler, if given.
 
     Returns:
         Mapping from pocket ID to ``(eigenvalues, spectral_feature_vector)``.
+
+    Raises:
+        ValueError: If a pocket's ``featurized.csv`` does not match its cloud or geodesic.
     """
     with start_action(
         action_type="data_processing_spectral",
@@ -157,10 +183,10 @@ def data_processing_spectral(
         for p in geo_dist_paths:
             try:
                 pid = p.parent.name if p.name == "geospectral_cache.npz" else p.stem
-                D, F = cache.load_geodesic(p)
-                if D.shape[0] <= cfg.distance.max_points:
-                    raw_data[pid] = (D, F)
-                    valid_ids.append(pid)
+                D = cache.load_geodesic(p)
+                F = _features(p.with_name("featurized.csv"))
+            except ValueError:
+                raise
             except Exception as e:
                 log_message(
                     message_type="load_error",
@@ -168,6 +194,12 @@ def data_processing_spectral(
                     file=str(p),
                     error=str(e),
                 )
+                continue
+            if len(F) != len(D):
+                raise ValueError(f"{pid}: featurized.csv has {len(F)} rows, the geodesic has {len(D)}")
+            if D.shape[0] <= cfg.distance.max_points:
+                raw_data[pid] = (D, F)
+                valid_ids.append(pid)
 
         log_message(
             message_type="loaded_pockets",
@@ -217,20 +249,22 @@ def data_processing_spectral(
         return processed_cache
 
 
-def pocket_manifest(cfg: QPocketConfig, dirs: Dict[str, Path]) -> Tuple[List[Path], List[str]]:
-    """Featurised pocket files named by ``master.csv``, and their PDB IDs.
+def pocket_manifest(cfg: QPocketConfig, ws: Workspace,
+                    require_features: bool) -> Tuple[List[Path], List[str]]:
+    """Pocket point clouds named by ``master.csv``, and their PDB IDs.
 
     Args:
         cfg: QPocket configuration.
-        dirs: Directory map from ``layout.create``.
+        ws: The run's workspace.
+        require_features: Keep only pockets that also have a ``featurized.csv``.
 
     Returns:
-        Parallel lists of ``featurized.csv`` paths and PDB IDs, in master order.
+        Parallel lists of ``binding_site.csv`` paths and PDB IDs, in master order.
 
     Raises:
         FileNotFoundError: If ``master.csv`` is absent.
     """
-    master_csv_path = dirs["metadata"] / "master.csv"
+    master_csv_path = ws["metadata"] / "master.csv"
     if not master_csv_path.exists():
         raise FileNotFoundError(f"master.csv not found at {master_csv_path}")
 
@@ -240,8 +274,8 @@ def pocket_manifest(cfg: QPocketConfig, dirs: Dict[str, Path]) -> Tuple[List[Pat
 
     for _, row in df_master.iterrows():
         pdb_id = row["pdb_id"]
-        candidate = dirs["pockets"] / pdb_id / "featurized.csv"
-        if candidate.exists():
+        candidate = ws["pockets"] / pdb_id / "binding_site.csv"
+        if candidate.exists() and (not require_features or candidate.with_name("featurized.csv").exists()):
             pocket_files.append(candidate)
             pdb_ids.append(pdb_id)
 
@@ -277,6 +311,59 @@ def build_distance_matrices(
         )
 
 
+def shape_fingerprints(cfg: QPocketConfig, cache_paths: List[Path]) -> Dict[str, np.ndarray]:
+    """Laplacian eigenvalues of each pocket, from its geodesic cache alone.
+
+    Args:
+        cfg: QPocket configuration.
+        cache_paths: ``geospectral_cache.npz`` files, one per pocket directory.
+
+    Returns:
+        Pocket ID to eigenvalues; pockets over ``distance.max_points`` or too small are left out.
+    """
+    out: Dict[str, np.ndarray] = {}
+    for p in cache_paths:
+        D = cache.load_geodesic(p)
+        if D.shape[0] > cfg.distance.max_points:
+            continue
+        lam = sp.spectral_fingerprint(D, np.zeros((D.shape[0], 0)), cfg.distance.global_k, cfg.distance.sigma)[0]
+        if lam is not None:
+            out[p.parent.name] = lam
+    return out
+
+
+def compute_shape_matrix(cfg: QPocketConfig, ws: Workspace) -> Path:
+    """Write the shape distance matrix of a site's pockets, with no featurisation needed.
+
+    Args:
+        cfg: QPocket configuration.
+        ws: The site's workspace.
+
+    Returns:
+        Path of ``shape_distance_matrix.csv``.
+
+    Raises:
+        ValueError: If fewer than two pockets have a usable point cloud.
+    """
+    pocket_files, _ = pocket_manifest(cfg, ws, require_features=False)
+    # compute_geodesic reuses a current cache and returns None for clouds under 5 points.
+    caches = Parallel(n_jobs=_workers(cfg), verbose=0)(
+        delayed(compute_geodesic)(p, neighbor_radius=cfg.distance.geo_graph_neighbor_radius)
+        for p in pocket_files
+    )
+    lams = shape_fingerprints(cfg, [c for c in caches if c is not None])
+    if len(lams) < 2:
+        raise ValueError(f"{ws.root.name} has fewer than 2 pockets to compare")
+    ids = sorted(lams)
+    d_shape = squareform(pdist(np.array([lams[i] for i in ids], dtype=np.float64), metric="euclidean"))
+    # Matrices of a featurised run would describe other pockets than this one.
+    for stale in ("feature_distance_matrix.csv", "spectral_distance_matrix.csv"):
+        (ws["metadata"] / stale).unlink(missing_ok=True)
+    out_path = ws["metadata"] / "shape_distance_matrix.csv"
+    pd.DataFrame(d_shape, index=ids, columns=ids).to_csv(out_path)
+    return out_path
+
+
 def compute_spectral_distance_matrix(
     cfg: QPocketConfig,
     dirs: Dict[str, Path],
@@ -293,7 +380,7 @@ def compute_spectral_distance_matrix(
     with start_action(action_type="compute_spectral_distance_matrix"):
 
         try:
-            pocket_files, pdb_ids = pocket_manifest(cfg, dirs)
+            pocket_files, pdb_ids = pocket_manifest(cfg, dirs, require_features=True)
         except FileNotFoundError as exc:
             log_message(
                 message_type="error",

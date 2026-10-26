@@ -1,9 +1,9 @@
-"""Collect stage: interaction frequency and utilisation tables for a run."""
+"""Collect stage: the run's structure tables, and each site's interaction tables."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Any, List, Sequence, Tuple
 
 import pandas as pd
 from eliot import log_message, start_action
@@ -118,31 +118,41 @@ def write_feature_record(meta_dir: Path, enabled: Sequence[str]) -> Path:
     return path
 
 
-def collect_run(ws: "layout.Workspace", records: Sequence[Structure], failures: Sequence[Failure],
-                features: Sequence[str], compression: str) -> None:
-    """Write the run-wide tables from the per-structure records.
+def collect_structures(ws: "layout.Workspace", records: Sequence[Any], failures: Sequence[Failure]) -> None:
+    """Write master.csv and failures.csv, the run-level tables.
 
     Args:
-        ws: The run.
-        records: Finished records, in input order; that order decides HDF5 insertion order and tie-breaks.
+        ws: The run or the site.
+        records: Records with master_row(), in input order.
         failures: Structures that dropped out.
-        features: Feature plug-in names.
+    """
+    master_csv = ws.metadata / "master.csv"
+    pd.DataFrame([r.master_row() for r in records]).to_csv(master_csv, index=False)
+    log_message(message_type="master_csv_saved", path=str(master_csv), n_structures=len(records))
+    pd.DataFrame([f._asdict() for f in failures], columns=list(Failure._fields)).to_csv(
+        ws.metadata / "failures.csv", index=False)
+
+
+def collect_run(ws: "layout.Workspace", records: Sequence[Any], failures: Sequence[Failure],
+                compression: str) -> None:
+    """Write the master, actives and interaction tables of a site.
+
+    Args:
+        ws: The site.
+        records: Records with pdb_id, master_row(), potential, observed and actives, in input order.
+        failures: Structures that dropped out.
         compression: HDF5 compression.
     """
     with start_action(action_type="collect_structure_results"):
-        master_csv = ws.metadata / "master.csv"
-        pd.DataFrame([r.master_row() for r in records]).to_csv(master_csv, index=False)
-        log_message(message_type="master_csv_saved", path=str(master_csv), n_structures=len(records))
-        pd.DataFrame([f._asdict() for f in failures], columns=list(Failure._fields)).to_csv(
-            ws.metadata / "failures.csv", index=False)
+        collect_structures(ws, records, failures)
 
         with open(ws.screening / "actives.smi", "w", encoding="utf-8") as f:
-            f.write("SMILES\tPDB_ID\tLigand_Name\n")
+            f.write("SMILES\tPDB_ID\tLigand_Name\tLigand_File\n")
             for r in records:
-                if r.smiles:
-                    f.write(f"{r.smiles[0]}\t{r.pdb_id}\t{r.smiles[1]}\n")
+                for smiles, name, ligand_file in r.actives:
+                    if smiles:
+                        f.write(f"{smiles}\t{r.pdb_id}\t{name}\t{ligand_file}\n")
 
-        write_feature_record(ws.metadata, features)
         obs_h5 = ws.metadata / "observed_interactions.h5"
         pot_h5 = ws.metadata / "potential_interactions.h5"
         hdf5.save_interactions({r.pdb_id: list(r.potential) for r in records}, pot_h5,
@@ -160,15 +170,12 @@ def collect_run(ws: "layout.Workspace", records: Sequence[Structure], failures: 
             log_message(message_type="error", stage="frequency_analysis", error=str(e))
 
 
-def collect_from_parts(ws: "layout.Workspace", pdb_ids: Sequence[str], features: Sequence[str],
-                       compression: str) -> Tuple[List[Structure], List[Failure]]:
+def collect_from_parts(ws: "layout.Workspace", pdb_ids: Sequence[str]) -> Tuple[List[Structure], List[Failure]]:
     """Collect a run whose structures were processed as separate tasks.
 
     Args:
         ws: The run.
         pdb_ids: Every ingested structure, in input order.
-        features: Feature plug-in names.
-        compression: HDF5 compression.
 
     Returns:
         (records, failures) as written.
@@ -193,5 +200,5 @@ def collect_from_parts(ws: "layout.Workspace", pdb_ids: Sequence[str], features:
         log_message(message_type="warning", stage="collect_structure_results",
                     warning="structures with no sidecar",
                     pdb_ids=[f.pdb_id for f in failures][:20], n_missing=len(failures))
-    collect_run(ws, records, failures, features, compression)
+    collect_structures(ws, records, failures)
     return records, failures

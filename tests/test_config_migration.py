@@ -20,7 +20,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from qpocket.config import load_qpocket_config
-from qpocket.config import LEGACY_KEYS, fill_defaults, migrate_legacy
+from qpocket.config import LEGACY_KEYS, QPocketConfig, fill_defaults, migrate_legacy
 
 
 def migrate(payload):
@@ -159,3 +159,99 @@ def test_an_existing_config_still_loads(path):
 def test_an_existing_config_reports_at_most_one_rename_notice(path):
     _, notices = load_with_notices(path)
     assert len([n for n in notices if "renamed" in n]) <= 1
+
+
+def test_ligand_id_is_obsolete():
+    cfg = OmegaConf.create({"reference": {"ligand_id": "LKQ", "ligand_chain_id": "A",
+                                          "pocket_mode": "bounding_box"}})
+    warnings = migrate_legacy(cfg)
+    assert any("reference.ligand_id is obsolete" in w for w in warnings)
+    assert any("reference.pocket_mode is obsolete" in w for w in warnings)
+
+
+def test_the_old_slurm_stages_load_with_a_warning(tmp_path):
+    """A config written for the apbs/featurize/distance stages must still load, not fail validation."""
+    path = tmp_path / "old.yaml"
+    path.write_text("reference:\n  pdb_id: 1ABC\nslurm:\n  split_apbs_stage: true\n  stages:\n"
+                    "    featurize: {cpus: 1, mem: 8G, time: '04:00:00'}\n"
+                    "    distance: {cpus: 16, mem: 32G, time: '06:00:00'}\n", encoding="utf-8")
+    cfg, notices = load_with_notices(str(path))
+    assert set(cfg.slurm.stages) == {"structure", "site_featurize", "site_cluster"}
+    for key in ("slurm.split_apbs_stage", "slurm.stages.featurize", "slurm.stages.distance"):
+        assert any(f"{key} is obsolete" in n for n in notices), key
+
+
+def test_an_obsolete_slurm_stage_names_its_successors():
+    cfg = OmegaConf.create({"slurm": {"stages": {"featurize": {"cpus": 1}}}})
+    warnings = migrate_legacy(cfg)
+    assert ("slurm.stages.featurize is obsolete; set slurm.stages.structure (per-structure chain), "
+            "slurm.stages.site_featurize (features/APBS) or slurm.stages.site_cluster instead") in warnings
+
+
+def test_sites_defaults():
+    s = QPocketConfig().sites
+    assert (s.min_heavy_atoms, s.link_cutoff, s.box_padding) == (6, 4.0, 4.0)
+
+
+def test_save_intermediate_is_obsolete(tmp_path):
+    import inspect
+
+    from qpocket.config import IOConfig
+    from qpocket.pipelines.run import run_qpocket_pipeline
+
+    path = tmp_path / "old.yaml"
+    path.write_text("reference:\n  pdb_id: 1ABC\nio:\n  save_intermediate: true\n", encoding="utf-8")
+    _, notices = load_with_notices(str(path))
+    assert any("io.save_intermediate is obsolete" in n for n in notices)
+    assert not hasattr(IOConfig(), "save_intermediate")
+    assert "save_intermediate" not in inspect.signature(run_qpocket_pipeline).parameters
+
+
+def test_k_range_is_obsolete():
+    cfg = OmegaConf.create({"distance": {"clustering": {"shape": {"k_range": [2, 9]}}}})
+    assert any("k_range is obsolete" in w for w in migrate_legacy(cfg))
+
+
+def test_a_config_with_k_range_still_loads(tmp_path):
+    path = tmp_path / "old.yaml"
+    path.write_text("reference:\n  pdb_id: 1ABC\ndistance:\n  clustering:\n    chem:\n"
+                    "      method: kmedoids\n      k: 3\n      criterion: count\n      k_range: [2, 6]\n",
+                    encoding="utf-8")
+    cfg, notices = load_with_notices(str(path))
+    assert cfg.distance.clustering.chem.k == 3
+    assert any("distance.clustering.chem.k_range is obsolete" in n for n in notices)
+
+
+def test_a_run_saved_with_the_silhouette_defaults_still_loads(tmp_path):
+    import subprocess
+
+    from qpocket.config import load_run_config
+
+    old = subprocess.run(["git", "show", "d9bcb50:conf/config.yaml"], capture_output=True, text=True,
+                         cwd=Path(__file__).resolve().parents[1])
+    if old.returncode:
+        pytest.skip("commit d9bcb50 is not in this checkout")
+    (tmp_path / "metadata").mkdir()
+    saved = old.stdout.replace("pdb_id: null", 'pdb_id: "1ABC"', 1)  # a run always has its reference
+    (tmp_path / "metadata" / "config.yaml").write_text(saved, encoding="utf-8")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        cfg = load_run_config(tmp_path)
+    c = cfg.distance.clustering
+    for name in ("shape", "chem"):
+        stage = getattr(c, name)
+        assert (stage.method, stage.criterion, stage.threshold) == ("hierarchical", "relative", 0.5)
+        assert f"distance.clustering.{name} chose k by silhouette" in err.getvalue()
+    assert c.single.method == "affinity"
+
+
+def test_an_explicit_k_means_count(tmp_path):
+    path = tmp_path / "k.yaml"
+    path.write_text("reference:\n  pdb_id: 1ABC\ndistance:\n  clustering:\n"
+                    "    shape:\n      k: 3\n    chem:\n      method: kmedoids\n      k: 3\n",
+                    encoding="utf-8")
+    cfg, _ = load_with_notices(str(path))
+    assert (cfg.distance.clustering.shape.criterion, cfg.distance.clustering.shape.k) == ("count", 3)
+    assert (cfg.distance.clustering.chem.criterion, cfg.distance.clustering.chem.k) == ("count", 3)
+    cfg = load_qpocket_config(overrides=["reference.pdb_id=1ABC", "distance.clustering.shape.k=4"])
+    assert (cfg.distance.clustering.shape.criterion, cfg.distance.clustering.shape.k) == ("count", 4)

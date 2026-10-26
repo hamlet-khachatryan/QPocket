@@ -2,9 +2,9 @@
 
 # ``qpocket slurm generate`` writes scripts whose body is one ``qpocket task
 # <stage>`` call. These are those stages. Each is a thin driver over the same
-# functions the serial pipeline calls, which is deliberate: there is one
-# implementation of the science and two ways of scheduling it, not two
-# implementations.
+# functions the serial pipeline and ``qpocket site`` call, which is deliberate:
+# there is one implementation of the science and two ways of scheduling it, not
+# two implementations.
 #
 # Three properties every task here holds to, because an array job makes all three
 # load-bearing:
@@ -13,10 +13,10 @@
 # resubmitted array therefore re-runs only what is missing, and finishes in
 # seconds when nothing is. ``--force`` overrides.
 #
-# *Isolated.* A per-structure task writes only inside ``pockets/<pdb_id>/``,
-# ``structures/extracted_ligands/`` and its own JSON sidecar. It never touches
-# ``master.csv``, the HDF5 files or ``actives.smi`` — those belong to ``collect``,
-# which runs once.
+# *Isolated.* A ``structure`` task writes only its own structure files and JSON
+# sidecar; a ``site_featurize`` task writes only inside its own
+# ``sites/<site>/pockets/<pdb_id>/``. The run- and site-wide tables belong to
+# ``sites`` and ``site_cluster``, which run once.
 #
 # *Loud.* A task that produces no output raises. Several of the underlying
 # functions return early and log on failure, which is right for a serial run that
@@ -28,25 +28,24 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import pandas as pd
 from eliot import log_message, start_action
 
+from qpocket.config import QPocketConfig, save_run_config
 from qpocket.io import layout
 from qpocket.pipelines import collect as collecting
+from qpocket.pipelines.distance import pocket_manifest
 from qpocket.pipelines.reference import build_reference, load_reference
+from qpocket.pipelines.sites import extract_all_sites, sync_sites
 from qpocket.pipelines.structure import process, structure_params
-from qpocket.config import QPocketConfig
-from qpocket.pipelines.distance import (
-    compute_geodesic,
-    compute_spectral_distance_matrix,
-    pocket_manifest,
-)
 
-#: Stages ``run_task`` accepts, in pipeline order.
-TASK_NAMES = ("prepare", "apbs", "featurize", "collect", "geodesic", "distance")
+#: Stages of the run, which ``run_task`` accepts, in pipeline order.
+RUN_TASKS = ("prepare", "structure", "sites")
 
-#: Stages that take a structure, and so need a manifest and an index.
-PER_STRUCTURE = ("apbs", "featurize", "geodesic")
+#: Stages of one binding site, run by ``qpocket.arms.sites.run_site_task``: the core run imports no arm.
+SITE_TASKS = ("site_featurize", "site_cluster")
+
+#: Every stage ``qpocket task`` accepts.
+TASK_NAMES = RUN_TASKS + SITE_TASKS
 
 
 class TaskError(RuntimeError):
@@ -102,13 +101,13 @@ def task_prepare(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False)
             raise TaskError(f"prepare failed: {e}; every per-structure task depends on it") from e
 
 
-def task_featurize(
+def task_structure(
     cfg: QPocketConfig,
     dirs: Dict[str, Path],
     pdb_id: str,
     force: bool = False,
 ) -> None:
-    """Extract, featurise and analyse one structure.
+    """Align, clean, protonate and read the ligands, contacts and cavities of one structure.
 
     Args:
         cfg: QPocket configuration.
@@ -119,10 +118,10 @@ def task_featurize(
     Raises:
         TaskError: If the task leaves no sidecar behind.
     """
-    with start_action(action_type="task_featurize", pdb_id=pdb_id):
+    with start_action(action_type="task_structure", pdb_id=pdb_id):
         part = layout.parts_dir(dirs) / f"{pdb_id}.json"
         if part.exists() and not force:
-            log_message(message_type="skip", stage="featurize", pdb_id=pdb_id,
+            log_message(message_type="skip", stage="structure", pdb_id=pdb_id,
                         reason="sidecar exists")
             return
         try:
@@ -132,132 +131,55 @@ def task_featurize(
             raise TaskError(str(e)) from e
         process(ref, structure_params(cfg), dirs, raw)
         if not part.exists():
-            raise TaskError(f"featurisation of {pdb_id} wrote no sidecar at {part}")
+            raise TaskError(f"processing {pdb_id} wrote no sidecar at {part}")
 
 
-def task_apbs(
-    cfg: QPocketConfig,
-    dirs: Dict[str, Path],
-    pdb_id: str,
-    force: bool = False,
-) -> None:
-    """Reserved for the split APBS stage.
-
-    Raises:
-        TaskError: Always.
-    """
-    raise TaskError(
-        "slurm.split_apbs_stage is not implemented yet: it requires caching the "
-        "APBS .dx grid per structure. Set it to false — APBS still runs as one "
-        "task per structure inside the featurize stage."
-    )
-
-
-def task_collect(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False) -> None:
-    """Merge the per-structure sidecars into the run-wide tables.
+def task_sites(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False) -> None:
+    """Merge the sidecars, discover the binding sites, cut every site's clouds and snapshot the config.
 
     Args:
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
-        force: Unused; collect always rebuilds from whatever sidecars exist.
+        force: Unused; the stage always rebuilds from whatever sidecars exist.
 
     Raises:
-        TaskError: If no sidecars were written, which means every featurisation task failed and going further would produce empty tables.
+        TaskError: If no sidecars were written, which means every structure task failed, or no site table results.
     """
-    with start_action(action_type="task_collect"):
+    with start_action(action_type="task_sites"):
         if not any(layout.parts_dir(dirs).glob("*.json")):
             raise TaskError(
-                "no per-structure sidecars found — the featurize stage produced "
+                "no per-structure sidecars found — the structure stage produced "
                 "nothing, so there is nothing to collect"
             )
         ids = [p.stem for p in layout.structure_files(dirs)]
-        collecting.collect_from_parts(dirs, ids, cfg.features.enabled, cfg.io.compression)
+        records, _ = collecting.collect_from_parts(dirs, ids)
+        extract_all_sites(cfg, dirs, sync_sites(cfg, dirs, records)[0], records)
+        save_run_config(cfg, dirs)
 
-        obs_h5 = dirs["metadata"] / "observed_interactions.h5"
-        if not obs_h5.exists():
-            raise TaskError(f"collect wrote no {obs_h5.name}")
+        table = dirs.sites / "sites.csv"
+        if not table.exists():
+            raise TaskError(f"the sites stage wrote no {table}")
 
 
-def task_geodesic(
-    cfg: QPocketConfig,
-    dirs: Dict[str, Path],
-    pdb_id: str,
-    force: bool = False,
-) -> None:
-    """Build one pocket's geodesic graph and cache its distances.
+def manifest_ids(cfg: QPocketConfig, dirs: Dict[str, Path], stage: str,
+                 site: Optional[str] = None) -> List[str]:
+    """Structures an array stage should cover, read from what is already on disk.
 
     Args:
         cfg: QPocket configuration.
-        dirs: Directory path dictionary.
-        pdb_id: Pocket to process.
-        force: Delete an existing cache and rebuild it.
-
-    Raises:
-        TaskError: If the pocket has no ``featurized.csv``.
-    """
-    with start_action(action_type="task_geodesic", pdb_id=pdb_id):
-        pocket_csv = dirs["pockets"] / pdb_id / "featurized.csv"
-        if not pocket_csv.exists():
-            raise TaskError(
-                f"{pocket_csv} not found — {pdb_id} was not featurised successfully"
-            )
-
-        cache = pocket_csv.with_name("geospectral_cache.npz")
-        if force and cache.exists():
-            cache.unlink()
-
-        result = compute_geodesic(
-            pocket_csv,
-            neighbor_radius=cfg.distance.geo_graph_neighbor_radius,
-        )
-        # A pocket under five points legitimately has no graph; the distance
-        # stage already skips those, so this is not an error.
-        if result is None:
-            log_message(
-                message_type="skip", stage="geodesic", pdb_id=pdb_id,
-                reason="no geodesic graph (too few points or no edges)",
-            )
-
-
-def task_distance(cfg: QPocketConfig, dirs: Dict[str, Path], force: bool = False) -> None:
-    """Fingerprint every pocket, build the distance matrices and cluster.
-
-    Args:
-        cfg: QPocket configuration.
-        dirs: Directory path dictionary.
-        force: Unused; the stage always recomputes from the cached geodesics.
-
-    Raises:
-        TaskError: If no distance matrix results.
-    """
-    with start_action(action_type="task_distance"):
-        compute_spectral_distance_matrix(cfg, dirs)
-
-        matrix = dirs["metadata"] / "spectral_distance_matrix.csv"
-        if not matrix.exists():
-            raise TaskError(f"the distance stage wrote no {matrix.name}")
-
-
-def manifest_ids(cfg: QPocketConfig, dirs: Dict[str, Path], stage: str) -> List[str]:
-    """Structures a stage should cover, read from what is already on disk.
-
-    Args:
-        cfg: QPocket configuration.
-        dirs: Directory path dictionary.
-        stage: Stage name.
+        dirs: Directory path dictionary of the run.
+        stage: ``structure`` or ``site_featurize``.
+        site: The site, for ``site_featurize``.
 
     Returns:
-        PDB IDs, in input order (``master.csv`` order for geodesic).
+        PDB IDs: every ingested structure, or the site's ``master.csv`` structures that have a cloud there.
     """
-    if stage == "featurize":
+    if stage == "structure":
         return [p.stem for p in layout.structure_files(dirs)]
-    csv_path = dirs["metadata"] / "master.csv"
-    if stage == "geodesic" and csv_path.exists():
-        _, ids = pocket_manifest(cfg, dirs)
-        return ids
-    if csv_path.exists():
-        return [str(v) for v in pd.read_csv(csv_path)["pdb_id"]]
-    return []
+    site_ws = layout.workspace(dirs.sites / str(site))
+    if not (site_ws.metadata / "master.csv").exists():
+        return []
+    return [str(pid) for pid in pocket_manifest(cfg, site_ws, require_features=False)[1]]
 
 
 def run_task(
@@ -268,30 +190,26 @@ def run_task(
     index: Optional[int] = None,
     force: bool = False,
 ) -> None:
-    """Dispatch one stage, resolving the structure for a per-structure stage.
+    """Dispatch one run stage, resolving the structure for the per-structure one.
 
     Args:
-        name: One of :data:`TASK_NAMES`.
+        name: One of :data:`RUN_TASKS`.
         cfg: QPocket configuration.
         dirs: Directory path dictionary.
-        manifest: Manifest path, required for a per-structure stage.
-        index: Row within the manifest, required for a per-structure stage.
+        manifest: Manifest path, required for ``structure``.
+        index: Row within the manifest, required for ``structure``.
         force: Recompute rather than skipping completed work.
 
     Raises:
-        TaskError: On an unknown stage, or a per-structure stage without a manifest and index.
+        TaskError: On an unknown stage, or ``structure`` without a manifest and index.
     """
-    if name not in TASK_NAMES:
-        raise TaskError(f"unknown stage {name!r}; expected one of {TASK_NAMES}")
+    if name not in RUN_TASKS:
+        raise TaskError(f"unknown stage {name!r}; expected one of {RUN_TASKS}")
 
-    if name in PER_STRUCTURE:
+    if name == "structure":
         if manifest is None or index is None:
             raise TaskError(f"stage {name!r} needs --manifest and --index")
-        pdb_id = resolve_pdb_id(manifest, index)
-        worker = {"apbs": task_apbs, "featurize": task_featurize, "geodesic": task_geodesic}[name]
-        worker(cfg, dirs, pdb_id, force=force)
+        task_structure(cfg, dirs, resolve_pdb_id(manifest, index), force=force)
         return
 
-    {"prepare": task_prepare, "collect": task_collect, "distance": task_distance}[name](
-        cfg, dirs, force=force
-    )
+    {"prepare": task_prepare, "sites": task_sites}[name](cfg, dirs, force=force)

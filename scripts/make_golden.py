@@ -28,8 +28,8 @@ def golden_config(out: Path, workers: int = 0, features: list = None) -> dict:
     return {
         **extra,
         "mode": "fragment_screen",
-        "reference": {"chain_id": "A", "ligand_id": "WDG", "pocket_definition": "Interactions",
-                      "pocket_mode": "cavity_detection", "interaction_padding": 5.0},
+        "reference": {"chain_id": "A", "pocket_definition": "Interactions",
+                      "interaction_padding": 5.0},
         "paths": {"workdir": str(out)},
         "fragment_screen": {"input_type": "paths", "reference_path": str(SOURCE / "7KG6.cif"),
                             "structure_paths": [str(SOURCE / f"{p}.cif") for p in STRUCTURES]},

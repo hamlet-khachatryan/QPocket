@@ -200,9 +200,7 @@ def make_config(**overrides):
             ReferenceParams(
                 pdb_id="1ABC",
                 chain_id="A",
-                ligand_id="LIG",
                 pocket_definition="Interactions",
-                pocket_mode="cavity_detection",
             ),
         ),
         paths=overrides.pop("paths", PathConfig()),

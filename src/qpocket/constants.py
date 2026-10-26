@@ -158,44 +158,6 @@ STANDARD_AA = {
     'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL'
 }
 
-HET_TO_REMOVE = [
-    "A", "C", "G", "K", "T", "U", "BR", "CA", "CD", "CL", "CO", "CS",
-    "CU", "FE", "HG", "MG", "MN", "NA", "NI", "NO", "O2", "OH", "PI", "PT",
-    "SR", "TL", "XE", "ZN", "1CP", "1MA", "1PE", "1PG", "2CP", "2GP", "2GP", "2MG",
-    "3CP", "3DR", "3HC", "4CA", "4CO", "5GP", "5MC", "5MU", "6FA", "7MG", "8OG", "A3P",
-    "ABA", "ACE", "ACO", "ACO", "ACP", "ACT", "ACY", "ADE", "ADJ", "ADN", "ADP", "ADP",
-    "AF3", "AIB", "AKG", "AMP", "AMP", "AMX", "ANP", "ANP", "APC", "APR", "ATP", "ATP",
-    "AZI", "B12", "BCA", "BCB", "BCL", "BCL", "BEN", "BEZ", "BGC", "BH4", "BLA", "BLV",
-    "BMA", "BMA", "BME", "BOG", "BOG", "BPB", "BPH", "BPH", "BRO", "BTN", "C8E", "C8E",
-    "CA3", "CA5", "CAA", "CAC", "CAN", "CAO", "CCH", "CDL", "CDP", "CEA", "CGU", "CH2",
-    "CH3", "CIC", "CIT", "CIT", "CL1", "CL2", "CLA", "CLN", "CMC", "CME", "CMO", "CMP",
-    "CMP", "CMX", "CNC", "CND", "CO3", "CO8", "COA", "COA", "COB", "COD", "COF", "COH",
-    "COJ", "CON", "COS", "COT", "COY", "CP3", "CPS", "CRO", "CRY", "CRY", "CS8", "CSD",
-    "CSO", "CSS", "CSW", "CTP", "CU1", "CXM", "CYN", "DAK", "DAL", "DAN", "DCA", "DCC",
-    "DDH", "DEU", "DHE", "DHE", "DLE", "DMS", "DND", "DOX", "DPN", "DTT", "DTT", "DVA",
-    "EDO", "EGL", "EOH", "EPE", "EPE", "ETA", "F3S", "F43", "F6P", "F6P", "FAA", "FAB",
-    "FAD", "FAD", "FAE", "FAM", "FAS", "FCX", "FDA", "FE2", "FEC", "FES", "FLC", "FMA",
-    "FME", "FMN", "FMN", "FMT", "FNE", "FNS", "FOR", "FPP", "FS3", "FS4", "FUC", "FUC",
-    "GAL", "GAL", "GDP", "GDP", "GLC", "GLC", "GLU", "GLY", "GMP", "GNP", "GNP", "GOL",
-    "GOL", "GOL", "GSH", "GTP", "GTP", "GTT", "H2U", "H4B", "HAS", "HAX", "HC4", "HDD",
-    "HDM", "HE6", "HEA", "HEB", "HEC", "HEC", "HED", "HED", "HEG", "HEM", "HEM", "HEO",
-    "HES", "HEV", "HIF", "HMG", "HNI", "HPA", "HXC", "HYP", "IMD", "IMP", "IOD", "IOH",
-    "IPA", "IPH", "IUM", "KCX", "LAT", "LDA", "LDA", "LI1", "LI1", "LLP", "LYX", "M2G",
-    "MAL", "MAL", "MAN", "MAN", "MCA", "MCD", "MDE", "MES", "MES", "MET", "MGD", "MGD",
-    "MHM", "MK1", "MLC", "MLY", "MMP", "MO2", "MO3", "MO4", "MO5", "MO6", "MOH", "MP1",
-    "MPD", "MPD", "MPO", "MSE", "MTE", "MTO", "MVA", "MYA", "MYR", "MYR", "NAC", "NAD",
-    "NAD", "NAE", "NAG", "NAG", "NAH", "NAI", "NAI", "NAJ", "NAP", "NAP", "NAQ", "NAX",
-    "NBD", "NBP", "NCO", "NDA", "NDC", "NDO", "NDP", "NDP", "NGA", "NGA", "NH2", "NH4",
-    "NHD", "NHM", "NHO", "NLE", "NMO", "NMX", "NO3", "OCS", "ODP", "OMC", "OMG", "ORN",
-    "OXY", "P6G", "PAD", "PC3", "PCA", "PCU", "PEG", "PEG", "PEO", "PEP", "PG4", "PG4",
-    "PGA", "PGD", "PGE", "PHB", "PLM", "PLP", "PNI", "PO4", "POP", "POP", "POR", "PP9",
-    "PSU", "PSU", "PTR", "PXZ", "PYR", "PYR", "RET", "RFL", "SAH", "SAM", "SAR", "SCA",
-    "SCD", "SCN", "SCO", "SEO", "SEP", "SFP", "SIA", "SIN", "SND", "SO4", "SPM", "SPM",
-    "SRM", "SUC", "SUL", "TAP", "TAR", "TDP", "TDP", "TMN", "TMP", "TMP", "TPO", "TPQ",
-    "TRS", "TRS", "TTP", "TTP", "TYS", "U10", "UDP", "UDP", "UMP", "UMP", "UNL", "UNX",
-    "UPG", "UTP", "VO4", "WO4", "XYP", "XYS", "XYS", "ZEM", "ZID", "ZN2", "ZN3", "ZNH"
-]
-
 THREE_TO_ONE_MAPPING = {
     'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C',
     'GLN':'Q','GLU':'E','GLY':'G','HIS':'H','ILE':'I',

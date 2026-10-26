@@ -65,10 +65,9 @@ def test_pocket_distance_matches_distance_matrices():
 
 def test_geodesic_and_scaler_caches_round_trip(tmp_path):
     rng = np.random.default_rng(4)
-    d, f = rng.random((5, 5)), rng.random((5, 3))
-    cache.save_geodesic(tmp_path / "g.npz", d, f)
-    d2, f2 = cache.load_geodesic(tmp_path / "g.npz")
-    assert np.array_equal(d, d2) and np.array_equal(f, f2)
+    d = rng.random((5, 5))
+    cache.save_geodesic(tmp_path / "g.npz", d)
+    assert np.array_equal(d, cache.load_geodesic(tmp_path / "g.npz"))
     sc = Scaler(mean=rng.random(3), scale=rng.random(3))
     cache.save_scaler(tmp_path / "s.npz", sc)
     back = cache.load_scaler(tmp_path / "s.npz")
@@ -79,8 +78,8 @@ def test_compute_geodesic_still_writes_the_same_cache(tmp_path):
     from qpocket.pipelines.distance import compute_geodesic
     rng = np.random.default_rng(5)
     df = pd.DataFrame(rng.random((60, 3)) * 6, columns=list("xyz")); df["apbs"] = rng.random(60)
-    df.to_csv(tmp_path / "featurized.csv", index=False)
-    with np.load(compute_geodesic(tmp_path / "featurized.csv", 2.0)) as z:
-        pts = pd.read_csv(tmp_path / "featurized.csv")[list("xyz")].to_numpy(float)
+    df.to_csv(tmp_path / "binding_site.csv", index=False)
+    with np.load(compute_geodesic(tmp_path / "binding_site.csv", 2.0)) as z:
+        pts = pd.read_csv(tmp_path / "binding_site.csv")[list("xyz")].to_numpy(float)
         assert np.array_equal(z["D_geo"], sp.geodesic_matrix(pts, 2.0))
-        assert set(z.files) == {"D_geo", "features", "weights", "source_hash", "radius"}
+        assert set(z.files) == {"D_geo", "weights", "source_hash", "radius"}

@@ -24,10 +24,31 @@ pytestmark = pytest.mark.skipif(not (GOLD / "metadata/clustering_params.json").e
                                 reason="needs golden run")
 
 
+def _stale_stages(settings):
+    """Count stages saved with k null: they chose k by a score that no longer exists."""
+    return [n for n in ("single", "shape", "chem")
+            if getattr(settings, n).criterion == "count" and getattr(settings, n).k is None
+            and getattr(settings, n).method != "affinity"]
+
+
+def _runnable(settings):
+    """The run's settings, with each stale count stage cut at half height instead."""
+    return replace(settings, **{n: replace(getattr(settings, n), method="hierarchical",
+                                           criterion="relative", threshold=0.5)
+                                for n in _stale_stages(settings)})
+
+
 def test_the_run_own_settings_reproduce_its_labels(tmp_path):
+    """Runnable saved settings reproduce the saved labels; stale ones name the fix, and once fixed are stable."""
     run = _copy_run(tmp_path)
+    settings = recluster.load_settings(run)
+    if _stale_stages(settings):
+        with pytest.raises(ValueError, match="set k or use criterion"):
+            recluster.run(run, settings)
+        settings = _runnable(settings)
+        recluster.run(run, settings)
     before = pd.read_csv(run / "metadata/clustering_metadata.csv")
-    recluster.run(run, recluster.load_settings(run))
+    recluster.run(run, settings)
     after = pd.read_csv(run / "metadata/clustering_metadata.csv")
     assert before["cluster_id"].tolist() == after["cluster_id"].tolist()
     assert before["is_representative"].tolist() == after["is_representative"].tolist()
@@ -37,7 +58,8 @@ def test_threshold_settings_are_applied_recorded_and_archived(tmp_path):
     run = _copy_run(tmp_path)
     settings = recluster.load_settings(run)
     shape = replace(settings.shape, method="hierarchical", criterion="threshold", threshold=1e-9)
-    recluster.run(run, replace(settings, shape=shape))
+    chem = replace(settings.chem, method="hierarchical", criterion="relative", threshold=0.5)
+    recluster.run(run, replace(settings, shape=shape, chem=chem))
     params = json.loads((run / "metadata/clustering_params.json").read_text())
     assert params["shape"]["criterion"] == "threshold" and params["shape"]["threshold"] == 1e-9
     labels = pd.read_csv(run / "metadata/clustering_metadata.csv")["shape_cluster_id"]

@@ -9,25 +9,34 @@
 │   ├── original/                    ← downloaded .cif files
 │   ├── aligned/                     ← structures superposed onto the reference
 │   ├── cleaned/                     ← cleaned .pdb (protein-only + cofactors)
-│   └── extracted_ligands/           ← per-structure ligand .pdb files
-├── pockets/
-│   └── <pdb_id>/
-│       ├── binding_site.csv         ← final pocket point cloud (x, y, z)
-│       ├── binding_site_initial.csv ← pre-crop cloud (io.save_intermediate)
-│       └── featurized.csv           ← x, y, z + 6 pharmacophoric features
-├── metadata/
-│   ├── master.csv                   ← per-structure metadata
-│   ├── spectral_distance_matrix.csv ← N×N pairwise distance matrix
-│   ├── clustering_metadata.csv      ← cluster assignment per structure
-│   ├── selected_representatives.csv ← Affinity Propagation exemplars
-│   ├── observed_interactions.h5     ← PLIP interactions (HDF5)
-│   ├── observed_interactions_freq.csv
-│   ├── potential_interactions.h5    ← geometric contacts (HDF5)
-│   ├── potential_interactions_freq.csv
-│   └── binding_pocket_utilization.csv
-└── screening/
-    └── actives.smi                  ← SMILES of co-crystallised ligands
+│   ├── protonated/                  ← one protonated complex per structure
+│   ├── extracted_ligands/           ← per-structure ligand .pdb files
+│   ├── cavities/                    ← cavities, detected once per structure
+│   └── ligands.csv                  ← every site ligand found, per structure
+├── sites/
+│   ├── sites.csv                    ← one row per binding site
+│   ├── grouping.json                ← the link cutoff the ligands were grouped at
+│   └── site_NN/
+│       ├── ligands.pdb              ← the site's ligands, superposed
+│       ├── contact_atoms.csv        ← protein atoms the site's ligands contact
+│       ├── pockets/<pdb_id>/
+│       │   ├── binding_site.csv         ← the site's cloud in that structure (x, y, z)
+│       │   └── featurized.csv           ← after Featurise: x, y, z + feature columns
+│       ├── metadata/                ← distance matrices, clustering, representatives
+│       └── screening/               ← docking inputs and results for this site
+└── metadata/
+    ├── run.json                     ← layout version; older runs must be re-run
+    ├── config.yaml                  ← the settings the run used
+    ├── master.csv                   ← per-structure metadata
+    ├── failures.csv                 ← structures that dropped out, and why
+    ├── observed_interactions.h5     ← ProLIF interactions (HDF5)
+    ├── observed_interactions_freq.csv
+    ├── potential_interactions.h5    ← geometric contacts (HDF5)
+    └── potential_interactions_freq.csv
 ```
+
+`qpocket run` writes everything above except `featurized.csv`, the site `metadata/`
+and `screening/`; those appear when you run a site's steps.
 
 ## Key files
 
@@ -42,7 +51,7 @@
 | `ligand_file` | Path to extracted ligand PDB (or null) |
 | `protein_state` | `BOUND_STATE` / `UNBOUND_STATE` / `CAVITY_CLOSED` / `FAILED` |
 
-### `metadata/clustering_metadata.csv`
+### `sites/site_NN/metadata/clustering_metadata.csv`
 
 | Column | Description |
 |---|---|
@@ -51,7 +60,7 @@
 | `is_representative` | `True` if this is the Affinity Propagation exemplar |
 | `dist_to_exemplar` | Distance to cluster exemplar |
 
-### `pockets/<pdb_id>/featurized.csv`
+### `sites/site_NN/pockets/<pdb_id>/featurized.csv`
 
 Columns: `x`, `y`, `z`, `apbs`, `cp`, `lp`, `h_donor`, `h_acceptor`, `aromatic`.
 

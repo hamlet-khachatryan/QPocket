@@ -41,10 +41,17 @@ METHODS: Tuple[str, ...] = (AFFINITY,) + LINKAGES
 #: Every method :func:`cluster_labels` understands.
 ALL_METHODS: Tuple[str, ...] = (AFFINITY, KMEDOIDS) + LINKAGES
 
-#: How a hierarchical tree is cut.
-CRITERIA: Tuple[str, ...] = ("cluster count", "distance threshold")
+#: How a hierarchical tree is cut: into a number of clusters, at a height, or at
+#: a fraction of the tree's tallest merge.
+CRITERIA: Tuple[str, ...] = ("cluster count", "distance threshold", "relative height")
 
-COUNT, THRESHOLD = CRITERIA
+COUNT, THRESHOLD, RELATIVE = CRITERIA
+
+#: The config's short criterion names, onto :data:`CRITERIA`.
+_CRITERION_NAMES = {"count": COUNT, "threshold": THRESHOLD, "relative": RELATIVE}
+
+#: What a count stage without k is told; old runs saved k null under "count".
+NEEDS_K = "a 'count' cut has no k: set k or use criterion 'threshold' or 'relative'"
 
 #: Affinity Propagation damping used by the pipeline.
 PIPELINE_DAMPING = 0.9
@@ -81,7 +88,7 @@ def symmetrise(distances: np.ndarray) -> np.ndarray:
 
 
 class Clustering(NamedTuple):
-    """A grouping of structures, and how good it is.
+    """A grouping of structures.
 
     Attributes:
         labels: Cluster index per structure, 0-based, largest cluster first.
@@ -89,8 +96,6 @@ class Clustering(NamedTuple):
         method: One of :data:`METHODS`.
         n_clusters: Number of clusters produced.
         threshold: Cut height for a hierarchical method, otherwise ``nan``.
-        silhouette: Mean silhouette over all structures, or ``None`` when it is undefined (fewer than two clusters, or one cluster per structure).
-        silhouette_per_structure: Per-structure silhouette, or ``None``.
         exemplar_positions: Positions the method itself nominated as cluster representatives, when it nominates any.
     """
 
@@ -99,8 +104,6 @@ class Clustering(NamedTuple):
     method: str
     n_clusters: int
     threshold: float
-    silhouette: Optional[float]
-    silhouette_per_structure: Optional[np.ndarray]
     exemplar_positions: Optional[Tuple[int, ...]] = None
 
 
@@ -149,7 +152,7 @@ class TwoStageClustering(NamedTuple):
         labels: Final composite cluster index per structure, 0-based, largest cluster first.
         shape_labels: Stage-one cluster index per structure.
         chem_labels: Stage-two cluster index per structure, numbered **within** its shape cluster, so ``0`` in one shape cluster is unrelated to ``0`` in another.
-        shape_clustering: The stage-one result, with its silhouette.
+        shape_clustering: The stage-one result.
         chem_clusterings: Stage-two result per shape cluster, or ``None`` where the cluster was too small to subdivide.
         exemplar_positions: Medoid position of each final cluster.
     """
@@ -214,28 +217,6 @@ def _relabel_by_size(labels: np.ndarray) -> np.ndarray:
     return np.array([mapping[v] for v in labels], dtype=int)
 
 
-def silhouette(
-    distances: np.ndarray, labels: Sequence[int]
-) -> Tuple[Optional[float], Optional[np.ndarray]]:
-    """Silhouette of a grouping, measured on the distances themselves.
-
-    Args:
-        distances: Square, symmetric distance matrix.
-        labels: Cluster index per structure.
-
-    Returns:
-        Mean silhouette and per-structure values, or ``(None, None)`` when the grouping has too few or too many clusters for it to be defined.
-    """
-    from sklearn.metrics import silhouette_samples
-
-    lab = np.asarray(labels)
-    n_labels = len(np.unique(lab))
-    if not 2 <= n_labels <= len(lab) - 1:
-        return None, None
-    values = silhouette_samples(symmetrise(distances), lab, metric="precomputed")
-    return float(values.mean()), values
-
-
 def affinity_labels(
     distances: np.ndarray,
     damping: float = PIPELINE_DAMPING,
@@ -279,15 +260,12 @@ def affinity_labels(
         # Re-attach each exemplar to its cluster under the new numbering.
         exemplar_positions = tuple(sorted(int(c) for c in centres))
 
-    mean_sil, per_sil = silhouette(d, labels)
     return Clustering(
         labels=labels,
         linkage_matrix=None,
         method=AFFINITY,
         n_clusters=int(len(np.unique(labels))),
         threshold=float("nan"),
-        silhouette=mean_sil,
-        silhouette_per_structure=per_sil,
         exemplar_positions=exemplar_positions,
     )
 
@@ -365,15 +343,12 @@ def kmedoids_labels(
     exemplar_positions = tuple(
         _medoid_of(d, np.flatnonzero(labels == c)) for c in sorted(np.unique(labels))
     )
-    mean_sil, per_sil = silhouette(d, labels)
     return Clustering(
         labels=labels,
         linkage_matrix=None,
         method=KMEDOIDS,
         n_clusters=int(len(np.unique(labels))),
         threshold=float("nan"),
-        silhouette=mean_sil,
-        silhouette_per_structure=per_sil,
         exemplar_positions=exemplar_positions,
     )
 
@@ -392,19 +367,20 @@ def cluster_labels(
     Args:
         distances: Square, symmetric distance matrix.
         method: One of :data:`ALL_METHODS`.
-        criterion: ``"cluster count"`` to ask for a number of clusters, or ``"distance threshold"`` to cut at a height.
+        criterion: One of :data:`CRITERIA`, or its short name ``"count"``, ``"threshold"`` or ``"relative"``.
         n_clusters: Wanted cluster count, used by the count criterion.
-        threshold: Cut height, used by the threshold criterion.
+        threshold: Cut height for the threshold criterion; for the relative one, the fraction of the tallest merge to cut at. When every distance is equal and non-zero, every merge sits at the same height, so a fraction below 1 leaves each structure on its own.
         damping: Affinity Propagation damping.
         preference_percentile: Affinity Propagation preference percentile.
 
     Returns:
-        The grouping, with its silhouette.
+        The grouping.
 
     Raises:
-        ValueError: If ``method`` or ``criterion`` is unknown.
+        ValueError: If ``method`` or ``criterion`` is unknown, or a threshold or relative cut has no threshold.
     """
     d = symmetrise(distances)
+    criterion = _CRITERION_NAMES.get(criterion, criterion)
 
     if method == AFFINITY:
         return affinity_labels(
@@ -414,6 +390,16 @@ def cluster_labels(
     if method == KMEDOIDS:
         return kmedoids_labels(d, n_clusters=n_clusters)
 
+    if criterion in (THRESHOLD, RELATIVE) and threshold is None:
+        short = {v: k for k, v in _CRITERION_NAMES.items()}[criterion]
+        raise ValueError(f"a '{short}' cut needs a threshold")
+
+    if criterion == RELATIVE and len(d) < 3:
+        # Too few pockets for a tree worth cutting: one group, never an error.
+        return Clustering(labels=np.zeros(len(d), dtype=int),
+                          linkage_matrix=linkage_matrix(d, method) if len(d) == 2 else None,
+                          method=method, n_clusters=1, threshold=float("nan"))
+
     link = linkage_matrix(d, method)
 
     if criterion == COUNT:
@@ -421,66 +407,22 @@ def cluster_labels(
         raw = fcluster(link, t=k, criterion="maxclust")
         cut = threshold_for_clusters(link, k)
     elif criterion == THRESHOLD:
-        cut = float(link[:, 2].max() if threshold is None else threshold)
+        cut = float(threshold)
+        raw = fcluster(link, t=cut, criterion="distance")
+    elif criterion == RELATIVE:
+        cut = float(threshold) * float(link[:, 2].max())
         raw = fcluster(link, t=cut, criterion="distance")
     else:
         raise ValueError(f"unknown criterion {criterion!r}; expected one of {CRITERIA}")
 
     labels = _relabel_by_size(raw)
-    mean_sil, per_sil = silhouette(d, labels)
     return Clustering(
         labels=labels,
         linkage_matrix=link,
         method=method,
         n_clusters=int(len(np.unique(labels))),
         threshold=float(cut),
-        silhouette=mean_sil,
-        silhouette_per_structure=per_sil,
     )
-
-
-def best_k_by_silhouette(
-    distances: np.ndarray,
-    method: str,
-    k_range: Sequence[int] = (2, 10),
-    **kwargs: object,
-) -> Clustering:
-    """Cluster at the ``k`` with the best silhouette over a range.
-
-    Args:
-        distances: Square, symmetric distance matrix.
-        method: One of :data:`ALL_METHODS`, excluding Affinity Propagation, which chooses its own cluster count.
-        k_range: Inclusive ``(lo, hi)`` bounds on the cluster count.
-        **kwargs: Passed through to :func:`cluster_labels`.
-
-    Returns:
-        The best-scoring grouping.
-
-    Raises:
-        ValueError: If ``method`` is Affinity Propagation.
-    """
-    if method == AFFINITY:
-        raise ValueError(
-            "affinity propagation chooses its own cluster count; "
-            "it cannot be scanned over k_range"
-        )
-
-    d = symmetrise(distances)
-    n = len(d)
-    lo = max(2, int(k_range[0]))
-    hi = min(int(k_range[1]), n - 1)
-
-    best: Optional[Clustering] = None
-    for k in range(lo, hi + 1):
-        candidate = cluster_labels(d, method=method, n_clusters=k, **kwargs)
-        if candidate.silhouette is None:
-            continue
-        if best is None or candidate.silhouette > best.silhouette:
-            best = candidate
-
-    if best is None:
-        return cluster_labels(d, method=method, n_clusters=max(lo, 1), **kwargs)
-    return best
 
 
 def _stage_labels(
@@ -488,24 +430,24 @@ def _stage_labels(
     method: str,
     linkage_name: str,
     k: Optional[int],
-    k_range: Sequence[int],
     criterion: str = "count",
     threshold: Optional[float] = None,
     damping: float = PIPELINE_DAMPING,
     max_iter: int = PIPELINE_MAX_ITER,
 ) -> Clustering:
-    """Run one stage: affinity, k-medoids, or a hierarchical cut by count or height."""
+    """Run one stage: affinity, k-medoids, or a hierarchical cut by count, height or relative height."""
     resolved = AFFINITY if method == "affinity" else (
         KMEDOIDS if method == "kmedoids" else linkage_name
     )
-    if criterion in ("threshold", THRESHOLD):
-        if resolved in (AFFINITY, KMEDOIDS):
-            raise ValueError(f"a threshold cut needs a hierarchical stage, not {method!r}")
-        return cluster_labels(distances, method=resolved, criterion=THRESHOLD, threshold=threshold)
-    if resolved == AFFINITY:
+    if resolved == AFFINITY:  # chooses its own cluster count, whatever the criterion
         return affinity_labels(distances, damping=damping, max_iter=max_iter)
+    criterion = _CRITERION_NAMES.get(criterion, criterion)
+    if criterion in (THRESHOLD, RELATIVE):
+        if resolved == KMEDOIDS:
+            raise ValueError(f"a {criterion} cut needs a hierarchical stage, not {method!r}")
+        return cluster_labels(distances, method=resolved, criterion=criterion, threshold=threshold)
     if k is None:
-        return best_k_by_silhouette(distances, method=resolved, k_range=k_range)
+        raise ValueError(NEEDS_K)
     return cluster_labels(distances, method=resolved, n_clusters=int(k))
 
 
@@ -515,19 +457,17 @@ def two_stage_labels(
     shape_method: str = "hierarchical",
     shape_linkage: str = "average",
     shape_k: Optional[int] = None,
-    shape_k_range: Sequence[int] = (2, 10),
-    chem_method: str = "kmedoids",
+    chem_method: str = "hierarchical",
     chem_linkage: str = "average",
     chem_k: Optional[int] = None,
-    chem_k_range: Sequence[int] = (2, 6),
     min_cluster_size: int = 4,
     combined_distances: Optional[np.ndarray] = None,
-    shape_criterion: str = "count",
-    shape_threshold: Optional[float] = None,
+    shape_criterion: str = "relative",
+    shape_threshold: Optional[float] = 0.5,
     shape_damping: float = PIPELINE_DAMPING,
     shape_max_iter: int = PIPELINE_MAX_ITER,
-    chem_criterion: str = "count",
-    chem_threshold: Optional[float] = None,
+    chem_criterion: str = "relative",
+    chem_threshold: Optional[float] = 0.5,
     chem_damping: float = PIPELINE_DAMPING,
     chem_max_iter: int = PIPELINE_MAX_ITER,
     stage_labels: Optional[Callable[..., Clustering]] = None,
@@ -539,20 +479,18 @@ def two_stage_labels(
         chem_distances: Square physicochemical distance matrix, same order.
         shape_method: ``"hierarchical"``, ``"kmedoids"`` or ``"affinity"``.
         shape_linkage: Linkage used when ``shape_method`` is hierarchical.
-        shape_k: Pinned stage-one cluster count, or ``None`` to choose by silhouette.
-        shape_k_range: Inclusive bounds scanned when ``shape_k`` is ``None``.
+        shape_k: Stage-one cluster count, used by the count criterion.
         chem_method: As ``shape_method``, for stage two.
         chem_linkage: As ``shape_linkage``, for stage two.
         chem_k: As ``shape_k``, for stage two.
-        chem_k_range: As ``shape_k_range``, for stage two.
         min_cluster_size: Shape clusters smaller than this are not subdivided.
         combined_distances: Matrix used to pick each final cluster's medoid.
-        shape_criterion: "count" (k or silhouette) or "threshold" (cut the shape tree at a height).
-        shape_threshold: Cut height for a threshold shape stage.
+        shape_criterion: "count" (k clusters), "threshold" (cut the shape tree at a height) or "relative" (cut at a fraction of its tallest merge).
+        shape_threshold: Cut height for a threshold shape stage; the fraction for a relative one.
         shape_damping: Affinity Propagation damping for an affinity shape stage.
         shape_max_iter: Affinity Propagation iteration cap for the shape stage.
         chem_criterion: As shape_criterion, for stage two.
-        chem_threshold: Cut height for a threshold chemistry stage, applied within each shape cluster.
+        chem_threshold: As shape_threshold, for stage two, applied within each shape cluster (a relative cut takes each cluster's own tallest merge).
         chem_damping: As shape_damping, for stage two.
         chem_max_iter: As shape_max_iter, for stage two.
         stage_labels: Per-stage clustering function; the built-in dispatch when None.
@@ -574,7 +512,7 @@ def two_stage_labels(
 
     n = len(shape_d)
     stage_one = run_stage(
-        shape_d, shape_method, shape_linkage, shape_k, shape_k_range,
+        shape_d, shape_method, shape_linkage, shape_k,
         shape_criterion, shape_threshold, shape_damping, shape_max_iter,
     )
     shape_labels = stage_one.labels
@@ -584,14 +522,14 @@ def two_stage_labels(
 
     for value in sorted(np.unique(shape_labels)):
         members = np.flatnonzero(shape_labels == value)
-        # Three members cannot support a silhouette-backed split, and a cluster
+        # Fewer than three members leave no tree worth cutting, and a cluster
         # below the configured floor is deliberately left alone.
         if len(members) < max(min_cluster_size, 3):
             chem_clusterings[int(value)] = None
             continue
         sub = chem_d[np.ix_(members, members)]
         stage_two = run_stage(
-            sub, chem_method, chem_linkage, chem_k, chem_k_range,
+            sub, chem_method, chem_linkage, chem_k,
             chem_criterion, chem_threshold, chem_damping, chem_max_iter,
         )
         chem_clusterings[int(value)] = stage_two

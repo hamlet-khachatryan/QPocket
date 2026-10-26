@@ -4,7 +4,7 @@
 
 - Large-scale retrieval of structurally homologous proteins from the PDB
 - Structure alignment and residue renumbering to a canonical UniProt reference
-- Binding-pocket extraction with cavity detection and/or interaction-based cropping
+- Discovery of every ligand-occupied binding site, with one pocket point cloud per site per structure
 - Spectral graph fingerprinting and pairwise distance matrix computation
 - Automatic unsupervised clustering (Affinity Propagation) of pocket shapes
 - Co-crystallised ligand extraction for active compound sets
@@ -27,15 +27,14 @@ PDB / fragment CSV
 │  Stage 2 – Preprocessing                                    │
 │  align_structures()     – alignment + UniProt renumbering   │
 │  clean_structures()     – remove non-standard residues       │
-│  extract_pockets_and_interactions()                         │
-│    ├── Reference: centroid → cavity → bounding box (1 Å)   │
-│    └── Others:   bbox overlap → best volumetric match       │
+│  find ligands · protonate · contacts · cavities (once)      │
+│  group ligands into sites · cut one cloud per site          │
 └─────────────────────────────────────────────────────────────┘
-      │
+      │   qpocket run stops here
       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Stage 3 – Distance Analysis                                │
-│  compute_spectral_distance_matrix()                         │
+│  Stage 3 – Per-site Analysis (explorer or qpocket site …)   │
+│  featurise → distance matrices                              │
 │    ├── Geodesic graph + shortest paths                      │
 │    ├── Heat-kernel Laplacian → spectral fingerprints        │
 │    ├── Pairwise L2 distance (eigenvalue + feature)          │
@@ -43,7 +42,7 @@ PDB / fragment CSV
 └─────────────────────────────────────────────────────────────┘
       │
       ▼
- metadata/  ─  spectral_distance_matrix.csv
+ sites/site_NN/metadata/  ─  spectral_distance_matrix.csv
               clustering_metadata.csv
               selected_representatives.csv
               observed / potential interaction H5
@@ -53,14 +52,12 @@ PDB / fragment CSV
 
 ## Key concepts
 
-### Pocket identification — two-phase bounding-box strategy
+### Binding-site discovery
 
-1. **Reference structure**: run cavity detection, find the cavity that overlaps the reference ligand centroid, compute its axis-aligned bounding box with **1 Å padding**.
-2. **All other structures**: run cavity detection, score each cavity by the number of its grid points that fall inside the reference bounding box (**volumetric overlap**), select the best-matching cavity.
-
-### Ligand selection
-
-All heteroatom small molecules overlapping with the selected pocket are collected; the one with the **most heavy atoms** is returned as the representative co-crystallised ligand.
+No reference ligand is needed. Every ligand in every structure is found, ligands
+whose atoms lie within `sites.link_cutoff` of each other across structures are
+grouped into a **site**, and each site gets one pocket point cloud per structure.
+See [Pocket extraction](user-guide/pocket-extraction.md).
 
 ### Spectral fingerprinting
 

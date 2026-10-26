@@ -1,20 +1,20 @@
-"""The conformational run: ingest, reference, every structure, collect, distances."""
+"""The conformational run: ingest, reference, every structure, then every binding site's clouds."""
 from functools import partial
 from pathlib import Path
 from typing import List, Optional, Union
 
 from eliot import log_message, start_action
 
-from qpocket.config import QPocketConfig, load_qpocket_config, run_id
+from qpocket.config import QPocketConfig, load_qpocket_config, run_id, save_run_config
 from qpocket.core.ports import SOURCES
 from qpocket.core.result import guarded, partition
 from qpocket.core.types import Sources
 from qpocket.io import layout
 from qpocket.io import logging as qlog
 from qpocket.pipelines import parallel
-from qpocket.pipelines.collect import collect_run
-from qpocket.pipelines.distance import compute_spectral_distance_matrix
+from qpocket.pipelines.collect import collect_structures
 from qpocket.pipelines.reference import build_reference
+from qpocket.pipelines.sites import extract_all_sites, sync_sites
 from qpocket.pipelines.structure import process, structure_params
 
 
@@ -50,7 +50,7 @@ def _pdb_id(raw) -> str:
 
 
 def run(cfg: QPocketConfig) -> Path:
-    """Run the whole conformational pipeline.
+    """Run the conformational pipeline up to one cloud per site per structure.
 
     Args:
         cfg: Validated config.
@@ -72,9 +72,10 @@ def run(cfg: QPocketConfig) -> Path:
             sources.structures, workers=cfg.compute.workers, backend=cfg.compute.backend,
             stage="structure", log_dir=ws.root / parallel.WORKER_LOG_DIR, label=_pdb_id)
         records, failures = partition(results)
-        collect_run(ws, records, failures, cfg.features.enabled, cfg.io.compression)
-        compute_spectral_distance_matrix(cfg, ws)
-        log_message(message_type="stage_complete", stage="prepare_and_featurize")
+        collect_structures(ws, records, failures)
+        extract_all_sites(cfg, ws, sync_sites(cfg, ws, records)[0], records)
+        save_run_config(cfg, ws)
+        log_message(message_type="stage_complete", stage="sites")
     return ws.root
 
 
@@ -82,7 +83,6 @@ def run_qpocket_pipeline(
     qpocket_config_path: Optional[Union[str, Path]] = None,
     pdb_id: Optional[str] = None,
     chain_id: Optional[str] = None,
-    ligand_id: Optional[str] = None,
     workdir: Optional[Union[str, Path]] = None,
     sequence_identity: Optional[float] = None,
     resolution_limit: Optional[float] = None,
@@ -103,7 +103,6 @@ def run_qpocket_pipeline(
     affinity_damping: Optional[float] = None,
     affinity_max_iter: Optional[int] = None,
     log_format: Optional[str] = None,
-    save_intermediate: Optional[bool] = None,
     compression: Optional[str] = None,
     interaction_padding: Optional[float] = None,
     extra_overrides: Optional[List[str]] = None,
@@ -114,7 +113,6 @@ def run_qpocket_pipeline(
         qpocket_config_path: Path to a YAML configuration file.
         pdb_id: Reference PDB identifier.
         chain_id: Chain in the reference structure.
-        ligand_id: Ligand residue name in the reference structure.
         workdir: Working directory for all output files.
         sequence_identity: Minimum sequence identity for PDB query.
         resolution_limit: Maximum resolution limit (Å) for PDB query.
@@ -135,7 +133,6 @@ def run_qpocket_pipeline(
         affinity_damping: Affinity Propagation damping factor.
         affinity_max_iter: Maximum Affinity Propagation iterations.
         log_format: Eliot log format — ``"json"`` or ``"text"``.
-        save_intermediate: Persist intermediate pocket files.
         compression: HDF5 compression — ``"gzip"`` or ``"none"``.
         interaction_padding: Crop radius (Å) around interacting residues for ``pocket_definition == "Interactions"`` mode.
         extra_overrides: Dot-list overrides applied last.
@@ -146,8 +143,6 @@ def run_qpocket_pipeline(
         overrides.append(f"reference.pdb_id={pdb_id.upper()}")
     if chain_id:
         overrides.append(f"reference.chain_id={chain_id.upper()}")
-    if ligand_id:
-        overrides.append(f"reference.ligand_id={ligand_id.upper()}")
     if workdir:
         overrides.append(f"paths.workdir={workdir}")
     if sequence_identity is not None:
@@ -190,8 +185,6 @@ def run_qpocket_pipeline(
         overrides.append(f"distance.clustering.single.max_iter={affinity_max_iter}")
     if log_format:
         overrides.append(f"io.log_format={log_format}")
-    if save_intermediate is not None:
-        overrides.append(f"io.save_intermediate={save_intermediate}")
     if compression:
         overrides.append(f"io.compression={compression}")
     if interaction_padding is not None:

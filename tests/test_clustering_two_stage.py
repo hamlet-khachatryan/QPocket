@@ -15,7 +15,7 @@ import pytest
 from qpocket.core.clustering import (
     AFFINITY,
     KMEDOIDS,
-    best_k_by_silhouette,
+    _stage_labels,
     cluster_labels,
     exemplars,
     kmedoids_labels,
@@ -194,34 +194,201 @@ def test_kmedoids_is_reachable_through_cluster_labels():
     assert result.method == KMEDOIDS
 
 
-# --- silhouette-chosen k --------------------------------------------------
+# --- relative cut ---------------------------------------------------------
 
 
-def test_best_k_finds_the_planted_cluster_count():
-    """Three tight, far-apart blobs: silhouette peaks at three and nowhere else."""
-    d = distances([0.0, 1.0, 2.0, 100.0, 101.0, 102.0, 200.0, 201.0, 202.0])
-    assert best_k_by_silhouette(d, method="average", k_range=(2, 6)).n_clusters == 3
+def _two_blobs():
+    return distances([0.0, 1.0, 2.0, 100.0, 101.0, 102.0])
 
 
-def test_best_k_respects_the_upper_bound():
-    d = distances([0.0, 1.0, 2.0, 100.0, 101.0, 102.0, 200.0, 201.0, 202.0])
-    assert best_k_by_silhouette(d, method="average", k_range=(2, 2)).n_clusters == 2
+def labels(d, criterion, threshold):
+    return cluster_labels(d, method="average", criterion=criterion, threshold=threshold).labels
 
 
-def test_best_k_still_returns_a_grouping_for_a_tiny_run():
-    """Three structures leave no k where silhouette is defined; it must not raise."""
-    result = best_k_by_silhouette(distances([0.0, 1.0, 50.0]), method="average")
-    assert result.n_clusters >= 1
+def test_relative_cut_is_scale_free():
+    d = _two_blobs()
+    assert (labels(d, "relative", 0.5) == labels(d * 1000, "relative", 0.5)).all()
+    assert len(set(labels(d, "relative", 0.5))) == 2
 
 
-def test_best_k_refuses_affinity_propagation():
-    d = distances([0.0, 1.0, 100.0, 101.0])
-    with pytest.raises(ValueError, match="affinity"):
-        best_k_by_silhouette(d, method=AFFINITY)
+def test_relative_cut_on_two_pockets_does_not_raise():
+    assert len(cluster_labels(np.array([[0, 1.0], [1.0, 0]]), method="average",
+                              criterion="relative", threshold=0.5).labels) == 2
 
 
-def test_two_stage_resolves_k_by_silhouette_when_it_is_not_pinned(two_axes):
-    """With k unpinned, stage one must still land on the three real shape groups."""
+@pytest.mark.parametrize("n", [1, 2])
+def test_relative_cut_on_a_tiny_stage_is_one_cluster(n):
+    result = cluster_labels(distances(np.arange(float(n))), method="average",
+                            criterion="relative", threshold=0.5)
+    assert result.n_clusters == 1 and len(result.labels) == n
+
+
+def test_relative_cut_on_identical_pockets_is_one_cluster():
+    assert set(labels(distances(np.zeros(5)), "relative", 0.5).tolist()) == {0}
+
+
+def test_count_without_k_is_refused():
+    with pytest.raises(ValueError, match="set k or use criterion"):
+        _stage_labels(_two_blobs(), "hierarchical", "average", k=None, criterion="count")
+
+
+def test_kmedoids_without_k_is_refused():
+    with pytest.raises(ValueError, match="set k or use criterion"):
+        _stage_labels(_two_blobs(), "kmedoids", "average", k=None, criterion="count")
+
+
+def test_relative_needs_a_hierarchical_stage():
+    with pytest.raises(ValueError, match="hierarchical"):
+        _stage_labels(_two_blobs(), "kmedoids", "average", k=None, criterion="relative",
+                      threshold=0.5)
+
+
+def test_no_silhouette_anywhere():
+    import qpocket.core.clustering as cl
+    assert not hasattr(cl, "silhouette") and not hasattr(cl, "best_k_by_silhouette")
+    assert "silhouette" not in cl.Clustering._fields
+
+
+def test_defaults_are_relative_hierarchical():
+    from qpocket.config import QPocketConfig
+
+    c = QPocketConfig().distance.clustering
+    assert (c.shape.method, c.shape.criterion, c.shape.threshold) == ("hierarchical", "relative", 0.5)
+    assert (c.chem.method, c.chem.criterion, c.chem.threshold) == ("hierarchical", "relative", 0.5)
+    assert c.single.method == "affinity"
+
+
+def test_default_two_stage_recovers_the_planted_groups(two_axes):
     shape_d, chem_d = two_axes
-    result = two_stage_labels(shape_d, chem_d, shape_k=None, shape_k_range=(2, 6))
-    assert result.shape_clustering.n_clusters == 3
+    result = two_stage_labels(shape_d, chem_d)
+    assert result.shape_clustering.n_clusters == 3 and len(set(result.labels.tolist())) == 6
+
+
+def test_clustering_files_carry_no_silhouette(tmp_path, two_axes):
+    from qpocket.config import ClusteringParams
+    from qpocket.pipelines.clustering import cluster_pockets, write_clustering
+
+    shape_d, chem_d = two_axes
+    combined = shape_d + chem_d
+    ids = [f"P{i}" for i in range(len(shape_d))]
+    assignment = cluster_pockets(ClusteringParams(), shape_d, chem_d, combined)
+    write_clustering(tmp_path, ids, assignment, combined, {})
+    for path in tmp_path.iterdir():
+        assert "silhouette" not in path.read_text().lower(), path.name
+    import json
+    params = json.loads((tmp_path / "clustering_params.json").read_text())
+    for stage in ("shape", "chem"):
+        assert (params[stage]["criterion"], params[stage]["threshold"]) == ("relative", 0.5)
+        assert "k_range" not in params[stage]
+
+
+def _old_run(tmp_path, two_axes):
+    """A run saved before this change: k null under the count criterion, with a k_range."""
+    import json
+    import pandas as pd
+
+    shape_d, chem_d = two_axes
+    meta = tmp_path / "metadata"
+    meta.mkdir()
+    ids = [f"P{i}" for i in range(len(shape_d))]
+    for name, m in (("shape_distance_matrix", shape_d), ("feature_distance_matrix", chem_d),
+                    ("spectral_distance_matrix", shape_d + chem_d)):
+        pd.DataFrame(m, index=ids, columns=ids).to_csv(meta / f"{name}.csv")
+    old = {"method": "hierarchical", "linkage": "average", "k": None, "k_range": [2, 10],
+           "criterion": "count", "threshold": None, "silhouette": 0.4}
+    (meta / "clustering_params.json").write_text(json.dumps(
+        {"mode": "two_stage", "shape": old, "chem": {**old, "method": "kmedoids"}}))
+    return tmp_path
+
+
+def test_an_old_run_without_k_names_the_fix(tmp_path, two_axes):
+    from qpocket.arms import recluster
+
+    run = _old_run(tmp_path, two_axes)
+    with pytest.raises(ValueError, match="set k or use criterion 'threshold' or 'relative'"):
+        recluster.run(run, recluster.load_settings(run))
+
+
+def test_cli_recluster_takes_a_relative_criterion(tmp_path, two_axes):
+    import json
+    from click.testing import CliRunner
+    from qpocket.cli import cli
+
+    run = _old_run(tmp_path, two_axes)
+    res = CliRunner().invoke(cli, ["recluster", str(run), "--shape-criterion", "relative",
+                                   "--shape-threshold", "0.5", "--chem-criterion", "relative",
+                                   "--chem-threshold", "0.5"])
+    assert res.exit_code == 0, res.output
+    params = json.loads((run / "metadata/clustering_params.json").read_text())
+    assert params["shape"]["criterion"] == params["chem"]["criterion"] == "relative"
+    assert params["chem"]["method"] == "hierarchical" and params["n_clusters"] == 6
+
+
+def test_cli_recluster_on_an_old_run_says_what_to_set(tmp_path, two_axes):
+    from click.testing import CliRunner
+    from qpocket.cli import cli
+
+    res = CliRunner().invoke(cli, ["recluster", str(_old_run(tmp_path, two_axes))])
+    assert res.exit_code != 0 and "set k or use criterion" in res.output
+
+
+@pytest.mark.parametrize("criterion", ["relative", "threshold"])
+def test_a_height_cut_without_a_threshold_says_so(criterion):
+    with pytest.raises(ValueError, match=f"a '{criterion}' cut needs a threshold"):
+        cluster_labels(_two_blobs(), method="average", criterion=criterion, threshold=None)
+    with pytest.raises(ValueError, match=f"a '{criterion}' cut needs a threshold"):
+        _stage_labels(_two_blobs(), "hierarchical", "average", k=None, criterion=criterion)
+
+
+def test_cli_relative_without_a_threshold_takes_half_height(tmp_path, two_axes):
+    """The recovery the old-run error recommends must work without a threshold."""
+    import json
+    from click.testing import CliRunner
+    from qpocket.cli import cli
+
+    run = _old_run(tmp_path, two_axes)
+    res = CliRunner().invoke(cli, ["recluster", str(run), "--shape-criterion", "relative",
+                                   "--chem-criterion", "relative"])
+    assert res.exit_code == 0, res.output
+    params = json.loads((run / "metadata/clustering_params.json").read_text())
+    for stage in ("shape", "chem"):
+        assert (params[stage]["criterion"], params[stage]["threshold"]) == ("relative", 0.5)
+
+
+def test_cli_threshold_without_a_height_asks_for_one(tmp_path, two_axes):
+    from click.testing import CliRunner
+    from qpocket.cli import cli
+
+    res = CliRunner().invoke(cli, ["recluster", str(_old_run(tmp_path, two_axes)),
+                                   "--shape-criterion", "threshold"])
+    assert res.exit_code != 0 and "--shape-threshold" in res.output
+    assert "Traceback" not in res.output
+
+
+def test_a_run_saved_before_criteria_existed_counts(tmp_path, two_axes):
+    """No criterion key means the old count behaviour, not the new relative default."""
+    import json
+    from qpocket.arms import recluster
+
+    run = _old_run(tmp_path, two_axes)
+    path = run / "metadata/clustering_params.json"
+    params = json.loads(path.read_text())
+    for stage in ("shape", "chem"):
+        params[stage].pop("criterion")
+        params[stage].pop("threshold")
+    path.write_text(json.dumps(params))
+    settings = recluster.load_settings(run)
+    assert settings.shape.criterion == settings.chem.criterion == "count"
+    with pytest.raises(ValueError, match="set k or use criterion"):
+        recluster.run(run, settings)
+
+
+@pytest.mark.parametrize("mode", ["two_stage", "single"])
+def test_cluster_pockets_without_chem_raises(mode):
+    from dataclasses import replace
+    from qpocket.config import ClusteringParams
+    from qpocket.pipelines.clustering import cluster_pockets
+
+    d = distances([0, 1, 2, 10, 11, 12])
+    with pytest.raises(ValueError, match="needs featurised pockets"):
+        cluster_pockets(replace(ClusteringParams(), mode=mode), d, None, None)

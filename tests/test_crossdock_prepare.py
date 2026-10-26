@@ -57,3 +57,101 @@ def test_prepare_writes_a_relocatable_folder(run):
     assert json.loads((folder / "box.json").read_text())["mode"] == "representative_pockets"
     assert pd.read_csv(folder / "ligands.csv")["active_id"].tolist() == ["ETH"]
     assert plan.jobs_csv == folder / "docking_jobs.csv"
+
+
+@pytest.fixture
+def site(tmp_path, monkeypatch):
+    """A run with one site whose metadata, pockets and actives live under sites/site_01."""
+    from qpocket.arms.screen import crossdock
+
+    run_ws = layout.create(str(tmp_path), "RUN")
+    ws = layout.site_workspace(run_ws, "site_01")
+    for rid, offset in (("R1", 0.0), ("R2", 10.0)):
+        (ws.pockets / rid).mkdir(parents=True)
+        pd.DataFrame({"x": [offset, offset + 1], "y": [0.0, 1.0], "z": [0.0, 1.0]}).to_csv(
+            ws.pockets / rid / "binding_site.csv", index=False)
+        (ws.cleaned / f"{rid}_clean.pdb").write_text("ATOM\n")
+        (ws.original / f"{rid}.pdb").write_text("ATOM\n")
+    pd.DataFrame({"pdb_id": ["R1", "R2"], "cleaned_file": [str(ws.cleaned / "R1_clean.pdb"),
+                                                           str(ws.cleaned / "R2_clean.pdb")],
+                  "aligned_file": ["a", "b"], "ligand_file": ["l1.pdb", "l2.pdb"]}
+                 ).to_csv(ws.metadata / "master.csv", index=False)
+    pd.DataFrame({"pdb_id": ["R1", "R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
+    (ws.metadata / "clustering_params.json").write_text(json.dumps({"mode": "shape_only"}))
+    (ws.screening / "actives.smi").write_text(
+        "SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCCO\tR1\tETH\tl1.pdb\nCCO\tR2\tETH\tl2.pdb\n")
+    seen = {}
+
+    def fake_receptor(pdb, pocket, out, rid, cfg, sequences=None):
+        seen[rid] = sequences
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"{rid}.pdbqt").write_text("x")
+        return out / f"{rid}.pdbqt"
+
+    monkeypatch.setattr(crossdock, "prepare_receptor", fake_receptor)
+    monkeypatch.setattr(crossdock, "prepare_ligands",
+                        lambda actives, out, cfg: {a: out / f"{a}.pdbqt" for a in actives["active_id"]})
+    monkeypatch.setattr("qpocket.io.repair.chain_sequences", lambda path: {"A": [path.name]})
+    return ws, seen
+
+
+def test_crossdock_prepare_on_site_dir(site):
+    from qpocket.arms.screen import crossdock
+
+    ws, seen = site
+    crossdock.prepare(ws.root)
+    folder = ws.root / "screening" / "crossdock"
+    assert seen == {"R1": {"A": ["R1.pdb"]}, "R2": {"A": ["R2.pdb"]}}  # run's originals reached repair
+    assert set(pd.read_csv(folder / "docking_jobs.csv")["representative"]) == {"R1", "R2"}
+    assert json.loads((folder / "box.json").read_text())["clustering_mode"] == "shape_only"
+    used = folder / "representatives_used"
+    assert (used / "selected_representatives.csv").exists() and (used / "clustering_params.json").exists()
+
+
+def test_reclustering_after_prepare_does_not_change_docking(site, monkeypatch):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    crossdock.prepare(ws.root)
+    folder = ws.screening / "crossdock"
+    assert not list(folder.glob(".representatives_used*"))  # the staging folder is gone
+    pd.DataFrame({"pdb_id": ["R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
+    (ws.metadata / "clustering_params.json").write_text(json.dumps({"mode": "two_stage"}))
+    jobs = pd.read_csv(folder / "docking_jobs.csv")
+    stray = jobs.iloc[[0]].assign(job_id="job_stray", representative="R9")
+    pd.concat([jobs, stray]).to_csv(folder / "docking_jobs.csv", index=False)
+    scored, logged = [], []
+
+    def fake_pose_table(folder, jobs, actives):
+        scored.extend(jobs["representative"])
+        return pd.DataFrame(columns=["job_id", "representative", "active_id", "rank", "score", "rmsd"])
+
+    def record(**fields):
+        logged.append(fields)
+
+    monkeypatch.setattr(crossdock, "pose_table", fake_pose_table)
+    monkeypatch.setattr(crossdock, "log_message", record)
+    crossdock.analyze(ws.root)
+    assert sorted(scored) == ["R1", "R2"]  # the snapshot, not the re-clustered R2 alone; R9 dropped
+    assert {"message_type": "crossdock_jobs_outside_snapshot", "dropped": 1} in logged
+    used = folder / "representatives_used"
+    assert pd.read_csv(used / "selected_representatives.csv")["pdb_id"].tolist() == ["R1", "R2"]
+    assert json.loads((used / "clustering_params.json").read_text())["mode"] == "shape_only"
+    assert json.loads((folder / "box.json").read_text())["clustering_mode"] == "shape_only"
+
+
+def test_a_failed_prepare_leaves_the_previous_snapshot(site, monkeypatch):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    crossdock.prepare(ws.root)
+    used = ws.screening / "crossdock" / "representatives_used"
+    pd.DataFrame({"pdb_id": ["R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("ligand preparation failed")
+
+    monkeypatch.setattr(crossdock, "prepare_ligands", broken)
+    with pytest.raises(RuntimeError):
+        crossdock.prepare(ws.root)
+    assert pd.read_csv(used / "selected_representatives.csv")["pdb_id"].tolist() == ["R1", "R2"]

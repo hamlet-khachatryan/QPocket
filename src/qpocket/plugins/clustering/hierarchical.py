@@ -1,4 +1,4 @@
-"""Hierarchical clustering: cut a linkage tree by cluster count or by height."""
+"""Hierarchical clustering: cut a linkage tree by cluster count, height or relative height."""
 import numpy as np
 
 from qpocket.core import clustering as cl
@@ -11,14 +11,17 @@ def hierarchical(distances: np.ndarray, stage) -> cl.Clustering:
 
     Args:
         distances: Square distance matrix.
-        stage: linkage, k, k_range, criterion and threshold.
+        stage: linkage, k, criterion and threshold.
 
     Returns:
         The clustering.
+
+    Raises:
+        ValueError: If a count cut has no k.
     """
-    if stage.criterion in ("threshold", cl.THRESHOLD):
-        return cl.cluster_labels(distances, method=stage.linkage, criterion=cl.THRESHOLD,
+    if stage.criterion in ("threshold", "relative", cl.THRESHOLD, cl.RELATIVE):
+        return cl.cluster_labels(distances, method=stage.linkage, criterion=stage.criterion,
                                  threshold=stage.threshold)
     if stage.k is None:
-        return cl.best_k_by_silhouette(distances, method=stage.linkage, k_range=stage.k_range)
+        raise ValueError(cl.NEEDS_K)
     return cl.cluster_labels(distances, method=stage.linkage, n_clusters=int(stage.k))

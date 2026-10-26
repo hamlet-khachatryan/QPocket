@@ -28,7 +28,8 @@ def _make_task_command(name: str):
                   help="Row of the manifest, normally SLURM_ARRAY_TASK_ID.")
     @click.option("--force", is_flag=True, default=False,
                   help="Recompute even if the output already exists.")
-    def command(config, workdir, manifest, index, force):
+    @click.option("--site", default=None, help="The binding site, such as site_01, for a per-site stage.")
+    def command(config, workdir, manifest, index, force, site):
         from qpocket.io import logging as qlog
         from qpocket.pipelines import tasks
 
@@ -37,14 +38,19 @@ def _make_task_command(name: str):
         # One log per task: the pipeline log is opened truncating, so a shared
         # path would have every array task erase the others.
         suffix = f"_{index}" if index is not None else ""
+        prefix = f"{site}_" if site else ""
         log_dir = Path(dirs["root"]) / "slurm" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        qlog.configure(cfg, log_dir / f"{name}{suffix}.log")
+        qlog.configure(cfg, log_dir / f"{prefix}{name}{suffix}.log")
 
+        manifest_path = Path(manifest) if manifest else None
         try:
-            tasks.run_task(name, cfg, dirs,
-                           manifest=Path(manifest) if manifest else None,
-                           index=index, force=force)
+            if name in tasks.SITE_TASKS:
+                from qpocket.arms import sites
+
+                sites.run_site_task(name, dirs.root, site, manifest=manifest_path, index=index, force=force)
+            else:
+                tasks.run_task(name, cfg, dirs, manifest=manifest_path, index=index, force=force)
         except tasks.TaskError as e:
             click.echo(f"[{name}] {e}", err=True)
             raise SystemExit(1)
@@ -55,5 +61,6 @@ def _make_task_command(name: str):
     return command
 
 
-for _name in ("prepare", "apbs", "featurize", "collect", "geodesic", "distance"):
+# Literal rather than tasks.TASK_NAMES, which would import the pipeline on every CLI start.
+for _name in ("prepare", "structure", "sites", "site_featurize", "site_cluster"):
     task.command(_name)(_make_task_command(_name))

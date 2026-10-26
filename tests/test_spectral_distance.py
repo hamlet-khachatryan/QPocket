@@ -85,7 +85,7 @@ def test_compute_geodesic_npz_has_expected_keys(tmp_path):
     cache = compute_geodesic(csv_path, neighbor_radius=3.0)
     with np.load(cache) as d:
         assert "D_geo" in d
-        assert "features" in d
+        assert "features" not in d
         assert "weights" in d
 
 
@@ -198,7 +198,9 @@ def test_compute_spectral_fingerprint_symmetric_d_geo():
 # ---------------------------------------------------------------------------
 
 
-def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0) -> Path:
+def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0, n_feat_rows: int = None,
+               permute: bool = False) -> Path:
+    """Write a geodesic cache at ``path`` and the ``featurized.csv`` beside it."""
     rng = np.random.default_rng(seed)
     coords = rng.uniform(0, 5, (n, 3))
     from scipy.spatial.distance import squareform, pdist
@@ -207,13 +209,56 @@ def _write_npz(path: Path, n: int = 10, k_feat: int = 3, seed: int = 0) -> Path:
         D /= D.max()
     F = rng.standard_normal((n, k_feat))
     weights = np.ones(n) / n
-    np.savez_compressed(path, D_geo=D, features=F, weights=weights)
+    np.savez_compressed(path, D_geo=D, weights=weights)
+    feats = pd.DataFrame(F[: n_feat_rows or n], columns=[f"f{i}" for i in range(k_feat)])
+    cloud = pd.DataFrame(coords, columns=list("xyz"))
+    cloud.to_csv(path.with_name("binding_site.csv"), index=False)
+    feats = pd.concat([cloud.iloc[: n_feat_rows or n], feats], axis=1)
+    if permute:
+        feats[list("xyz")] = coords[::-1]
+    if k_feat == 0:
+        feats = cloud.iloc[: n_feat_rows or n]
+    feats.to_csv(path.with_name("featurized.csv"), index=False)
     return path
 
 
+def _pocket_dir(root: Path, name: str) -> Path:
+    (root / name).mkdir()
+    return root / name
+
+
+def test_feature_rows_must_match(tmp_path):
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1, n_feat_rows=7)
+    cfg = evolve(make_config(), "distance.parallel_jobs", 1)
+    with pytest.raises(ValueError):
+        data_processing_spectral(cfg, [p1])
+
+
+def test_features_must_belong_to_the_cloud(tmp_path):
+    p1 = _write_npz(_pocket_dir(tmp_path, "P7XY") / "geospectral_cache.npz", seed=1, permute=True)
+    cfg = evolve(make_config(), "distance.parallel_jobs", 1)
+    with pytest.raises(ValueError, match=r"^P7XY: featurized.csv is not binding_site.csv's points"):
+        data_processing_spectral(cfg, [p1])
+
+
+def test_featurized_csv_needs_feature_columns(tmp_path):
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1, k_feat=0)
+    cfg = evolve(make_config(), "distance.parallel_jobs", 1)
+    with pytest.raises(ValueError, match="no feature"):
+        data_processing_spectral(cfg, [p1])
+
+
+def test_geodesic_from_unfeaturised_cloud(tmp_path):
+    from qpocket.io.cache import load_geodesic
+    rng = np.random.default_rng(1)
+    csv = tmp_path / "binding_site.csv"
+    pd.DataFrame(rng.random((20, 3)) * 4, columns=list("xyz")).to_csv(csv, index=False)
+    assert load_geodesic(compute_geodesic(csv, 2.0)).shape == (20, 20)
+
+
 def test_data_processing_spectral_runs(tmp_path):
-    p1 = _write_npz(tmp_path / "a.npz", seed=1)
-    p2 = _write_npz(tmp_path / "b.npz", seed=2)
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=1)
+    p2 = _write_npz(_pocket_dir(tmp_path, "b") / "geospectral_cache.npz", seed=2)
 
     cfg = make_config()
     cfg = evolve(cfg, "distance.global_k", 5)
@@ -228,8 +273,8 @@ def test_data_processing_spectral_runs(tmp_path):
 
 def test_data_processing_spectral_scaler_applied(tmp_path):
     """Features should be clipped to ±5 after standardisation."""
-    p1 = _write_npz(tmp_path / "a.npz", seed=10)
-    p2 = _write_npz(tmp_path / "b.npz", seed=20)
+    p1 = _write_npz(_pocket_dir(tmp_path, "a") / "geospectral_cache.npz", seed=10)
+    p2 = _write_npz(_pocket_dir(tmp_path, "b") / "geospectral_cache.npz", seed=20)
 
     cfg = make_config()
     cfg = evolve(cfg, "distance.global_k", 3)
@@ -261,3 +306,53 @@ def test_eigenvalue_distance_known_values():
     lam2 = np.array([0.0, 1.0, 0.0])
     d = np.linalg.norm(lam1 - lam2)
     assert d == pytest.approx(np.sqrt(2.0))
+
+
+# ---------------------------------------------------------------------------
+# Shape-only distances
+# ---------------------------------------------------------------------------
+
+
+def _site(tmp_path: Path, n_pockets: int):
+    """A site workspace with clouds, geodesic caches and a master.csv."""
+    from qpocket.io import layout
+    ws = layout.workspace(tmp_path / "site_01")
+    ws["metadata"].mkdir(parents=True)
+    ids = [f"P{i}" for i in range(n_pockets)]
+    pd.DataFrame({"pdb_id": ids}).to_csv(ws["metadata"] / "master.csv", index=False)
+    for i, pid in enumerate(ids):
+        (ws["pockets"] / pid).mkdir(parents=True)
+        _write_npz(ws["pockets"] / pid / "geospectral_cache.npz", n=12 + i, seed=i)
+    return ws, ids
+
+
+def test_shape_matrix_equals_two_stage_shape(tmp_path):
+    from qpocket.core import spectral as sp
+    from qpocket.io.cache import load_geodesic
+    from qpocket.pipelines.distance import build_distance_matrices, compute_shape_matrix
+
+    ws, ids = _site(tmp_path, 4)
+    cfg = evolve(evolve(make_config(), "distance.parallel_jobs", 1), "distance.global_k", 5)
+    for stale in ("feature_distance_matrix.csv", "spectral_distance_matrix.csv"):
+        (ws["metadata"] / stale).write_text("old")
+
+    out = compute_shape_matrix(cfg, ws)
+    got = pd.read_csv(out, index_col=0)
+
+    pockets = [ws["pockets"] / i / "geospectral_cache.npz" for i in ids]
+    fps = {i: sp.fingerprint(load_geodesic(p), np.zeros((len(load_geodesic(p)), 1)),
+                             sp.Scaler(np.zeros(1), np.ones(1)), 5, cfg.distance.sigma)
+           for i, p in zip(ids, pockets)}
+    expected = build_distance_matrices(cfg, {i: (f.eigenvalues, f.spectrum) for i, f in fps.items()}, ids)[0]
+    assert list(got.index) == ids
+    np.testing.assert_allclose(got.to_numpy(), expected, atol=1e-10)
+    assert not (ws["metadata"] / "feature_distance_matrix.csv").exists()
+    assert not (ws["metadata"] / "spectral_distance_matrix.csv").exists()
+
+
+def test_shape_only_needs_two_pockets(tmp_path):
+    from qpocket.pipelines.distance import compute_shape_matrix
+
+    ws, _ = _site(tmp_path, 1)
+    with pytest.raises(ValueError, match="site_01 has fewer than 2 pockets to compare"):
+        compute_shape_matrix(evolve(make_config(), "distance.parallel_jobs", 1), ws)

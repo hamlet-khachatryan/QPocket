@@ -9,22 +9,29 @@ import click
 
 @click.command("recluster")
 @click.argument("run_dir", type=click.Path(exists=True, file_okay=False))
-@click.option("--mode", type=click.Choice(["two_stage", "single"]), default=None)
+@click.option("--mode", type=click.Choice(["two_stage", "single", "shape_only"]), default=None)
 @click.option("--min-cluster-size", type=int, default=None, help="Shape clusters smaller than this are not split.")
 @click.option("--shape-method", type=click.Choice(["hierarchical", "kmedoids", "affinity"]), default=None)
 @click.option("--shape-linkage", type=click.Choice(["average", "complete", "single", "weighted"]), default=None)
 @click.option("--shape-k", type=int, default=None, help="Pin the number of shape clusters.")
-@click.option("--shape-threshold", type=float, default=None, help="Cut the shape tree at this height.")
+@click.option("--shape-criterion", type=click.Choice(["count", "threshold", "relative"]), default=None,
+              help="How the shape tree is cut; 'relative' reads --shape-threshold as a fraction of its tallest merge.")
+@click.option("--shape-threshold", type=float, default=None,
+              help="Cut the shape tree at this height (or fraction, with --shape-criterion relative).")
 @click.option("--chem-method", type=click.Choice(["hierarchical", "kmedoids", "affinity"]), default=None)
 @click.option("--chem-linkage", type=click.Choice(["average", "complete", "single", "weighted"]), default=None)
 @click.option("--chem-k", type=int, default=None, help="Pin the number of chemistry sub-clusters.")
-@click.option("--chem-threshold", type=float, default=None, help="Cut each chemistry tree at this height.")
-def recluster_command(run_dir, mode, min_cluster_size, shape_method, shape_linkage, shape_k, shape_threshold,
-                      chem_method, chem_linkage, chem_k, chem_threshold):
+@click.option("--chem-criterion", type=click.Choice(["count", "threshold", "relative"]), default=None,
+              help="How each chemistry tree is cut, as --shape-criterion.")
+@click.option("--chem-threshold", type=float, default=None,
+              help="Cut each chemistry tree at this height (or fraction, with --chem-criterion relative).")
+def recluster_command(run_dir, mode, min_cluster_size, shape_method, shape_linkage, shape_k, shape_criterion,
+                      shape_threshold, chem_method, chem_linkage, chem_k, chem_criterion, chem_threshold):
     """Recluster a finished run, starting from its own settings; the old clustering is archived.
 
     \b
     qpocket recluster runs/7KG6 --shape-threshold 0.012 --chem-threshold 40
+    qpocket recluster runs/7KG6 --shape-criterion relative --shape-threshold 0.5
     """
     from dataclasses import replace
 
@@ -34,7 +41,7 @@ def recluster_command(run_dir, mode, min_cluster_size, shape_method, shape_linka
 
     settings = recluster.load_settings(Path(run_dir))
 
-    def stage(current, method, linkage, k, threshold):
+    def stage(name, current, method, linkage, k, criterion, threshold):
         changes = {}
         if method:
             changes["method"] = method
@@ -44,14 +51,25 @@ def recluster_command(run_dir, mode, min_cluster_size, shape_method, shape_linka
             changes.update(k=k, criterion="count", threshold=None)
         if threshold is not None:
             changes.update(threshold=threshold, criterion="threshold", method="hierarchical")
+        if criterion:
+            changes["criterion"] = criterion
+            if criterion != "count":
+                changes["method"] = "hierarchical"
+            # A threshold kept from another criterion would mean something else here.
+            if threshold is None and criterion == "relative" and current.criterion != "relative":
+                changes["threshold"] = 0.5
+            if threshold is None and criterion == "threshold" and (
+                    current.criterion != "threshold" or current.threshold is None):
+                raise click.ClickException(
+                    f"--{name}-criterion threshold needs a height: set --{name}-threshold")
         return replace(current, **changes)
 
     settings = replace(
         settings,
         mode=mode or settings.mode,
         min_cluster_size=min_cluster_size or settings.min_cluster_size,
-        shape=stage(settings.shape, shape_method, shape_linkage, shape_k, shape_threshold),
-        chem=stage(settings.chem, chem_method, chem_linkage, chem_k, chem_threshold),
+        shape=stage("shape", settings.shape, shape_method, shape_linkage, shape_k, shape_criterion, shape_threshold),
+        chem=stage("chem", settings.chem, chem_method, chem_linkage, chem_k, chem_criterion, chem_threshold),
     )
     try:
         out = recluster.run(Path(run_dir), settings)

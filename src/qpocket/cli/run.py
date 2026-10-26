@@ -32,37 +32,15 @@ from qpocket.pipelines.run import run_qpocket_pipeline
     help="Chain identifier for reference structure"
 )
 @click.option(
-    "--ligand-id",
-    help="Ligand identifier in reference structure"
-)
-@click.option(
     "--workdir",
     type=click.Path(),
     help="Working directory for output files"
-)
-@click.option(
-    "--pocket-mode",
-    type=click.Choice(["cavity_detection", "bounding_box"]),
-    default=None,
-    help="Pocket identification mode"
 )
 @click.option(
     "--pocket-definition",
     type=click.Choice(["Interactions", "Solvent"]),
     default=None,
     help="Pocket representation mode"
-)
-@click.option(
-    "--bbox-center",
-    type=float,
-    multiple=True,
-    help="Bounding box center coordinates (x y z)"
-)
-@click.option(
-    "--bbox-dimensions",
-    type=float,
-    multiple=True,
-    help="Bounding box dimensions (dx dy dz)"
 )
 @click.option(
     "--csv-path",
@@ -185,11 +163,6 @@ from qpocket.pipelines.run import run_qpocket_pipeline
     help="Eliot log format"
 )
 @click.option(
-    "--save-intermediate",
-    is_flag=True,
-    help="Save intermediate (pre-crop) pocket point clouds"
-)
-@click.option(
     "--compression",
     type=click.Choice(["gzip", "none"]),
     help="HDF5 compression for interaction data"
@@ -228,12 +201,8 @@ def run(
     mode: str,
     pdb_id: Optional[str],
     chain_id: str,
-    ligand_id: Optional[str],
     workdir: Optional[str],
-    pocket_mode: str,
     pocket_definition: str,
-    bbox_center: tuple,
-    bbox_dimensions: tuple,
     csv_path: Optional[str],
     structure_paths: tuple,
     input_type: Optional[str],
@@ -262,7 +231,6 @@ def run(
     alpha: Optional[float],
     beta: Optional[float],
     log_format: Optional[str],
-    save_intermediate: bool,
     compression: Optional[str],
 ):
     """Run the QPocket pipeline with specified parameters.
@@ -270,15 +238,11 @@ def run(
     Examples:
     \b
     # PDB query mode
-    qpocket run --pdb-id 6HP0 --chain-id A --ligand-id LKQ --workdir ./results
+    qpocket run --pdb-id 6HP0 --chain-id A --workdir ./results
 
     \b
     # Fragment screen mode with CSV
     qpocket run --mode fragment_screen --csv-path structures.csv --workdir ./results
-
-    \b
-    # With bounding box pocket definition
-    qpocket run --pdb-id 6HP0 --pocket-mode bounding_box --bbox-center 10.0 20.0 30.0 --bbox-dimensions 15.0 15.0 15.0
 
     \b
     # With interaction-based pocket representation
@@ -293,17 +257,8 @@ def run(
         overrides.append(f"reference.pdb_id={pdb_id}")
     if chain_id:
         overrides.append(f"reference.chain_id={chain_id}")
-    if ligand_id:
-        overrides.append(f"reference.ligand_id={ligand_id}")
-    if pocket_mode:
-        overrides.append(f"reference.pocket_mode={pocket_mode}")
     if pocket_definition:
         overrides.append(f"reference.pocket_definition={pocket_definition}")
-
-    if len(bbox_center) == 3:
-        overrides.append(f"reference.bounding_box.center=[{bbox_center[0]},{bbox_center[1]},{bbox_center[2]}]")
-    if len(bbox_dimensions) == 3:
-        overrides.append(f"reference.bounding_box.dimensions=[{bbox_dimensions[0]},{bbox_dimensions[1]},{bbox_dimensions[2]}]")
 
     if csv_path:
         overrides.append(f"fragment_screen.csv_path={csv_path}")
@@ -377,8 +332,6 @@ def run(
         overrides.append(f"distance.chem_scale={beta}")
     if log_format:
         overrides.append(f"io.log_format={log_format}")
-    if save_intermediate:
-        overrides.append("io.save_intermediate=true")
     if compression:
         overrides.append(f"io.compression={compression}")
 
@@ -393,7 +346,6 @@ def run(
         extra_overrides=overrides,
         pdb_id=pdb_id,
         chain_id=chain_id,
-        ligand_id=ligand_id,
         workdir=workdir,
         sequence_identity=sequence_identity,
         resolution_limit=resolution_limit,
@@ -414,7 +366,6 @@ def run(
         alpha=alpha,
         beta=beta,
         log_format=log_format,
-        save_intermediate=save_intermediate or None,
         compression=compression,
     )
 
@@ -481,8 +432,7 @@ def init(output: str):
         "# you do not want to change.\n"
         "#\n"
         "# Required before a run: reference.pdb_id (pdb_query mode) or\n"
-        "# fragment_screen.reference_path (fragment_screen mode), and\n"
-        "# reference.ligand_id when pocket_definition is \"Interactions\".\n"
+        "# fragment_screen.reference_path (fragment_screen mode).\n"
         "\n"
     )
     body = source.read_text(encoding="utf-8")

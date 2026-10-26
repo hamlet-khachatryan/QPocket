@@ -17,7 +17,8 @@ GOLD = Path(__file__).resolve().parent / "golden/expected/7KG6"
 @pytest.mark.skipif(not (GOLD / "metadata/scaler.npz").exists(), reason="needs golden run")
 def test_pair_distance_reproduces_the_run():
     scaler = load_scaler(GOLD / "metadata/scaler.npz")
-    fps = [qp.fingerprint(*load_geodesic(GOLD / "pockets" / pid / "geospectral_cache.npz"),
+    fps = [qp.fingerprint(load_geodesic(GOLD / "pockets" / pid / "geospectral_cache.npz"),
+                          pd.read_csv(GOLD / "pockets" / pid / "featurized.csv").drop(columns=["x", "y", "z"]).to_numpy(float),
                           scaler, global_k=100, sigma=10.0) for pid in ("4B1J", "6O9Y")]
     got = qp.pocket_distance(*fps)
     run = pd.read_csv(GOLD / "metadata/spectral_distance_matrix.csv", index_col=0)

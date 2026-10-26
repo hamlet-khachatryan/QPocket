@@ -1,41 +1,62 @@
-# Pocket Extraction
+# Pocket extraction
 
-## Two-phase bounding-box strategy
+QPocket does not ask which ligand defines the pocket. `qpocket run` finds every
+ligand-occupied binding site in the structures and cuts one point cloud per site
+per structure.
 
-### Phase 1 — Reference structure
+## Site ligands
 
-1. **Cavity detection** (CavFind / LigSite) identifies all solvent-accessible cavities.
-2. The cavity whose point cloud overlaps the **reference ligand centroid** (majority overlap: > 50 % of centroid neighbours inside) is selected.
-3. An axis-aligned **bounding box** is computed from this point cloud with **1 Å padding** on every face.
+A ligand is a non-polymer, non-water heteroatom group that
 
-### Phase 2 — All other structures
+- is not in `cleaning.allowed_cofactors` (allowed cofactors stay in the protein and never define a site),
+- has at least one carbon atom, so ions, sulfate and phosphate never define a site, and
+- has at least `sites.min_heavy_atoms` heavy atoms.
 
-1. Cavity detection runs for each structure.
-2. Each cavity is scored by **volumetric overlap** — the count of its grid points that fall inside the reference bounding box.
-3. The cavity with the **highest volumetric overlap** is selected as the binding pocket.
-4. If no cavity overlaps at all, the structure is marked `CAVITY_CLOSED`.
+There is no built-in list of names. To keep a cofactor out of the site list, add
+it to `cleaning.allowed_cofactors`.
+
+## What a run does
+
+1. Align and clean every structure, and find its site ligands.
+2. Protonate one complex per structure and read the ProLIF contacts of each ligand.
+3. Detect cavities (CavFind / LigSite) once per structure.
+4. **Group the ligands into sites**: ligands from different structures whose atoms
+   come within `sites.link_cutoff` (4.0 Å) of one another belong to the same site.
+5. For each site and structure, cut one cloud from the cavity points inside a box
+   around the site's ligands (`sites.box_padding`, 4.0 Å).
+6. Cache the geodesics, and save `metadata/config.yaml`.
+
+It stops there: no features and no distance matrices. Those are per-site steps, see
+[Distance analysis](distance-analysis.md). A structure with no ligand at a site is
+still listed at that site, with the cloud cut from the same box.
 
 ## Pocket definition modes
 
 | Mode | Description |
 |---|---|
 | `Solvent` | The full cavity point cloud is used as the pocket representation. |
-| `Interactions` | The pocket is cropped to a sphere of radius `interaction_padding` around PLIP-observed interacting residues. |
+| `Interactions` | The pocket is cropped to a sphere of radius `interaction_padding` around the contacting residues. |
 
-## Bounding box mode
+## Regrouping
 
-When `pocket_mode: "bounding_box"`, an explicit box is used instead of CavFind:
+If the sites are too coarse or too fine, regroup at another cutoff without
+recomputing the structures. Unchanged sites keep their analysis:
 
-```yaml
-reference:
-  pocket_mode: "bounding_box"
-  bounding_box:
-    center: [10.0, 20.0, 30.0]
-    dimensions: [15.0, 15.0, 15.0]
+```bash
+qpocket site regroup runs/7KG6 --cutoff 5.0
 ```
 
-## Ligand selection
+The explorer has the same action (**Regroup sites**).
 
-After pocket extraction, all heteroatom small molecules whose atoms overlap with the pocket (majority threshold) are collected.  The **largest** ligand (highest heavy-atom count) is returned and saved to `structures/extracted_ligands/`.
+## Settings
 
-Molecules in `cleaning.allowed_cofactors` and the built-in `HET_TO_REMOVE` blacklist are excluded.
+```yaml
+sites:
+  min_heavy_atoms: 6
+  link_cutoff: 4.0
+  box_padding: 4.0
+```
+
+`reference.ligand_id`, `ligand_chain_id`, `pocket_mode` and `bounding_box` are
+obsolete: they are ignored with a warning. The old `--ligand-id`, `--pocket-mode`
+and `--bbox-*` options are gone.

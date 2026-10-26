@@ -186,3 +186,16 @@ adenines of AR6 and A1R lost their aromatic rings. The SMILES now come from each
 ligand's chemical-component definition, which is where the bond orders live.
 
 4A0D and 6HMM contribute no row: they are unbound.
+
+## Binding-site discovery Task 8 — layout 3: per-site clouds, no features or matrices in `qpocket run`
+
+`qpocket run` now stops after one cloud per site per structure. The run level
+keeps `metadata/master.csv` and `metadata/failures.csv`; everything else that was
+compared moved under `sites/<site_id>/` (`metadata/master.csv`,
+`metadata/potential_interactions_freq.csv`, `screening/actives.smi`,
+`pockets/<pdb_id>/binding_site.csv`), next to `sites/sites.csv` and
+`structures/ligands.csv`. `featurized.csv` and the distance matrices are no
+longer written by the run; they come back as per-site steps. The baseline
+under `tests/golden/expected` must be re-captured with
+`python scripts/make_golden.py tests/golden/expected` on a machine that has
+`experiments/PARG`; it was not re-captured here because that data is absent.

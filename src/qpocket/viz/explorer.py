@@ -26,9 +26,10 @@ def _():
     import plotly.express as px
 
     import qpocket.viz as qviz
+    from qpocket.arms import sites as qsites
     from qpocket.viz import controls as qcontrols
 
-    return Path, json, lru_cache, mo, np, pd, px, qcontrols, qviz
+    return Path, json, lru_cache, mo, np, pd, px, qcontrols, qsites, qviz
 
 
 @app.cell
@@ -85,12 +86,49 @@ def _(Path, mo, qviz, run_location):
 
 
 @app.cell
-def _(Path, mo, pd, run_selector):
+def _(Path, mo, run_selector):
     mo.stop(run_selector.value is None, mo.md("No run selected / none found."))
-
     run_dir = Path(run_selector.value)
-    meta = run_dir / "metadata"
-    pockets_dir = run_dir / "pockets"
+    return (run_dir,)
+
+
+@app.cell
+def _(mo, pd, qsites, regrouped, run_dir):
+    # regrouped is None until Regroup sites runs; depending on it re-reads the table.
+    _ = regrouped
+    try:
+        sites_df = qsites.site_table(run_dir)
+    except qsites.SiteError:
+        sites_df = pd.DataFrame(columns=["site_id", "n_holo_structures", "n_ligands", "extent", "resnames"])
+    _labels = {f"{r.site_id} · {r.n_holo_structures} holo · {r.resnames}": r.site_id
+               for r in sites_df.itertuples()}
+    site_picker = mo.ui.dropdown(options=_labels, value=next(iter(_labels), None),
+                                 label="**Binding site**")
+    mo.vstack([
+        mo.md("## Binding sites\nEvery ligand-occupied site of the run. Everything below reads "
+              "the site picked here."),
+        site_picker,
+        mo.ui.table(sites_df[["site_id", "n_holo_structures", "n_ligands", "extent", "resnames"]],
+                    selection=None, pagination=True),
+    ])
+    return site_picker, sites_df
+
+
+@app.cell
+def _(mo):
+    # The last site step's outcome; setting it re-reads the files that step rewrote.
+    get_site_steps, set_site_steps = mo.state(None)
+    return get_site_steps, set_site_steps
+
+
+@app.cell
+def _(Path, get_site_steps, mo, pd, run_dir, site_picker):
+    mo.stop(site_picker.value is None, mo.md("No ligand-bound site was found in this run."))
+
+    _ = get_site_steps()
+    site_dir = run_dir / "sites" / site_picker.value
+    meta = site_dir / "metadata"
+    pockets_dir = site_dir / "pockets"
 
     def _read_csv(p, **kw):
         return pd.read_csv(p, **kw) if p.exists() else None
@@ -100,9 +138,13 @@ def _(Path, mo, pd, run_selector):
     util_df = _read_csv(meta / "binding_pocket_utilization.csv")
 
 
-    actives_df = _read_csv(run_dir / "screening" / "actives.smi", sep="\t")
+    actives_df = _read_csv(site_dir / "screening" / "actives.smi", sep="\t")
 
+    # A site clustered on shape alone has no spectral matrix; its shape matrix stands in.
+    dist_kind = "spectral"
     dist_path = meta / "spectral_distance_matrix.csv"
+    if not dist_path.exists():
+        dist_kind, dist_path = "shape", meta / "shape_distance_matrix.csv"
     dist_df = pd.read_csv(dist_path, index_col=0) if dist_path.exists() else None
 
     #per-structure metadata
@@ -121,13 +163,15 @@ def _(Path, mo, pd, run_selector):
     info["cluster_id"] = info.get("cluster_id", -1)
     info = info.sort_values(["cluster_id", "pdb_id"]).reset_index(drop=True)
 
-    def featurized_path(pdb_id: str) -> Path:
-        return pockets_dir / str(pdb_id) / "featurized.csv"
+    def cloud_path(pdb_id: str) -> Path:
+        """The pocket's featurised cloud, or its bare cloud before Featurise."""
+        _featurized = pockets_dir / str(pdb_id) / "featurized.csv"
+        return _featurized if _featurized.exists() else _featurized.with_name("binding_site.csv")
 
     #available features
     FEATURE_COLS = []
     for _pid in info["pdb_id"]:
-        _fp = featurized_path(_pid)
+        _fp = pockets_dir / str(_pid) / "featurized.csv"
         if _fp.exists():
             _cols = pd.read_csv(_fp, nrows=1).columns.tolist()
             FEATURE_COLS = [c for c in _cols if c not in ("x", "y", "z")]
@@ -135,37 +179,150 @@ def _(Path, mo, pd, run_selector):
 
     mo.md(
         f"""
-        `{run_dir}` — structures: **{len(info)}** · clusters:
+        `{site_dir}` — structures: **{len(info)}** · clusters:
         **{info['cluster_id'].nunique()}** · representatives:
         **{int(info['is_representative'].sum())}** · features:
         `{', '.join(FEATURE_COLS) or 'none found'}`
         """
     )
-    return (
-        FEATURE_COLS,
-        actives_df,
-        dist_df,
-        featurized_path,
-        info,
-        run_dir,
-    )
+    return FEATURE_COLS, actives_df, cloud_path, dist_df, dist_kind, info, site_dir
+
+
+@app.cell
+def _(info, mo, qviz, run_dir, site_dir, sites_df):
+    # The site's ligands over the frame protein, every site's centre as a sphere
+    # (this one dark, the others faint), through the pocket grid's own page.
+    _centres = sites_df[["centre_x", "centre_y", "centre_z"]].to_numpy(dtype=float)
+    _here = (sites_df["site_id"] == site_dir.name).to_numpy(dtype=float)
+    _ligands = site_dir / "ligands.pdb"
+    # shortcut: the first aligned structure stands in for the frame; every one is superposed onto it.
+    _frame = next((run_dir / f for f in info.get("aligned_file", [])
+                   if isinstance(f, str) and f and (run_dir / f).exists()), None)
+    _ramp = qviz.RampSpec("sequential", "Blues", ("other sites", "this site"))
+    _domain = qviz.ColourDomain(0.15, 1.0, None)
+    _stops = qviz.ramp_stops(_ramp.scale)
+    _panel = {
+        "id": site_dir.name, "title": f"{site_dir.name} · ligands of every holo structure",
+        "cloud": qviz.pseudo_atom_pdb(_centres, b=qviz.scale_to_percent(_here, _domain)),
+        "cartoon": _frame.read_text(encoding="utf-8") if _frame else "",
+        "side": "", "highlights": {}, "n_forced": 0,
+        "ligand": qviz.ligand_pdb(str(_ligands)) if _ligands.exists() else "",
+        "vals": [round(float(v), 3) for v in _here], "n_points": len(_centres), "n_ctx": 0,
+    }
+    _html, _h = qviz.grid.grid_html(
+        [_panel], bbox_pdb=qviz.pseudo_atom_pdb(qviz.bbox_corners(_centres, pad=10.0), resname="BOX", chain="Z"),
+        n_cols=1, panel_px=420, sphere_radius=1.2, stops=_stops, value_label="this site",
+        ramp=_ramp, domain=_domain, hover=False, cartoon_opacity=0.5, ligand_color="greenCarbon",
+        observed_colour="#eb6834", potential_colour="#7b5cd6", offline=True)
+    mo.iframe(_html, height=f"{_h + 70}px")
+    return
+
+
+@app.cell
+def _(get_site_steps, mo, qsites, run_dir, site_dir):
+    _sid = site_dir.name
+    site_steps = qsites.site_status(run_dir, _sid)
+    _no_clouds = " (needs clouds)" if not site_steps["clouds"] else ""
+    shape_button = mo.ui.run_button(label="Shape clustering" + _no_clouds, disabled=bool(_no_clouds))
+    featurise_button = mo.ui.run_button(label="Featurise" + _no_clouds, disabled=bool(_no_clouds))
+    # two_stage_site's own precondition: two featurised pockets, not every cloud.
+    two_stage_button = mo.ui.run_button(
+        label=f"Two-stage clustering ({site_steps['n_featurised']}/{site_steps['n_clouds']} featurised)",
+        disabled=site_steps["n_featurised"] < 2)
+    _done = " · ".join(f"{name.replace('_', ' ')} {'✓' if ok else '—'}"
+                       for name, ok in site_steps.items() if isinstance(ok, bool))
+    _commands = "\n".join([
+        f"qpocket site shape {run_dir} --site {_sid}",
+        f"qpocket site featurize {run_dir} --site {_sid}",
+        f"qpocket site cluster {run_dir} --site {_sid}",
+        "# or on SLURM (featurises one cloud per array task, then clusters):",
+        f"qpocket slurm generate --config {run_dir / 'metadata' / 'config.yaml'} "
+        f"--workdir {run_dir.parent} --site {_sid}",
+    ])
+    mo.vstack([
+        mo.md(f"### Steps for {_sid}\n{_done}"),
+        mo.hstack([shape_button, featurise_button, two_stage_button], justify="start"),
+        get_site_steps() or mo.md(""),
+        mo.accordion({"Run them from a terminal instead": mo.plain_text(_commands)}),
+    ])
+    return featurise_button, shape_button, two_stage_button
+
+
+@app.cell
+def _(featurise_button, mo, qsites, run_dir, set_site_steps, shape_button, site_dir, two_stage_button):
+    mo.stop(not (shape_button.value or featurise_button.value or two_stage_button.value))
+    import traceback as _traceback
+
+    _name, _step = next((n, f) for n, f, b in [
+        ("Shape clustering", qsites.shape_cluster_site, shape_button),
+        ("Featurise", qsites.featurize_site, featurise_button),
+        ("Two-stage clustering", qsites.two_stage_site, two_stage_button),
+    ] if b.value)
+    with mo.status.spinner(title=f"{_name} for {site_dir.name}…"):
+        try:
+            _step(run_dir, site_dir.name)
+            _message = mo.md(f"_{_name} finished for {site_dir.name}._")
+        except Exception as _e:
+            _message = mo.vstack([
+                mo.md(f"_{_name} failed: {type(_e).__name__}: {_e}_"),
+                mo.accordion({"Traceback": mo.plain_text(_traceback.format_exc())}),
+            ])
+    set_site_steps(_message)
+    return
+
+
+@app.cell
+def _(mo, qviz, run_dir):
+    # This cell feeds the site table, so an odd config must not stop it.
+    regroup_cutoff = mo.ui.number(start=0.5, stop=20.0, step=0.5,
+                                  value=qviz.site_link_cutoff(run_dir, 0.5, 20.0),
+                                  label="Link cutoff (Å)")
+    regroup_button = mo.ui.run_button(label="Regroup sites")
+    mo.accordion({"Regroup sites": mo.vstack([
+        mo.callout(mo.md("Regrouping rewrites `sites/`. Every site whose ligands change loses its "
+                         "per-site results: features, clustering and cross-docking."), kind="warn"),
+        mo.hstack([regroup_cutoff, regroup_button], justify="start", align="end"),
+        mo.plain_text(f"qpocket site regroup {run_dir} --cutoff <x>"),
+    ])})
+    return regroup_button, regroup_cutoff
+
+
+@app.cell
+def _(mo, qsites, regroup_button, regroup_cutoff, run_dir):
+    # No mo.stop: the site table depends on this, and must show before any regroup.
+    regrouped = None
+    if regroup_button.value:
+        with mo.status.spinner(title="Regrouping sites…"):
+            try:
+                regrouped = qsites.regroup_sites(run_dir, float(regroup_cutoff.value))
+                _message = f"_Regrouped into {len(regrouped)} sites._"
+            except Exception as _e:
+                _message = f"_Regroup failed: {type(_e).__name__}: {_e}_"
+    mo.md(_message if regroup_button.value else "")
+    return (regrouped,)
 
 
 @app.cell
 def _(lru_cache, pd):
+    import os
+
     @lru_cache(maxsize=512)
-    def load_pocket(path: str) -> pd.DataFrame:
+    def _read_pocket(path: str, mtime: float) -> pd.DataFrame:
         return pd.read_csv(path)
+
+    def load_pocket(path: str) -> pd.DataFrame:
+        # Keyed on mtime too, so a cloud Featurise rewrites is read afresh.
+        return _read_pocket(path, os.path.getmtime(path))
 
     return (load_pocket,)
 
 
 @app.cell
-def _(qviz, run_dir):
+def _(qviz, site_dir):
     # Read once, in a cell of its own: both the 3D panels and the fingerprint
     # section below depend on this, and marimo resolves cells by dataflow, so a
     # shared upstream cell is what keeps them from forming a cycle.
-    run_interactions = qviz.interactions.load_run_interactions(run_dir)
+    run_interactions = qviz.interactions.load_run_interactions(site_dir)
     return (run_interactions,)
 
 
@@ -179,11 +336,11 @@ def _(mo):
 
 
 @app.cell
-def _(mo, qviz, run_dir):
+def _(mo, qviz, site_dir):
     from qpocket.arms import recluster as _recluster
 
-    cluster_matrices = qviz.two_stage.load_matrices(run_dir)
-    cluster_settings = _recluster.load_settings(run_dir)
+    cluster_matrices = qviz.two_stage.load_matrices(site_dir)
+    cluster_settings = _recluster.load_settings(site_dir)
 
     cluster_method = mo.ui.dropdown(
         options={label: key for key, label in qviz.two_stage.METHODS.items()},
@@ -191,19 +348,31 @@ def _(mo, qviz, run_dir):
         label="**Method**",
         full_width=True,
     )
-    (cluster_method if cluster_matrices is not None
-     else mo.md("_This run predates the shape and chemistry matrices, so it is "
-                "shown with the clustering it was saved with._"))
-    return cluster_matrices, cluster_method, cluster_settings
+    # "relative" cuts each tree at a fraction of its tallest merge, so one value suits any site.
+    cut_by = mo.ui.radio(
+        options={"fraction of the tallest merge": "relative", "height": "threshold"},
+        value=("height" if cluster_settings.shape.criterion == "threshold"
+               else "fraction of the tallest merge"),
+        label="Cut by", inline=True,
+    )
+    (mo.hstack([cluster_method, cut_by], justify="start", gap=2) if cluster_matrices is not None
+     else mo.md("_This site has no distance matrices yet; run Shape clustering above._"))
+    return cluster_matrices, cluster_method, cluster_settings, cut_by
 
 
 @app.cell
-def _(cluster_matrices, cluster_settings, info, mo, qviz):
+def _(cluster_matrices, cluster_settings, cut_by, info, mo, qviz):
     def _slider(lo, hi, value, label):
         return mo.ui.slider(start=lo, stop=hi, step=max((hi - lo) / 200, 1e-9),
                             value=min(max(value, lo), hi), label=label, show_value=True)
 
-    if cluster_matrices is None:
+    _relative = cut_by.value == "relative"
+    if _relative:
+        _start = (float(cluster_settings.shape.threshold)
+                  if cluster_settings.shape.criterion == "relative"
+                  and cluster_settings.shape.threshold else 0.5)
+        _combined_lo, _combined_hi, _shape_lo, _shape_hi, _shape_start = 0.05, 1.0, 0.05, 1.0, _start
+    elif cluster_matrices is None:
         _combined_lo, _combined_hi, _shape_lo, _shape_hi, _shape_start = 0.0, 1.0, 0.0, 1.0, 0.5
     else:
         _combined_lo, _combined_hi = qviz.two_stage.height_range(cluster_matrices.combined)
@@ -220,17 +389,25 @@ def _(cluster_matrices, cluster_settings, info, mo, qviz):
     damping = mo.ui.slider(start=0.5, stop=0.98, step=0.01, value=0.9,
                            label="Damping", show_value=True)
     combined_cut = _slider(_combined_lo, _combined_hi,
-                           (_combined_lo + _combined_hi) / 2, "Cut height")
-    shape_cut = _slider(_shape_lo, _shape_hi, _shape_start, "Shape cut")
+                           0.5 if _relative else (_combined_lo + _combined_hi) / 2,
+                           "Cut fraction" if _relative else "Cut height")
+    shape_cut = _slider(_shape_lo, _shape_hi, _shape_start,
+                        "Shape cut fraction" if _relative else "Shape cut")
     min_split = mo.ui.number(start=2, stop=100, value=int(cluster_settings.min_cluster_size),
                              label="Split groups of at least")
     return combined_cut, damping, min_split, shape_cut
 
 
 @app.cell
-def _(cluster_matrices, cluster_settings, mo, qviz, shape_cut):
+def _(cluster_matrices, cluster_settings, cut_by, mo, qviz, shape_cut):
     # The chemistry range depends on where the shape cut fell, so it follows it.
-    if cluster_matrices is None:
+    _chem_start = None
+    if cut_by.value == "relative":
+        _chem_lo, _chem_hi = 0.05, 1.0
+        _chem_start = (float(cluster_settings.chem.threshold)
+                       if cluster_settings.chem.criterion == "relative"
+                       and cluster_settings.chem.threshold else 0.5)
+    elif cluster_matrices is None:
         _chem_lo, _chem_hi = 0.0, 1.0
     else:
         _groups = qviz.two_stage.shape_groups(cluster_matrices, shape_cut.value,
@@ -239,8 +416,10 @@ def _(cluster_matrices, cluster_settings, mo, qviz, shape_cut):
                                                               cluster_settings.chem.linkage)
     chem_cut = mo.ui.slider(start=_chem_lo, stop=_chem_hi,
                             step=max((_chem_hi - _chem_lo) / 200, 1e-9),
-                            value=(_chem_lo + _chem_hi) / 2,
-                            label="Chemistry cut", show_value=True)
+                            value=min(max(_chem_start, _chem_lo), _chem_hi) if _chem_start
+                            else (_chem_lo + _chem_hi) / 2,
+                            label=("Chemistry cut fraction" if cut_by.value == "relative"
+                                   else "Chemistry cut"), show_value=True)
     return (chem_cut,)
 
 
@@ -256,7 +435,9 @@ def _(
     shape_cut,
 ):
     # Only the knobs the chosen method uses are on screen.
-    (mo.md("") if cluster_matrices is None else {
+    (mo.md("") if cluster_matrices is None else
+     mo.vstack([mo.md("_Shape-only clustering — featurise this site for two-stage clustering._"),
+                shape_cut]) if cluster_matrices.chem is None else {
         "affinity": mo.hstack([damping], justify="start", gap=2),
         "hierarchical": mo.hstack([combined_cut], justify="start", gap=2),
         "two_stage": mo.hstack([shape_cut, chem_cut, min_split], justify="start", gap=2),
@@ -271,6 +452,7 @@ def _(
     cluster_method,
     cluster_settings,
     combined_cut,
+    cut_by,
     damping,
     min_split,
     qviz,
@@ -280,11 +462,12 @@ def _(
     # what Apply writes cannot disagree.
     pending_settings, pending = None, None
     if cluster_matrices is not None:
-        pending_settings = qviz.two_stage.settings_for(
+        pending_settings = qviz.two_stage.shape_only_settings(
+            cluster_settings, shape_cut.value, cut_by.value) if cluster_matrices.chem is None else qviz.two_stage.settings_for(
             cluster_settings, cluster_method.value,
             combined_cut=combined_cut.value, shape_cut=shape_cut.value,
             chem_cut=chem_cut.value, damping=damping.value,
-            min_cluster_size=int(min_split.value))
+            min_cluster_size=int(min_split.value), criterion=cut_by.value)
         pending = qviz.two_stage.preview(cluster_matrices, pending_settings)
     return pending, pending_settings
 
@@ -295,17 +478,27 @@ def _(
     cluster_matrices,
     cluster_method,
     cluster_settings,
+    cut_by,
     mo,
     pending,
     qviz,
     shape_cut,
 ):
-    # The mirrored pair only means something for the two-stage cut.
+    # The mirrored pair only means something for the two-stage cut. A relative cut is
+    # drawn at its height on the shape tree; each chemistry tree has its own, so none is drawn.
+    _relative = cut_by.value == "relative"
+    _shape_line = (shape_cut.value * qviz.two_stage.height_range(
+        cluster_matrices.shape, cluster_settings.shape.linkage)[1]
+        if _relative and cluster_matrices is not None else shape_cut.value)
     if cluster_matrices is None or pending is None:
         _view = mo.md("")
+    elif cluster_matrices.chem is None:
+        _view = qviz.two_stage.dendrogram_figure(
+            cluster_matrices.shape, cluster_matrices.ids, _shape_line, "Shape",
+            cluster_settings.shape.linkage)
     elif cluster_method.value == "two_stage":
         _view = qviz.two_stage.mirrored_figure(
-            cluster_matrices, pending, shape_cut.value, chem_cut.value,
+            cluster_matrices, pending, _shape_line, None if _relative else chem_cut.value,
             cluster_settings.shape.linkage)
     elif cluster_method.value == "hierarchical":
         _view = qviz.two_stage.dendrogram_figure(
@@ -321,8 +514,6 @@ def _(mo, pending):
     _facts = []
     if pending is not None:
         _facts.append(f"**{pending.n_clusters} clusters**")
-        if pending.silhouette is not None:
-            _facts.append(f"silhouette {pending.silhouette:.2f}")
     mo.md(" · ".join(_facts) + "  \n_Preview only; press Apply to make it the run's clustering._"
           if _facts else "")
     return
@@ -341,14 +532,14 @@ def _(mo, pending_settings):
 
 
 @app.cell
-def _(apply_clustering, mo, pending_settings, run_dir):
+def _(apply_clustering, mo, pending_settings, site_dir):
     # Every section below reads the file this writes, so the button is what makes
     # them refresh.
     applied_at = None
     if apply_clustering.value and pending_settings is not None:
         from qpocket.arms import recluster as _recluster_apply
 
-        _saved = _recluster_apply.run(run_dir, pending_settings)
+        _saved = _recluster_apply.run(site_dir, pending_settings)
         applied_at = str(_saved)
     mo.md(f"Applied; `{applied_at}` is now this run's clustering."
           if applied_at else "")
@@ -356,18 +547,14 @@ def _(apply_clustering, mo, pending_settings, run_dir):
 
 
 @app.cell
-def _(applied_at, dist_df, info, mo, np, pd, qviz, run_dir):
+def _(applied_at, info, mo, pd, site_dir):
     # ---- The grouping every view below follows -------------------------------
     # The clustering section is the decision point: it writes
     # metadata/clustering_metadata.csv, and this reads that file back. Depending
     # on applied_at is what makes these views refresh after Apply.
-    #
-    # Silhouette is added here, since the stored metadata does not carry it. It is
-    # measured on the spectral distances themselves, so a structure with a
-    # negative value sits closer to a cluster other than its own.
     _ = applied_at
     active_info = info.copy()
-    _stored_path = run_dir / "metadata" / "clustering_metadata.csv"
+    _stored_path = site_dir / "metadata" / "clustering_metadata.csv"
     if _stored_path.exists():
         _saved = pd.read_csv(_stored_path)
         _cols = [c for c in ["cluster_id", "shape_cluster_id", "chem_cluster_id",
@@ -381,26 +568,9 @@ def _(applied_at, dist_df, info, mo, np, pd, qviz, run_dir):
             .sort_values(["cluster_id", "pdb_id"])
             .reset_index(drop=True)
         )
-    active_info["silhouette"] = np.nan
-
-    _mean_sil = None
-    if dist_df is not None:
-        _ids = [str(i) for i in dist_df.index]
-        _D = dist_df.loc[dist_df.index, dist_df.index].to_numpy(dtype=float)
-        _label_of = dict(zip(active_info["pdb_id"].astype(str), active_info["cluster_id"]))
-        _labels = np.nan_to_num(
-            np.array([_label_of.get(_i, -1) for _i in _ids], dtype=float), nan=-1
-        ).astype(int)
-        _mean_sil, _values = qviz.silhouette(_D, _labels)
-        if _values is not None:
-            active_info["silhouette"] = (
-                active_info["pdb_id"].astype(str).map(dict(zip(_ids, _values)))
-            )
-
     mo.md(
         f"**{active_info['cluster_id'].nunique()} pocket conformations** across "
         f"{len(active_info)} structures"
-        + ("" if _mean_sil is None else f" · mean silhouette {_mean_sil:.2f}")
         + f" · {int(active_info['is_representative'].sum())} representatives"
     )
     return (active_info,)
@@ -411,8 +581,7 @@ def _(mo):
     mo.md("""
     ## Structures
     `dist_to_exemplar` — distance to the cluster representative (large = outlier) ·
-    `silhouette` < 0 — fits another cluster better · `utilization` — share of the
-    reference site covered.
+    `utilization` — share of the reference site covered.
     """)
     return
 
@@ -422,7 +591,7 @@ def _(active_info, mo):
     _cols = ["pdb_id", "cluster_id"] + [
         c
         for c in [
-            "silhouette", "is_representative", "dist_to_exemplar", "utilization",
+            "is_representative", "dist_to_exemplar", "utilization",
             "rmsd_to_ref", "protein_state",
         ]
         if c in active_info.columns
@@ -432,10 +601,10 @@ def _(active_info, mo):
 
 
 @app.cell
-def _(mo):
-    mo.md("""
+def _(dist_kind, mo):
+    mo.md(f"""
     ## Pocket landscape
-    One point per structure, placed by spectral distance alone. **PCA** is the honest
+    One point per structure, placed by {dist_kind} distance alone. **PCA** is the honest
     default; UMAP and t-SNE separate groups, but their gaps are not distances. Lasso
     points to open their cluster below.
     """)
@@ -456,7 +625,7 @@ def _(mo):
 def _(active_info, dist_df, embed_method, mo, qcontrols, qviz):
     _color_opts = [
         c
-        for c in ["cluster_id", "silhouette", "utilization", "protein_state", "rmsd_to_ref", "is_representative"]
+        for c in ["cluster_id", "utilization", "protein_state", "rmsd_to_ref", "is_representative"]
         if c in active_info.columns
     ]
 
@@ -499,7 +668,7 @@ def _(
     perplexity,
     qviz,
 ):
-    mo.stop(dist_df is None, mo.md("No `spectral_distance_matrix.csv` for this run."))
+    mo.stop(dist_df is None, mo.md("No distance matrix for this site yet; run Shape clustering above."))
 
     _ids = list(dist_df.index)
     try:
@@ -521,11 +690,11 @@ def _(
 
 
 @app.cell
-def _(color_by, emb_df, layout, mo, px, qviz):
+def _(color_by, dist_kind, emb_df, layout, mo, px, qviz):
     _cb = color_by.value
     _hover = [
         c
-        for c in ["cluster_id", "silhouette", "utilization", "rmsd_to_ref", "protein_state", "is_representative"]
+        for c in ["cluster_id", "utilization", "rmsd_to_ref", "protein_state", "is_representative"]
         if c in emb_df.columns
     ]
 
@@ -550,7 +719,7 @@ def _(color_by, emb_df, layout, mo, px, qviz):
     )
     _fig.update_traces(marker=dict(size=15, line=dict(width=1, color="white")), textposition="top center")
     _fig.update_layout(
-        title=f"{layout.method} of spectral distances · coloured by {_cb}",
+        title=f"{layout.method} of {dist_kind} distances · coloured by {_cb}",
         dragmode="lasso",
     )
 
@@ -576,16 +745,16 @@ def _(embed_plot):
 
 
 @app.cell
-def _(active_info, featurized_path, load_pocket, np, qviz):
+def _(active_info, cloud_path, load_pocket, np, qviz):
     # ---- The lattice the viewer's set-arithmetic modes rest on ---------------
     # Every pocket in a run is sampled on the same regular lattice, which is what
     # makes "difference from representative" and "consensus occupancy" exact rather
     # than interpolated. Never fatal: a run whose spacing cannot be established
     # still gets a viewer, just without those two modes.
     _clouds = [
-        load_pocket(str(featurized_path(_pid)))[["x", "y", "z"]].to_numpy(dtype=float)
+        load_pocket(str(cloud_path(_pid)))[["x", "y", "z"]].to_numpy(dtype=float)
         for _pid in active_info["pdb_id"]
-        if featurized_path(_pid).exists()
+        if cloud_path(_pid).exists()
     ]
     grid_spacing = None
     if _clouds:
@@ -750,7 +919,7 @@ def _(
     colour_mode,
     context_radius,
     feature,
-    featurized_path,
+    cloud_path,
     grid_spacing,
     hover_values,
     json,
@@ -774,11 +943,10 @@ def _(
     show_pocket,
     sphere_radius,
 ):
-    mo.stop(feature.value is None, mo.md("No feature available."))
-
     CONTACT_R = 4.0  # side chains are drawn for residues this close to the cloud
 
-    feat = feature.value
+    # Before Featurise the clouds carry no feature column: drawn in one colour.
+    feat = feature.value or "unfeaturised"
     across_clusters = panel_mode.value != "one cluster"
     _sizes = active_info["cluster_id"].value_counts().to_dict()
 
@@ -796,13 +964,13 @@ def _(
     pockets = []  # (pdb_id, metadata row, point cloud)
     missing = []
     for _, _row in _rows.iterrows():
-        _fp = featurized_path(_row["pdb_id"])
+        _fp = cloud_path(_row["pdb_id"])
         if _fp.exists():
             pockets.append((str(_row["pdb_id"]), _row, load_pocket(str(_fp))))
         else:
             missing.append(str(_row["pdb_id"]))
 
-    mo.stop(not pockets, mo.md(f"No `featurized.csv` found for cluster {cluster_sel.value}."))
+    mo.stop(not pockets, mo.md(f"No pocket cloud found for cluster {cluster_sel.value}."))
 
     # ---- What the spheres encode, and on what scale --------------------------
     # Each mode produces (coordinates, values) per panel. The difference and
@@ -810,6 +978,8 @@ def _(
     # interpolation; a site only one pocket occupies has no difference to show and
     # is dropped rather than filled in.
     mode = colour_mode.value
+    if feature.value is None and mode == "difference from representative":
+        mode = "feature value"
     # Within a cluster the reference is that cluster's own representative. Across
     # clusters it is the largest cluster's, so each panel reads as "how this
     # conformational family differs from the dominant one".
@@ -883,7 +1053,7 @@ def _(actives_df, mo, pd):
     # selector re-runs.
     mo.stop(
         actives_df is None or actives_df.empty,
-        mo.md("No `screening/actives.smi` in this run, so there is no ligand chemistry to draw."),
+        mo.md("No `screening/actives.smi` for this site, so there is no ligand chemistry to draw."),
     )
 
     from rdkit import Chem as _Chem, RDLogger as _RDLogger
@@ -1100,109 +1270,24 @@ def _(fingerprint_plot, mo, run_interactions):
 
 @app.cell
 def _(mo):
-    mo.md("""
-    ## Can two states be targeted at once?
-    For every pair of clusters: how far their engaged residues overlap, how far
-    their pockets overlap in space, and whether a shared residue changes its
-    chemistry between them — a donor in one state and an acceptor in the other is
-    a contradiction, not a difference. A pair resting on too few structures is
-    left blank rather than called.
-    """)
-    return
+    from qpocket.arms.screen import crossdock
 
-
-@app.cell
-def _(active_info, featurized_path, grid_spacing, load_pocket, mo, qviz, run_interactions):
-    mo.stop(run_interactions is None, mo.md("No interaction archives in this run."))
-
-    _holo = set(run_interactions.holo)
-    exclusivity_members = {}
-    for _cluster, _rows in active_info.groupby("cluster_id", sort=True):
-        _ids = [p for p in _rows["pdb_id"].astype(str) if p in _holo]
-        if _ids:
-            exclusivity_members[int(_cluster)] = _ids
-
-    mo.stop(len(exclusivity_members) < 2,
-            mo.md("_Fewer than two clusters contain a ligand-bound structure, so there is "
-                  "no pair to compare._"))
-
-    # Shape is measured over the member clouds, not between representatives: one
-    # structure should not decide whether a whole state is reachable.
-    _shape = None
-    if grid_spacing is not None:
-        _clouds = {
-            _pid: load_pocket(str(featurized_path(_pid)))[["x", "y", "z"]].to_numpy(dtype=float)
-            for _ids in exclusivity_members.values() for _pid in _ids
-            if featurized_path(_pid).exists()
-        }
-        if _clouds:
-            _shape = qviz.interactions.shape_overlaps(_clouds, exclusivity_members, grid_spacing)
-
-    exclusivity_profile = qviz.interactions.observed_profile(run_interactions)
-    verdicts = qviz.interactions.pair_verdicts(exclusivity_profile, exclusivity_members,
-                                               shape=_shape)
-
-    mo.vstack([
-        mo.ui.plotly(qviz.interactions.exclusivity_figure(
-            verdicts, sorted(exclusivity_members))),
-        mo.md("_" + ("pocket shape included in the verdict" if _shape
-                     else "no common lattice, so shape is left out of the verdict")
-              + f" \u00b7 {len(verdicts)} pairs_"),
-    ])
-    return exclusivity_members, exclusivity_profile, verdicts
-
-
-@app.cell
-def _(mo, verdicts):
-    _pairs = {f"cluster {v.a} vs {v.b}": f"{v.a}-{v.b}" for v in verdicts}
-    pair_choice = mo.ui.dropdown(
-        options=_pairs, value=next(iter(_pairs), None), label="**Pair**")
-    pair_choice
-    return (pair_choice,)
-
-
-@app.cell
-def _(exclusivity_members, exclusivity_profile, mo, pair_choice, qviz, verdicts):
-    mo.stop(pair_choice.value is None, mo.md(""))
-
-    from qpocket.core.interactions import residue_enrichment as _residue_enrichment
-
-    _a, _b = (int(part) for part in str(pair_choice.value).split("-"))
-    _verdict = next(v for v in verdicts if (v.a, v.b) == (_a, _b))
-    _tests = _residue_enrichment(exclusivity_profile,
-                                 exclusivity_members[_a], exclusivity_members[_b])
-
-    _core = ", ".join(_verdict.shared[:8]) or "none"
-    _more = len(_verdict.shared) - 8
-    mo.vstack([
-        mo.md(f"**{qviz.interactions.describe(_verdict)}**"),
-        mo.ui.plotly(qviz.interactions.pair_figure(_tests, _verdict)),
-        mo.md(f"_Shared core: {_core}{f' +{_more}' if _more > 0 else ''} \u00b7 "
-              f"only in cluster {_a}: {', '.join(_verdict.a_only) or 'none'} \u00b7 "
-              f"only in cluster {_b}: {', '.join(_verdict.b_only) or 'none'}_"),
-    ])
-    return
-
-
-@app.cell
-def _(mo):
     crossdock_prepare = mo.ui.run_button(label="Prepare cross-docking")
     crossdock_analyse = mo.ui.run_button(label="Analyse cross-docking")
     mo.vstack([
-        mo.md("## Screening: cross-docking\n\nEvery distinct active into every cluster representative. "
+        mo.md("## Screening: cross-docking\n\nEvery distinct active of this site into every cluster representative. "
               "Prepare writes a task folder you can run here or copy to a cluster; Analyse reads the results."),
         mo.hstack([crossdock_prepare, crossdock_analyse], justify="start"),
     ])
-    return crossdock_analyse, crossdock_prepare
+    return crossdock, crossdock_analyse, crossdock_prepare
 
 
 @app.cell
-def _(crossdock_prepare, mo, run_dir):
+def _(crossdock, crossdock_prepare, mo, site_dir):
     mo.stop(not crossdock_prepare.value)
-    from qpocket.arms.screen import crossdock as _cx
 
     try:
-        _plan = _cx.prepare(run_dir)
+        _plan = crossdock.prepare(site_dir)
         _out = mo.vstack([mo.md(f"Prepared `{_plan.jobs_csv}`. Run the dockings with:"),
                           mo.plain_text(_plan.command)])
     except Exception as _e:
@@ -1212,13 +1297,12 @@ def _(crossdock_prepare, mo, run_dir):
 
 
 @app.cell
-def _(crossdock_analyse, mo, qviz, run_dir):
+def _(crossdock, crossdock_analyse, mo, qviz, site_dir):
     mo.stop(not crossdock_analyse.value)
-    from qpocket.arms.screen import crossdock as _cx
     from qpocket.screen_config import load_screen_config as _load
 
     try:
-        _res = _cx.analyze(run_dir)
+        _res = crossdock.analyze(site_dir)
         _threshold = _load().analysis.rmsd_threshold
         _out = mo.vstack([
             mo.ui.table(_res.success, selection=None),

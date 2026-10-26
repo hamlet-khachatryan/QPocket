@@ -19,13 +19,6 @@ from qpocket.io.layout import STRUCTURE_SUFFIXES  # noqa: F401  (re-exported)
 
 
 @dataclass(frozen=True)
-class BoundingBoxParams:
-    """Parameters for user-defined bounding box pocket definition."""
-    center: Optional[List[float]] = None
-    dimensions: Optional[List[float]] = None
-
-
-@dataclass(frozen=True)
 class ReferenceParams:
     """Parameters for the reference structure."""
     pdb_id: Optional[str] = None
@@ -34,14 +27,7 @@ class ReferenceParams:
     # binding-site interface together with chain_id.  Chain IDs may differ across
     # structures — matching is done by sequence identity + spatial proximity.
     auxiliary_chain_ids: Optional[List[str]] = None
-    ligand_id: Optional[str] = None
-    # Chain that contains the reference ligand.  When null the pipeline searches
-    # chain_id first; if the ligand is not found there it falls back to searching
-    # all chains (required for homodimers where the ligand sits in a third chain).
-    ligand_chain_id: Optional[str] = None
     pocket_definition: Literal["Interactions", "Solvent"] = "Solvent"
-    pocket_mode: Literal["cavity_detection", "bounding_box"] = "cavity_detection"
-    bounding_box: BoundingBoxParams = field(default_factory=BoundingBoxParams)
     # Padding (Å) around interacting residues when pocket_definition == "Interactions".
     # Applies in both pdb_query and fragment_screen modes.
     interaction_padding: float = 5.0
@@ -118,11 +104,9 @@ class IOConfig:
 
     Attributes:
         log_format: Eliot log serialisation format.
-        save_intermediate: When ``True`` the initial (pre-cropping) pocket point cloud is written alongside the final one.
         compression: Compression algorithm used when writing HDF5 datasets.
     """
     log_format: Literal["json", "text"] = "json"
-    save_intermediate: bool = False
     compression: Literal["gzip", "none"] = "gzip"
 
 
@@ -131,23 +115,21 @@ class StageClustering:
     """Clustering settings for one stage of a two-stage grouping.
 
     Attributes:
-        method: ``"hierarchical"`` cuts a linkage tree, ``"kmedoids"`` partitions around medoids, ``"affinity"`` lets Affinity Propagation choose its own cluster count and ignores ``k`` / ``k_range``.
+        method: ``"hierarchical"`` cuts a linkage tree, ``"kmedoids"`` partitions around medoids, ``"affinity"`` lets Affinity Propagation choose its own cluster count and ignores ``k`` and ``criterion``.
         linkage: Linkage used when ``method`` is ``"hierarchical"``.
-        k: Pinned cluster count.
-        k_range: Inclusive ``[lo, hi]`` bounds scanned when ``k`` is ``None``.
+        k: Cluster count for the ``"count"`` criterion.
         damping: Affinity Propagation damping, in ``[0.5, 1.0)``.
         max_iter: Affinity Propagation iteration cap.
-        criterion: ``"count"`` uses k (or silhouette); ``"threshold"`` cuts a hierarchical tree at ``threshold``.
-        threshold: Cut height for a threshold stage, in that stage's distance units.
+        criterion: ``"count"`` makes k clusters; ``"threshold"`` cuts a hierarchical tree at the height ``threshold``; ``"relative"`` cuts it at ``threshold`` times its tallest merge.
+        threshold: Cut height for a threshold stage, in that stage's distance units; for a relative stage, a fraction in ``(0, 1]``.
     """
     method: Literal["hierarchical", "kmedoids", "affinity"] = "hierarchical"
     linkage: Literal["average", "complete", "single", "weighted"] = "average"
     k: Optional[int] = None
-    k_range: List[int] = field(default_factory=lambda: [2, 10])
     damping: float = 0.9
     max_iter: int = 300
-    criterion: Literal["count", "threshold"] = "count"
-    threshold: Optional[float] = None
+    criterion: Literal["count", "threshold", "relative"] = "relative"
+    threshold: Optional[float] = 0.5
 
 
 @dataclass(frozen=True)
@@ -155,13 +137,13 @@ class ClusteringParams:
     """How pockets are grouped once the distance matrices exist.
 
     Attributes:
-        mode: ``"two_stage"`` groups on shape, then subdivides each group on physicochemistry.
-        min_cluster_size: A stage-one cluster with fewer members than this is not subdivided: a split that small cannot be supported by a silhouette.
+        mode: ``"two_stage"`` groups on shape, then subdivides each group on physicochemistry; ``"shape_only"`` stops after the shape stage.
+        min_cluster_size: A stage-one cluster with fewer members than this is not subdivided.
         single: Settings used when ``mode == "single"``.
         shape: Stage-one settings, applied to the shape distance matrix.
         chem: Stage-two settings, applied to the physicochemical distance submatrix of each stage-one cluster.
     """
-    mode: Literal["two_stage", "single"] = "two_stage"
+    mode: Literal["two_stage", "single", "shape_only"] = "two_stage"
     min_cluster_size: int = 4
     single: StageClustering = field(
         default_factory=lambda: StageClustering(method="affinity")
@@ -170,7 +152,7 @@ class ClusteringParams:
         default_factory=lambda: StageClustering(method="hierarchical")
     )
     chem: StageClustering = field(
-        default_factory=lambda: StageClustering(method="kmedoids", k_range=[2, 6])
+        default_factory=lambda: StageClustering(method="hierarchical")
     )
 
 
@@ -199,10 +181,9 @@ class SlurmConfig:
         max_concurrent: Simultaneously running array tasks, the ``%N`` in ``--array``.
         max_array_size: Cluster's ``MaxArraySize``.
         dependency: ``"afterany"`` lets later stages start once an array has finished and skip whatever is missing; ``"afterok"`` blocks the whole chain if any single task fails.
-        split_apbs_stage: Give APBS its own array stage, caching the potential grid per structure, instead of running it inside featurisation.
         environment: Shell lines injected verbatim at the top of every script, for ``module load`` / ``conda activate`` / ``source .../activate``.
         defaults: Resources for any stage without an entry in ``stages``.
-        stages: Per-stage resource overrides, keyed by stage name.
+        stages: Per-stage resource overrides, keyed by stage name: prepare, structure, sites, site_featurize, site_cluster.
     """
     account: Optional[str] = None
     partition: str = "compute"
@@ -210,7 +191,6 @@ class SlurmConfig:
     max_concurrent: int = 20
     max_array_size: int = 1000
     dependency: Literal["afterany", "afterok"] = "afterany"
-    split_apbs_stage: bool = False
     environment: List[str] = field(default_factory=list)
     defaults: SlurmStageResources = field(default_factory=SlurmStageResources)
     stages: Dict[str, SlurmStageResources] = field(default_factory=dict)
@@ -331,10 +311,26 @@ class ComputeConfig:
 
 
 @dataclass(frozen=True)
+class SitesConfig:
+    """Which ligand-occupied binding sites to discover.
+
+    Attributes:
+        min_heavy_atoms: Smaller HETATM groups are not ligands; carbon-free groups such as ions are never sites.
+        link_cutoff: Distance (A) between any heavy atoms of two ligands under which they join one site.
+        box_padding: Padding (A) added around the union of a site's ligands when boxing the site.
+    """
+
+    min_heavy_atoms: int = 6
+    link_cutoff: float = 4.0
+    box_padding: float = 4.0
+
+
+@dataclass(frozen=True)
 class QPocketConfig:
     """Aggregated configuration for QPocket pipeline execution."""
     mode: Literal["pdb_query", "fragment_screen"] = "pdb_query"
     reference: ReferenceParams = field(default_factory=ReferenceParams)
+    sites: SitesConfig = field(default_factory=SitesConfig)
     paths: PathConfig = field(default_factory=PathConfig)
     fragment_screen: FragmentScreenParams = field(default_factory=FragmentScreenParams)
     pdb_query: QueryParams = field(default_factory=QueryParams)
@@ -385,6 +381,25 @@ LEGACY_KEYS: Dict[str, Optional[str]] = {
     # experiments/USP7.yaml. There is nowhere to send it.
     "spectral_distance_matrix.max_clusters": None,
     "slurm.enabled": None,
+    # Replaced by binding-site discovery: every ligand-occupied site is found.
+    "reference.ligand_id": None,
+    "reference.ligand_chain_id": None,
+    "reference.pocket_mode": None,
+    "reference.bounding_box": None,
+    # Site runs write no pre-crop cloud, so there is nothing left to save.
+    "io.save_intermediate": None,
+    # The SLURM stages were rebuilt around sites. featurize, collect and distance
+    # have no 1:1 successor whose base default would not mask the user's value.
+    "slurm.split_apbs_stage": None,
+    "slurm.stages.apbs": None,
+    "slurm.stages.featurize": None,
+    "slurm.stages.collect": None,
+    "slurm.stages.geodesic": None,
+    "slurm.stages.distance": None,
+    # Bounded an automatic choice of k that no longer exists; a stage cuts by count, height or relative height.
+    "distance.clustering.single.k_range": None,
+    "distance.clustering.shape.k_range": None,
+    "distance.clustering.chem.k_range": None,
 }
 
 
@@ -411,6 +426,26 @@ def _config_keys(node: object, prefix: str = "") -> set:
     return out
 
 
+def _k_means_count(layer: DictConfig) -> DictConfig:
+    """Give every clustering stage that sets k but no criterion the count criterion.
+
+    Applied to the user's own layer before it is merged, because the packaged
+    default criterion would otherwise silently override an explicit k.
+
+    Args:
+        layer: A user config file or the command-line overrides, modified in place.
+
+    Returns:
+        The same layer.
+    """
+    for root in ("distance.clustering", "spectral_distance_matrix.clustering"):
+        for name in ("single", "shape", "chem"):
+            stage = OmegaConf.select(layer, f"{root}.{name}", default=None)
+            if isinstance(stage, DictConfig) and stage.get("k") is not None and "criterion" not in stage:
+                stage.criterion = "count"
+    return layer
+
+
 def migrate_legacy(cfg: DictConfig) -> List[str]:
     """Rewrite renamed keys in place and report what needs changing.
 
@@ -434,7 +469,12 @@ def migrate_legacy(cfg: DictConfig) -> List[str]:
         if value is None:
             continue
 
-        if replacement is None:
+        if replacement is None and legacy.startswith("slurm.stages."):
+            warnings.append(
+                f"{legacy} is obsolete; set slurm.stages.structure (per-structure chain), "
+                "slurm.stages.site_featurize (features/APBS) or slurm.stages.site_cluster instead"
+            )
+        elif replacement is None:
             warnings.append(
                 f"{legacy} is obsolete and is being ignored; remove it"
             )
@@ -476,6 +516,18 @@ def migrate_legacy(cfg: DictConfig) -> List[str]:
             f"{', '.join(sorted(k.split('.', 1)[1] for k in keys))}); "
             f"the old names still work but will be removed"
         )
+
+    # Before the relative cut, count with no k meant "choose k by silhouette"; every
+    # config and run saved then carries that, and it no longer validates.
+    for name in ("single", "shape", "chem"):
+        stage = OmegaConf.select(cfg, f"distance.clustering.{name}", default=None)
+        if (isinstance(stage, DictConfig) and stage.get("criterion") == "count"
+                and stage.get("k") is None and stage.get("method") != "affinity"):
+            stage.method, stage.criterion, stage.threshold = "hierarchical", "relative", 0.5
+            warnings.append(
+                f"distance.clustering.{name} chose k by silhouette, which no longer exists; "
+                "using a relative cut at 0.5 — set k or a threshold to choose"
+            )
 
     # Drop legacy containers emptied by the moves above, so they are not then
     # reported as unrecognised settings.
@@ -528,6 +580,14 @@ def validate_config(cfg: "QPocketConfig") -> None:
     Raises:
         ValueError: with a descriptive message on the first failed rule.
     """
+    sites = cfg.sites
+    if sites.min_heavy_atoms < 1:
+        raise ValueError(f"sites.min_heavy_atoms must be >= 1, got: {sites.min_heavy_atoms}")
+    if sites.link_cutoff <= 0:
+        raise ValueError(f"sites.link_cutoff must be > 0, got: {sites.link_cutoff}")
+    if sites.box_padding < 0:
+        raise ValueError(f"sites.box_padding must be >= 0, got: {sites.box_padding}")
+
     # --- ReferenceParams ---
     ref = cfg.reference
 
@@ -549,42 +609,9 @@ def validate_config(cfg: "QPocketConfig") -> None:
             f"reference.chain_id must be 1-2 uppercase letters, got: {ref.chain_id!r}"
         )
 
-    if ref.pocket_mode == "bounding_box":
-        bb = ref.bounding_box
-        if bb.center is None or bb.dimensions is None:
-            raise ValueError(
-                "reference.bounding_box.center and .dimensions must both be set "
-                "when pocket_mode == 'bounding_box'"
-            )
-        if len(bb.center) != 3:
-            raise ValueError(
-                f"reference.bounding_box.center must be a list of 3 values, got {len(bb.center)}"
-            )
-        if len(bb.dimensions) != 3:
-            raise ValueError(
-                f"reference.bounding_box.dimensions must be a list of 3 values, got {len(bb.dimensions)}"
-            )
-        if any(d <= 0 for d in bb.dimensions):
-            raise ValueError(
-                "All values in reference.bounding_box.dimensions must be positive"
-            )
-
-    if ref.pocket_definition == "Interactions" and ref.pocket_mode == "cavity_detection":
-        if not ref.ligand_id:
-            raise ValueError(
-                "reference.ligand_id must be provided when pocket_definition == 'Interactions' "
-                "and pocket_mode == 'cavity_detection'"
-            )
-
     if ref.interaction_padding <= 0:
         raise ValueError(
             f"reference.interaction_padding must be > 0, got: {ref.interaction_padding}"
-        )
-
-    if ref.ligand_chain_id is not None and not re.fullmatch(r"[A-Z]{1,2}", ref.ligand_chain_id):
-        raise ValueError(
-            f"reference.ligand_chain_id must be 1–2 uppercase letters, "
-            f"got: {ref.ligand_chain_id!r}"
         )
 
     if ref.auxiliary_chain_ids is not None:
@@ -720,10 +747,10 @@ def validate_config(cfg: "QPocketConfig") -> None:
             f"distance.clustering.min_cluster_size must be >= 2, "
             f"got: {clust.min_cluster_size}"
         )
-    if clust.mode not in ("two_stage", "single"):
+    if clust.mode not in ("two_stage", "single", "shape_only"):
         raise ValueError(
-            f"distance.clustering.mode must be 'two_stage' or "
-            f"'single', got: {clust.mode!r}"
+            f"distance.clustering.mode must be 'two_stage', "
+            f"'single' or 'shape_only', got: {clust.mode!r}"
         )
 
     for stage_name in ("single", "shape", "chem"):
@@ -742,25 +769,7 @@ def validate_config(cfg: "QPocketConfig") -> None:
                 f"invalid for a precomputed distance matrix), got: {stage.linkage!r}"
             )
         if stage.k is not None and stage.k < 2:
-            raise ValueError(
-                f"{prefix}.k must be >= 2 when set, or null to choose it by "
-                f"silhouette, got: {stage.k}"
-            )
-        if len(stage.k_range) != 2:
-            raise ValueError(
-                f"{prefix}.k_range must be a list of 2 values [lo, hi], "
-                f"got {len(stage.k_range)}"
-            )
-        if stage.k_range[0] < 2:
-            raise ValueError(
-                f"{prefix}.k_range lower bound must be >= 2 (silhouette is "
-                f"undefined below two clusters), got: {stage.k_range[0]}"
-            )
-        if stage.k_range[1] < stage.k_range[0]:
-            raise ValueError(
-                f"{prefix}.k_range upper bound ({stage.k_range[1]}) must be >= "
-                f"lower bound ({stage.k_range[0]})"
-            )
+            raise ValueError(f"{prefix}.k must be >= 2 when set, got: {stage.k}")
         if not (0.5 <= stage.damping < 1.0):
             raise ValueError(
                 f"{prefix}.damping must be in [0.5, 1.0), got: {stage.damping}"
@@ -769,16 +778,27 @@ def validate_config(cfg: "QPocketConfig") -> None:
             raise ValueError(
                 f"{prefix}.max_iter must be >= 1, got: {stage.max_iter}"
             )
-        criterion = getattr(stage, "criterion", "count")
-        if criterion not in ("count", "threshold"):
-            raise ValueError(f"{prefix}.criterion must be 'count' or 'threshold', got: {criterion!r}")
-        if criterion == "threshold":
-            threshold = getattr(stage, "threshold", None)
-            if stage.method != "hierarchical" or threshold is None or threshold <= 0:
-                raise ValueError(
-                    f"{prefix}.threshold must be > 0 with method 'hierarchical' when "
-                    f"criterion is 'threshold', got method {stage.method!r}, threshold {threshold!r}"
-                )
+        criterion, threshold = stage.criterion, stage.threshold
+        if stage.method == "affinity":  # chooses its own count; criterion and threshold are ignored
+            continue
+        if criterion not in ("count", "threshold", "relative"):
+            raise ValueError(f"{prefix}.criterion must be 'count', 'threshold' or 'relative', "
+                             f"got: {criterion!r}")
+        if criterion == "count" and stage.k is None:
+            raise ValueError(f"{prefix}.k must be set when criterion is 'count'; "
+                             f"set k or use criterion 'threshold' or 'relative'")
+        if criterion == "threshold" and (
+                stage.method != "hierarchical" or threshold is None or threshold <= 0):
+            raise ValueError(
+                f"{prefix}.threshold must be > 0 with method 'hierarchical' when "
+                f"criterion is 'threshold', got method {stage.method!r}, threshold {threshold!r}"
+            )
+        if criterion == "relative" and (
+                stage.method != "hierarchical" or threshold is None or not 0 < threshold <= 1):
+            raise ValueError(
+                f"{prefix}.threshold must be in (0, 1] with method 'hierarchical' when "
+                f"criterion is 'relative', got method {stage.method!r}, threshold {threshold!r}"
+            )
 
     # --- FeaturesConfig ---
     from qpocket.core.ports import FEATURES as _features
@@ -860,7 +880,7 @@ def validate_config(cfg: "QPocketConfig") -> None:
             f"slurm.max_array_size must be >= 1, got: {sl.max_array_size}"
         )
 
-    known_stages = ("prepare", "apbs", "featurize", "collect", "geodesic", "distance")
+    known_stages = ("prepare", "structure", "sites", "site_featurize", "site_cluster")
     for stage_name in (sl.stages or {}):
         if stage_name not in known_stages:
             raise ValueError(
@@ -947,11 +967,11 @@ def load_qpocket_config(
 
     if config_path:
         user_cfg = OmegaConf.load(config_path)
-        cfg = OmegaConf.merge(cfg, user_cfg)
+        cfg = OmegaConf.merge(cfg, _k_means_count(user_cfg))
 
     if overrides:
         override_cfg = OmegaConf.from_dotlist(overrides)
-        cfg = OmegaConf.merge(cfg, override_cfg)
+        cfg = OmegaConf.merge(cfg, _k_means_count(override_cfg))
 
     for notice in migrate_legacy(cfg):
         log_message(message_type="config_deprecation", notice=notice)
@@ -964,6 +984,7 @@ def load_qpocket_config(
         mode=cfg.mode,
         paths=cfg.paths,
         reference=cfg.reference,
+        sites=cfg.get("sites", SitesConfig()),
         fragment_screen=cfg.fragment_screen,
         pdb_query=cfg.pdb_query,
         alignment=cfg.alignment,
@@ -983,6 +1004,36 @@ def load_qpocket_config(
 
     validate_config(final_cfg)
     return final_cfg
+
+
+RUN_CONFIG = "config.yaml"
+
+
+def save_run_config(cfg: QPocketConfig, ws) -> Path:
+    """Snapshot the config a run used, so later per-site steps reuse it.
+
+    Args:
+        cfg: The run's configuration.
+        ws: The run's Workspace.
+
+    Returns:
+        Path of ``metadata/config.yaml``.
+    """
+    path = Path(ws.metadata) / RUN_CONFIG
+    path.write_text(str(cfg), encoding="utf-8")
+    return path
+
+
+def load_run_config(run_dir: Union[str, Path]) -> QPocketConfig:
+    """The config a run saved, loaded and validated like a user's config file.
+
+    Args:
+        run_dir: The run directory.
+
+    Returns:
+        The validated configuration.
+    """
+    return load_qpocket_config(config_path=Path(run_dir) / "metadata" / RUN_CONFIG)
 
 
 

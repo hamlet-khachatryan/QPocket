@@ -28,7 +28,7 @@ protein needs no network; a novel ligand does, once.
 ## 1. Fragment screen: structures you already have
 
 The fastest way to see the whole pipeline work. Point it at a few local files
-and name the reference's ligand. The repository ships PARG structures, so this
+and name the reference structure. The repository ships PARG structures, so this
 runs with no network at all:
 
 ```bash
@@ -39,7 +39,6 @@ uv run qpocket run \
   --structure-paths experiments/PARG/7KG6/structures/original/7KG6.cif \
   --structure-paths experiments/PARG/7KG6/structures/original/4B1H.cif \
   --structure-paths experiments/PARG/7KG6/structures/original/6O9Y.cif \
-  --ligand-id WDG \
   --chain-id A \
   --workdir ./runs/parg-minimal
 ```
@@ -47,29 +46,30 @@ uv run qpocket run \
 **About 20 seconds for three structures**, on a laptop. The run is named after
 the reference, so everything lands in `./runs/parg-minimal/7KG6/`.
 
-Check it did what you think:
+`qpocket run` finds every ligand in every structure and groups them into binding
+sites; you do not name one. It stops once each site has a point cloud in each
+structure. Check what it found:
 
 ```bash
-cut -d, -f1,6,7 runs/parg-minimal/7KG6/metadata/master.csv
+uv run qpocket site list runs/parg-minimal/7KG6
+cat runs/parg-minimal/7KG6/structures/ligands.csv
 ```
 
-```
-pdb_id,ligand_id,protein_state
-4B1H,AR6,BOUND_STATE
-6O9Y,M0V,BOUND_STATE
-7KG6,WDG,BOUND_STATE
-```
+`structures/ligands.csv` lists each structure's ligands, and `sites/sites.csv` the
+sites they were grouped into. A structure with no ligand is still listed at every
+site, gets its protonated protein anyway, and the run continues.
 
-`ligand_id` is the chemical-component ID of the ligand each structure turned out
-to hold — the pipeline records it rather than guessing it back from a filename,
-and interaction detection uses it. A structure with no ligand reports
-`UNBOUND_STATE`, gets its protonated protein anyway, and the run continues.
+Then analyse a site, here by shape alone, which needs no featurisation:
+
+```bash
+uv run qpocket site shape runs/parg-minimal/7KG6 --site site_01
+```
 
 With many structures, use a CSV instead of repeating `--structure-paths`:
 
 ```bash
 uv run qpocket run --mode fragment_screen --csv-path structures.csv \
-  --ligand-id WDG --chain-id A --workdir ./runs/my-screen
+  --chain-id A --workdir ./runs/my-screen
 ```
 
 Residue renumbering against UniProt is **off** by default in this mode, since
@@ -86,7 +86,6 @@ Give it one reference and let it fetch every homologue that passes your filters:
 uv run qpocket run \
   --pdb-id 7KG6 \
   --chain-id A \
-  --ligand-id WDG \
   --sequence-identity 0.95 \
   --resolution-limit 2.0 \
   --workdir ./runs/parg-query
@@ -126,8 +125,8 @@ uv run qpocket run ... --no-apbs
 ```
 
 That skips pdb2pqr too, when nothing else needs it. Fingerprints from different
-feature sets are **not comparable**, and each run records the set it used in
-`metadata/features.json`.
+feature sets are **not comparable**, and featurising a site records the set it
+used in `sites/site_NN/metadata/features.json`.
 
 ---
 
@@ -144,8 +143,11 @@ found appears in the dropdown, and you can type another path into the
 The notebook ships inside the package, so this works from an installed wheel
 with no checkout present.
 
-The notebook shows the distance matrices, the embedding, the clustering and the
-pocket point clouds.
+The notebook opens on a **Binding sites** section: pick a site, read which steps it
+has done, and press **Shape clustering**, **Featurise** or **Two-stage clustering**
+to run the next one. **Regroup sites** changes the link cutoff. The sections below
+show the chosen site's distance matrices, embedding, clustering and pocket point
+clouds. The same steps are available as `qpocket site list|featurize|shape|cluster|regroup`.
 
 ### Three ways to cluster
 
@@ -159,9 +161,10 @@ the one you choose.
 | Two stages | groups by shape, then splits each group by chemistry | shape cut, chemistry cut, minimum group to split |
 
 The dendrogram draws the tree being cut, with a dashed line at the height, so
-moving a slider shows you what it does. Each result reports its cluster count,
-its silhouette, and how far it sits from the clustering stored with the run
-(ARI, and how many pockets moved).
+moving a slider shows you what it does. The "Cut by" choice picks the rule:
+relative (a fraction of the tree's highest merge, the default), an absolute height,
+or a cluster count. Each result reports its cluster count and how far it sits from
+the clustering stored with the run (ARI, and how many pockets moved).
 
 Only the two-stage result can be **saved** as the run's clustering, because that
 is the form a run stores.
@@ -172,14 +175,14 @@ To change the notebook rather than use it:
 uv run qpocket explore ./runs --edit
 ```
 
-To reconsider the clustering without recomputing anything, adjust the two-stage
+To reconsider a site's clustering without recomputing anything, adjust the two-stage
 thresholds in the notebook and save, or from the command line:
 
 ```bash
-uv run qpocket recluster ./runs/parg-minimal/7KG6 --shape-threshold 0.25
+uv run qpocket recluster ./runs/parg-minimal/7KG6/sites/site_01 --shape-threshold 0.25
 ```
 
-The previous clustering is archived under `metadata/clustering_history/` rather
+The previous clustering is archived under `sites/site_NN/metadata/clustering_history/` rather
 than overwritten.
 
 ---
@@ -195,20 +198,23 @@ runs/parg-minimal/7KG6/
 │   ├── aligned/                ← superposed on the reference
 │   ├── cleaned/                ← waters and unwanted residues removed
 │   ├── protonated/             ← docking-ready: protein + ligand + hydrogens
-│   └── extracted_ligands/
-├── pockets/<pdb_id>/
-│   ├── binding_site.csv        ← the pocket point cloud
-│   └── featurized.csv          ← its features, one row per point
-├── metadata/
-│   ├── master.csv              ← one row per structure, with ligand_id
-│   ├── spectral_distance_matrix.csv
-│   ├── shape_distance_matrix.csv
-│   ├── feature_distance_matrix.csv
-│   ├── clustering_metadata.csv
-│   ├── observed_interactions_freq.csv    ← what each residue actually does
-│   ├── potential_interactions_freq.csv
-│   └── binding_pocket_utilization.csv
-└── screening/actives.smi
+│   ├── extracted_ligands/
+│   ├── cavities/               ← detected once per structure
+│   └── ligands.csv             ← every site ligand found
+├── sites/
+│   ├── sites.csv, grouping.json
+│   └── site_01/
+│       ├── ligands.pdb, contact_atoms.csv
+│       ├── pockets/<pdb_id>/
+│       │   ├── binding_site.csv    ← the site's point cloud in that structure
+│       │   └── featurized.csv      ← after Featurise: one row per point
+│       ├── metadata/               ← distance matrices and clustering, after the steps
+│       └── screening/
+└── metadata/
+    ├── master.csv              ← one row per structure
+    ├── config.yaml             ← the settings the run used
+    ├── observed_interactions_freq.csv    ← what each residue actually does
+    └── potential_interactions_freq.csv
 ```
 
 `structures/protonated/<ID>.pdb` is the docking-ready structure: the protein
@@ -228,7 +234,8 @@ under `logs/`, so a failure in one does not bury the others.
 |---|---|
 | `analysis_error` in the interaction tables | a chemical component could not be perceived; the log names which one |
 | `no_ligand_found` | expected for an apo structure, and not an error |
-| every structure `FAILED` | usually the reference: check `--chain-id` and `--ligand-id` exist in it |
+| every structure `FAILED` | usually the reference: check `--chain-id` exists in it |
+| `sites.csv` is empty | no structure holds a site ligand; ions, waters, allowed cofactors and groups under `sites.min_heavy_atoms` heavy atoms do not count |
 | APBS or pdb2pqr errors | run `uv run qpocket doctor` first; it runs both for real |
 | a component will not download | set `QPOCKET_CCD_CACHE` to a directory you populated on a connected machine |
 

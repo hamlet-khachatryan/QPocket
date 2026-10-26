@@ -127,3 +127,24 @@ def test_a_group_of_one_contributes_no_chemistry_tree():
     m = _matrices()
     singles = np.arange(len(m.ids))          # every pocket its own shape group
     assert all(data is None for _g, _members, data in ts.chem_subtrees(m, singles))
+
+
+def test_relative_cuts_write_relative_settings():
+    settings = ts.settings_for(_settings(), "two_stage", shape_cut=0.5, chem_cut=0.3,
+                               criterion="relative")
+    assert (settings.shape.criterion, settings.shape.threshold) == ("relative", 0.5)
+    assert (settings.chem.criterion, settings.chem.threshold) == ("relative", 0.3)
+    single = ts.settings_for(_settings(), "hierarchical", combined_cut=0.4, criterion="relative")
+    assert (single.single.criterion, single.single.threshold) == ("relative", 0.4)
+    whole = ts.settings_for(_settings(), "two_stage", shape_cut=0.5, chem_cut=1.0, criterion="relative")
+    assert ts.preview(_matrices(), whole).n_clusters == 2   # a full-height chemistry cut never splits
+
+
+def test_a_relative_shape_only_cut():
+    settings = ts.shape_only_settings(_settings(), 0.5, criterion="relative")
+    assert (settings.mode, settings.shape.criterion, settings.shape.threshold) == (
+        "shape_only", "relative", 0.5)
+
+
+def test_the_preview_carries_no_silhouette():
+    assert "silhouette" not in ts.Preview._fields

@@ -48,3 +48,11 @@ def test_notes_count_spheres_and_panels():
                             protein_style="none", context_radius=8.0, contact_r=4.0,
                             run_interactions=None, mode="feature value", value_label="apbs", picks=())
     assert notes[-1] == "5 spheres across 2 panels"
+
+
+def test_difference_on_a_partly_featurised_site_shows_feature_values():
+    """A pocket still without its feature column cannot be differenced; values, not a KeyError."""
+    pockets = [("A", pd.Series({"pdb_id": "A"}), _pocket(0)),
+               ("B", pd.Series({"pdb_id": "B"}), _pocket(1).drop(columns="apbs"))]
+    out = grid.panel_values(pockets, "difference from representative", "apbs", pockets[0][1], 1.0, "default", 0.0)
+    assert out.label == "apbs" and np.array_equal(out.values["B"][1], [0.0, 0.0])
