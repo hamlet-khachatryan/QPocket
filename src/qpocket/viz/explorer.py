@@ -96,11 +96,16 @@ def _(Path, mo, run_selector):
 def _(mo, pd, qsites, regrouped, run_dir):
     # regrouped is None until Regroup sites runs; depending on it re-reads the table.
     _ = regrouped
+    _empty = pd.DataFrame(columns=["site_id", "n_structures", "n_holo", "n_apo", "n_cavfind_miss",
+                                   "n_ligands", "lining_residues", "centre_x", "centre_y", "centre_z"])
     try:
         sites_df = qsites.site_table(run_dir)
     except qsites.SiteError:
-        sites_df = pd.DataFrame(columns=["site_id", "n_structures", "n_holo", "n_apo", "n_cavfind_miss",
-                                         "n_ligands", "lining_residues", "centre_x", "centre_y", "centre_z"])
+        sites_df = _empty
+    # A run made before cavity-defined sites has the ligand-linked site table.
+    _legacy = len(sites_df) > 0 and "n_structures" not in sites_df.columns
+    if _legacy:
+        sites_df = _empty
     _labels = {f"{r.site_id} · {r.n_structures} structures · {r.n_holo} holo · {r.n_cavfind_miss} misses":
                r.site_id for r in sites_df.itertuples()}
     site_picker = mo.ui.dropdown(options=_labels, value=next(iter(_labels), None),
@@ -109,6 +114,9 @@ def _(mo, pd, qsites, regrouped, run_dir):
         mo.md("## Binding sites\nSites built from CavFind cavities seen across the run's structures. "
               "Everything below reads the site picked here; ligands CavFind found no cavity for are in "
               "`sites/cavfind_misses.csv`."),
+        mo.callout(mo.md("This run's sites were made before cavity-defined sites. Re-site it to explore "
+                         f"them: `qpocket site regroup {run_dir} --cavity-overlap 0.5`, or **Regroup sites** "
+                         "below."), kind="warn") if _legacy else mo.md(""),
         site_picker,
         mo.ui.table(sites_df[["site_id", "n_structures", "n_holo", "n_apo", "n_cavfind_miss", "n_ligands",
                               "lining_residues"]],

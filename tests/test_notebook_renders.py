@@ -82,6 +82,36 @@ def _cell_errors(port: int, seconds: float = 90.0):
 def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered):
     """A three-structure site: the landscape's UMAP once crashed on runs this small, deep in scipy."""
     root = _site_run(tmp_path, monkeypatch, shape_clustered)
+    errors, finished, shown = _render(root)
+    assert finished, "no cell ran at all"
+    assert not errors, "cells left showing errors: " + "; ".join(
+        str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
+    for text in ("Binding sites", "Steps for S1-Y1", "S1-Y1 · ", "Ligands shown"):
+        assert text in shown, f"{text!r} never rendered"
+    assert ("No distance matrix for this site yet" in shown) is not shape_clustered
+    assert "Two-stage clustering (0/3 featurised)" in shown
+    assert "silhouette" not in shown.lower()
+    assert "exclusiv" not in shown.lower()
+    assert "Can two states be targeted" not in shown  # the section heading, which never says the word
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_a_run_with_ligand_linked_sites_asks_for_a_regroup(tmp_path, monkeypatch):
+    """A run made before cavity-defined sites has the old site table; the notebook must not break on it."""
+    import pandas as pd
+
+    root = _site_run(tmp_path, monkeypatch, False)
+    old = pd.read_csv(root / "sites" / "sites.csv")
+    pd.DataFrame({"site_id": old["site_id"], "n_ligands": old["n_ligands"], "n_holo_structures": old["n_holo"],
+                  "centre_x": old["centre_x"], "centre_y": old["centre_y"], "centre_z": old["centre_z"],
+                  "extent": 3.0, "resnames": old["resnames"], "contact_residues": ""}).to_csv(
+        root / "sites" / "sites.csv", index=False)
+    errors, finished, shown = _render(root)
+    assert finished and not errors, "; ".join(str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
+    assert "made before cavity-defined sites" in shown
+
+
+def _render(root):
     port = _free_port()
     server = subprocess.Popen(
         [sys.executable, "-m", "marimo", "run", str(NOTEBOOK), "--headless",
@@ -98,18 +128,7 @@ def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered
         else:
             pytest.fail("marimo did not start")
 
-        errors, finished, shown = _cell_errors(port)
+        return _cell_errors(port)
     finally:
         server.terminate()
         server.wait(timeout=60)
-
-    assert finished, "no cell ran at all"
-    assert not errors, "cells left showing errors: " + "; ".join(
-        str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
-    for text in ("Binding sites", "Steps for S1-Y1", "S1-Y1 · ", "Ligands shown"):
-        assert text in shown, f"{text!r} never rendered"
-    assert ("No distance matrix for this site yet" in shown) is not shape_clustered
-    assert "Two-stage clustering (0/3 featurised)" in shown
-    assert "silhouette" not in shown.lower()
-    assert "exclusiv" not in shown.lower()
-    assert "Can two states be targeted" not in shown  # the section heading, which never says the word

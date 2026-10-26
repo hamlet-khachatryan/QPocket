@@ -262,3 +262,17 @@ def test_an_old_link_cutoff_loads_and_is_dropped(tmp_path):
     path.write_text("mode: pdb_query\nreference:\n  pdb_id: 1ABC\nsites:\n  link_cutoff: 4.0\n")
     cfg = load_qpocket_config(config_path=str(path))
     assert not hasattr(cfg.sites, "link_cutoff")
+
+
+def test_an_old_box_padding_is_reset_with_the_link_cutoff(tmp_path):
+    """Ligand-linked runs padded a ligand box by 4 Å; the same key now pads cavity site boxes."""
+    cfg = OmegaConf.create({"sites": {"link_cutoff": 4.0, "box_padding": 4.0}})
+    notes = migrate_legacy(cfg)
+    assert OmegaConf.select(cfg, "sites.box_padding") == QPocketConfig().sites.box_padding == 0.0
+    assert any("box_padding" in note for note in notes)
+
+
+def test_a_new_box_padding_is_kept(tmp_path):
+    cfg = OmegaConf.create({"sites": {"box_padding": 2.0}})
+    migrate_legacy(cfg)
+    assert OmegaConf.select(cfg, "sites.box_padding") == 2.0

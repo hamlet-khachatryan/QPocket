@@ -469,6 +469,15 @@ def migrate_legacy(cfg: DictConfig) -> List[str]:
     renamed: Dict[str, List[str]] = {}
     template = QPocketConfig()
 
+    # A config from the ligand-linked sites padded a ligand box; the same key now pads
+    # cavity site boxes, where the old 4 Å would put most ligands in several sites.
+    if OmegaConf.select(cfg, "sites.link_cutoff", default=None) is not None \
+            and OmegaConf.select(cfg, "sites.box_padding", default=None) is not None:
+        old = OmegaConf.select(cfg, "sites.box_padding")
+        OmegaConf.update(cfg, "sites.box_padding", template.sites.box_padding, force_add=True)
+        warnings.append(f"sites.box_padding {old} was set for ligand-linked sites; reset to "
+                        f"{template.sites.box_padding} for cavity-defined sites")
+
     # Deepest path first: a specific rule such as
     # clustering.shape.min_cluster_size must be consumed before the parent
     # clustering block is moved wholesale, or it rides along to a home that no

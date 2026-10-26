@@ -245,3 +245,21 @@ def test_a_run_saved_with_the_silhouette_defaults_still_clusters(tmp_path, monke
     path.write_text(OmegaConf.to_yaml(saved), encoding="utf-8")
     steps.shape_cluster_site(root, NEAR)
     assert steps.site_status(root, NEAR)["shape_clustered"]
+
+
+def test_regroup_that_flips_a_ligand_refreshes_the_site_tables(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    site = root / "sites" / FAR
+    assert pd.read_csv(site / "metadata" / "master.csv").set_index("pdb_id").loc["P2", "protein_state"] \
+        == "BOUND_STATE"
+    (site / "metadata" / "marker.txt").write_text("kept")
+    ligands = pd.read_csv(root / "structures" / "ligands.csv", keep_default_na=False).set_index("resname")
+    path = Path(ligands.loc["CCC", "file"])
+    path.write_text(path.read_text().replace("  51.000", "  70.000"))  # one of two atoms leaves the box
+
+    steps.regroup_sites(root, ligand_fraction=0.6)
+
+    master = pd.read_csv(site / "metadata" / "master.csv").set_index("pdb_id")
+    assert master.loc["P2", "protein_state"] == "UNBOUND_STATE"
+    assert "CCC" not in (site / "screening" / "actives.smi").read_text()
+    assert (site / "metadata" / "marker.txt").read_text() == "kept"   # same cavities: the folder is kept

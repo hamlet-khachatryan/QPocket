@@ -267,8 +267,10 @@ def regroup_sites(run_dir: Path, **overrides: float) -> pd.DataFrame:
         if payload is not None and "failure" not in payload:
             records.append(Structure.from_json(payload))
 
-    table, changed = sync_sites(cfg, ws, records)
-    extract_all_sites(cfg, ws, table[table["site_id"].isin(changed)], records)
+    table, _ = sync_sites(cfg, ws, records)
+    # Every site, kept ones too: a kept site's cavities are the same, but its ligands and so its
+    # holo/apo states may not be. Unchanged clouds keep their mtime and cached geodesics.
+    extract_all_sites(cfg, ws, table, records)
     save_run_config(cfg, ws)
     return table
 
