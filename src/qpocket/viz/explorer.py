@@ -348,18 +348,31 @@ def _(mo, qviz, site_dir):
         label="**Method**",
         full_width=True,
     )
-    (cluster_method if cluster_matrices is not None
+    # "relative" cuts each tree at a fraction of its tallest merge, so one value suits any site.
+    cut_by = mo.ui.radio(
+        options={"fraction of the tallest merge": "relative", "height": "threshold"},
+        value=("height" if cluster_settings.shape.criterion == "threshold"
+               else "fraction of the tallest merge"),
+        label="Cut by", inline=True,
+    )
+    (mo.hstack([cluster_method, cut_by], justify="start", gap=2) if cluster_matrices is not None
      else mo.md("_This site has no distance matrices yet; run Shape clustering above._"))
-    return cluster_matrices, cluster_method, cluster_settings
+    return cluster_matrices, cluster_method, cluster_settings, cut_by
 
 
 @app.cell
-def _(cluster_matrices, cluster_settings, info, mo, qviz):
+def _(cluster_matrices, cluster_settings, cut_by, info, mo, qviz):
     def _slider(lo, hi, value, label):
         return mo.ui.slider(start=lo, stop=hi, step=max((hi - lo) / 200, 1e-9),
                             value=min(max(value, lo), hi), label=label, show_value=True)
 
-    if cluster_matrices is None:
+    _relative = cut_by.value == "relative"
+    if _relative:
+        _start = (float(cluster_settings.shape.threshold)
+                  if cluster_settings.shape.criterion == "relative"
+                  and cluster_settings.shape.threshold else 0.5)
+        _combined_lo, _combined_hi, _shape_lo, _shape_hi, _shape_start = 0.05, 1.0, 0.05, 1.0, _start
+    elif cluster_matrices is None:
         _combined_lo, _combined_hi, _shape_lo, _shape_hi, _shape_start = 0.0, 1.0, 0.0, 1.0, 0.5
     else:
         _combined_lo, _combined_hi = qviz.two_stage.height_range(cluster_matrices.combined)
@@ -376,17 +389,21 @@ def _(cluster_matrices, cluster_settings, info, mo, qviz):
     damping = mo.ui.slider(start=0.5, stop=0.98, step=0.01, value=0.9,
                            label="Damping", show_value=True)
     combined_cut = _slider(_combined_lo, _combined_hi,
-                           (_combined_lo + _combined_hi) / 2, "Cut height")
-    shape_cut = _slider(_shape_lo, _shape_hi, _shape_start, "Shape cut")
+                           0.5 if _relative else (_combined_lo + _combined_hi) / 2,
+                           "Cut fraction" if _relative else "Cut height")
+    shape_cut = _slider(_shape_lo, _shape_hi, _shape_start,
+                        "Shape cut fraction" if _relative else "Shape cut")
     min_split = mo.ui.number(start=2, stop=100, value=int(cluster_settings.min_cluster_size),
                              label="Split groups of at least")
     return combined_cut, damping, min_split, shape_cut
 
 
 @app.cell
-def _(cluster_matrices, cluster_settings, mo, qviz, shape_cut):
+def _(cluster_matrices, cluster_settings, cut_by, mo, qviz, shape_cut):
     # The chemistry range depends on where the shape cut fell, so it follows it.
-    if cluster_matrices is None:
+    if cut_by.value == "relative":
+        _chem_lo, _chem_hi = 0.05, 1.0
+    elif cluster_matrices is None:
         _chem_lo, _chem_hi = 0.0, 1.0
     else:
         _groups = qviz.two_stage.shape_groups(cluster_matrices, shape_cut.value,
@@ -396,7 +413,8 @@ def _(cluster_matrices, cluster_settings, mo, qviz, shape_cut):
     chem_cut = mo.ui.slider(start=_chem_lo, stop=_chem_hi,
                             step=max((_chem_hi - _chem_lo) / 200, 1e-9),
                             value=(_chem_lo + _chem_hi) / 2,
-                            label="Chemistry cut", show_value=True)
+                            label=("Chemistry cut fraction" if cut_by.value == "relative"
+                                   else "Chemistry cut"), show_value=True)
     return (chem_cut,)
 
 
@@ -429,6 +447,7 @@ def _(
     cluster_method,
     cluster_settings,
     combined_cut,
+    cut_by,
     damping,
     min_split,
     qviz,
@@ -439,11 +458,11 @@ def _(
     pending_settings, pending = None, None
     if cluster_matrices is not None:
         pending_settings = qviz.two_stage.shape_only_settings(
-            cluster_settings, shape_cut.value) if cluster_matrices.chem is None else qviz.two_stage.settings_for(
+            cluster_settings, shape_cut.value, cut_by.value) if cluster_matrices.chem is None else qviz.two_stage.settings_for(
             cluster_settings, cluster_method.value,
             combined_cut=combined_cut.value, shape_cut=shape_cut.value,
             chem_cut=chem_cut.value, damping=damping.value,
-            min_cluster_size=int(min_split.value))
+            min_cluster_size=int(min_split.value), criterion=cut_by.value)
         pending = qviz.two_stage.preview(cluster_matrices, pending_settings)
     return pending, pending_settings
 
@@ -454,21 +473,27 @@ def _(
     cluster_matrices,
     cluster_method,
     cluster_settings,
+    cut_by,
     mo,
     pending,
     qviz,
     shape_cut,
 ):
-    # The mirrored pair only means something for the two-stage cut.
+    # The mirrored pair only means something for the two-stage cut. A relative cut is
+    # drawn at its height on the shape tree; each chemistry tree has its own, so none is drawn.
+    _relative = cut_by.value == "relative"
+    _shape_line = (shape_cut.value * qviz.two_stage.height_range(
+        cluster_matrices.shape, cluster_settings.shape.linkage)[1]
+        if _relative and cluster_matrices is not None else shape_cut.value)
     if cluster_matrices is None or pending is None:
         _view = mo.md("")
     elif cluster_matrices.chem is None:
         _view = qviz.two_stage.dendrogram_figure(
-            cluster_matrices.shape, cluster_matrices.ids, shape_cut.value, "Shape",
+            cluster_matrices.shape, cluster_matrices.ids, _shape_line, "Shape",
             cluster_settings.shape.linkage)
     elif cluster_method.value == "two_stage":
         _view = qviz.two_stage.mirrored_figure(
-            cluster_matrices, pending, shape_cut.value, chem_cut.value,
+            cluster_matrices, pending, _shape_line, None if _relative else chem_cut.value,
             cluster_settings.shape.linkage)
     elif cluster_method.value == "hierarchical":
         _view = qviz.two_stage.dendrogram_figure(
@@ -484,8 +509,6 @@ def _(mo, pending):
     _facts = []
     if pending is not None:
         _facts.append(f"**{pending.n_clusters} clusters**")
-        if pending.silhouette is not None:
-            _facts.append(f"silhouette {pending.silhouette:.2f}")
     mo.md(" · ".join(_facts) + "  \n_Preview only; press Apply to make it the run's clustering._"
           if _facts else "")
     return
@@ -519,15 +542,11 @@ def _(apply_clustering, mo, pending_settings, site_dir):
 
 
 @app.cell
-def _(applied_at, dist_df, info, mo, np, pd, qviz, site_dir):
+def _(applied_at, info, mo, pd, site_dir):
     # ---- The grouping every view below follows -------------------------------
     # The clustering section is the decision point: it writes
     # metadata/clustering_metadata.csv, and this reads that file back. Depending
     # on applied_at is what makes these views refresh after Apply.
-    #
-    # Silhouette is added here, since the stored metadata does not carry it. It is
-    # measured on the spectral distances themselves, so a structure with a
-    # negative value sits closer to a cluster other than its own.
     _ = applied_at
     active_info = info.copy()
     _stored_path = site_dir / "metadata" / "clustering_metadata.csv"
@@ -544,26 +563,9 @@ def _(applied_at, dist_df, info, mo, np, pd, qviz, site_dir):
             .sort_values(["cluster_id", "pdb_id"])
             .reset_index(drop=True)
         )
-    active_info["silhouette"] = np.nan
-
-    _mean_sil = None
-    if dist_df is not None:
-        _ids = [str(i) for i in dist_df.index]
-        _D = dist_df.loc[dist_df.index, dist_df.index].to_numpy(dtype=float)
-        _label_of = dict(zip(active_info["pdb_id"].astype(str), active_info["cluster_id"]))
-        _labels = np.nan_to_num(
-            np.array([_label_of.get(_i, -1) for _i in _ids], dtype=float), nan=-1
-        ).astype(int)
-        _mean_sil, _values = qviz.silhouette(_D, _labels)
-        if _values is not None:
-            active_info["silhouette"] = (
-                active_info["pdb_id"].astype(str).map(dict(zip(_ids, _values)))
-            )
-
     mo.md(
         f"**{active_info['cluster_id'].nunique()} pocket conformations** across "
         f"{len(active_info)} structures"
-        + ("" if _mean_sil is None else f" · mean silhouette {_mean_sil:.2f}")
         + f" · {int(active_info['is_representative'].sum())} representatives"
     )
     return (active_info,)
@@ -574,8 +576,7 @@ def _(mo):
     mo.md("""
     ## Structures
     `dist_to_exemplar` — distance to the cluster representative (large = outlier) ·
-    `silhouette` < 0 — fits another cluster better · `utilization` — share of the
-    reference site covered.
+    `utilization` — share of the reference site covered.
     """)
     return
 
@@ -585,7 +586,7 @@ def _(active_info, mo):
     _cols = ["pdb_id", "cluster_id"] + [
         c
         for c in [
-            "silhouette", "is_representative", "dist_to_exemplar", "utilization",
+            "is_representative", "dist_to_exemplar", "utilization",
             "rmsd_to_ref", "protein_state",
         ]
         if c in active_info.columns
@@ -619,7 +620,7 @@ def _(mo):
 def _(active_info, dist_df, embed_method, mo, qcontrols, qviz):
     _color_opts = [
         c
-        for c in ["cluster_id", "silhouette", "utilization", "protein_state", "rmsd_to_ref", "is_representative"]
+        for c in ["cluster_id", "utilization", "protein_state", "rmsd_to_ref", "is_representative"]
         if c in active_info.columns
     ]
 
@@ -688,7 +689,7 @@ def _(color_by, dist_kind, emb_df, layout, mo, px, qviz):
     _cb = color_by.value
     _hover = [
         c
-        for c in ["cluster_id", "silhouette", "utilization", "rmsd_to_ref", "protein_state", "is_representative"]
+        for c in ["cluster_id", "utilization", "rmsd_to_ref", "protein_state", "is_representative"]
         if c in emb_df.columns
     ]
 
