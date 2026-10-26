@@ -42,7 +42,7 @@ def _fake_run(tmp_path, monkeypatch, holo=True, **compute):
     from dataclasses import replace
 
     from qpocket.core.types import RawStructure, Sources
-    from tests.test_sites_pipeline import _lig, _structure
+    from tests.site_helpers import _lig, _structure
 
     inputs = tmp_path / "inputs"
     inputs.mkdir(exist_ok=True)

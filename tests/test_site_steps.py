@@ -1,5 +1,6 @@
 """Per-site steps on a finished run: featurise, shape clustering, two-stage, regroup."""
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -16,7 +17,7 @@ def _finished_run(tmp_path, monkeypatch):
     from dataclasses import replace
 
     from qpocket.core.types import RawStructure, Sources
-    from tests.test_sites_pipeline import _lig, _structure
+    from tests.site_helpers import _lig, _structure
 
     inputs = tmp_path / "inputs"
     inputs.mkdir()
@@ -70,8 +71,8 @@ def test_shape_then_featurise_then_two_stage(tmp_path, monkeypatch, fake_feature
                       "two_stage": False, "crossdock": False}
 
     steps.shape_cluster_site(root, "site_01")
-    assert steps.site_status(root, "site_01")["shape_clustered"]
-    assert not steps.site_status(root, "site_01")["featurised"]
+    status = steps.site_status(root, "site_01")
+    assert status["shape_clustered"] and not status["featurised"] and not status["two_stage"]
 
     assert sorted(steps.featurize_site(root, "site_01")) == ["APO1", "P1", "P2"]
     assert steps.site_status(root, "site_01")["featurised"]
@@ -103,7 +104,9 @@ def test_regroup_keeps_unchanged_site(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     sites_dir = root / "sites"
     assert sorted(p.name for p in sites_dir.glob("site_*")) == ["site_01", "site_02"]
+    steps.shape_cluster_site(root, "site_02")
     (sites_dir / "site_02" / "metadata" / "marker.txt").write_text("kept")
+    (sites_dir / "site_02" / "ligands.pdb").write_text("stale")
     (sites_dir / "site_01" / "metadata" / "marker.txt").write_text("stale")
 
     table = steps.regroup_sites(root, 3.0)
@@ -116,3 +119,46 @@ def test_regroup_keeps_unchanged_site(tmp_path, monkeypatch):
         assert (sites_dir / sid / "metadata" / "master.csv").exists()
         assert (sites_dir / sid / "pockets" / "APO1" / "binding_site.csv").exists()
     assert load_run_config(root).sites.link_cutoff == 3.0
+    assert "CCC" in (sites_dir / "site_03" / "ligands.pdb").read_text()
+    kept = pd.read_csv(sites_dir / "site_03" / "metadata" / "clustering_metadata.csv")
+    assert all(Path(p).exists() and Path(p).parents[2].name == "site_03" for p in kept["pocket_file"])
+
+
+def test_regroup_after_a_crash_extracts_the_changed_sites(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    sites_dir = root / "sites"
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("killed")
+
+    with monkeypatch.context() as m:
+        m.setattr(steps, "extract_all_sites", crash)
+        with pytest.raises(RuntimeError):
+            steps.regroup_sites(root, 3.0)
+    steps.regroup_sites(root, 3.0)
+    for sid in ("site_01", "site_02", "site_03"):
+        assert (sites_dir / sid / "metadata" / "master.csv").exists()
+        assert (sites_dir / sid / "pockets" / "APO1" / "binding_site.csv").exists()
+
+
+def test_leftover_parked_folders_do_not_break_regroup(tmp_path, monkeypatch):
+    import shutil
+
+    root = _finished_run(tmp_path, monkeypatch)
+    sites_dir = root / "sites"
+    shutil.copytree(sites_dir / "site_02", sites_dir / ".regroup_site_02")  # its name is taken: dropped
+    shutil.move(sites_dir / "site_01", sites_dir / ".regroup_site_01")  # its name is free: it is site_01
+    (sites_dir / ".regroup_site_01" / "metadata" / "marker.txt").write_text("restored")
+
+    steps.regroup_sites(root, 4.0)
+    assert not list(sites_dir.glob(".regroup_*"))
+    assert (sites_dir / "site_01" / "metadata" / "marker.txt").read_text() == "restored"
+    assert (sites_dir / "site_02" / "metadata" / "master.csv").exists()
+
+
+def test_unknown_site_is_refused(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    for step in (steps.site_status, steps.featurize_site, steps.shape_cluster_site, steps.two_stage_site):
+        with pytest.raises(KeyError, match="unknown site 'site_99'"):
+            step(root, "site_99")
+    assert not (root / "sites" / "site_99").exists()

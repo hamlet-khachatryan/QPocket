@@ -18,13 +18,23 @@ from qpocket.io.layout import Workspace
 from qpocket.pipelines import parallel, structure
 from qpocket.pipelines.clustering import archive_clustering, cluster_shape_only, write_clustering
 from qpocket.pipelines.distance import compute_shape_matrix, compute_spectral_distance_matrix, pocket_manifest
-from qpocket.pipelines.sites import discover_sites, extract_all_sites
+from qpocket.pipelines.sites import discover_sites, extract_all_sites, read_sites
 
+PARKED = ".regroup_"
 NEEDS_FEATURES = "two-stage clustering needs featurised pockets; run Featurise first"
 
 
+def _site_ws(run_dir: Path, site_id: str) -> Workspace:
+    ws = layout.workspace(run_dir)
+    known = list(read_sites(ws)["site_id"])
+    if site_id not in known:
+        raise KeyError(f"unknown site {site_id!r}; known: {', '.join(known) or 'none'}")
+    return layout.site_workspace(ws, site_id)
+
+
 def _site(run_dir: Path, site_id: str) -> Tuple[QPocketConfig, Workspace]:
-    return load_run_config(run_dir), layout.site_workspace(layout.workspace(run_dir), site_id)
+    ws = _site_ws(run_dir, site_id)
+    return load_run_config(run_dir), ws
 
 
 def _featurize_pocket(cfg: QPocketConfig, job: Tuple[Path, str]) -> str:
@@ -48,9 +58,12 @@ def featurize_site(run_dir: Path, site_id: str, workers: Optional[int] = None) -
 
     Returns:
         The pdb_ids featurised now; a cloud whose featurized.csv is newer than it is skipped.
+
+    Raises:
+        KeyError: If the site is not in sites.csv.
     """
     cfg, ws = _site(run_dir, site_id)
-    cleaned = dict(pd.read_csv(ws.metadata / "master.csv")[["pdb_id", "cleaned_file"]].astype(str).values)
+    cleaned = dict(pd.read_csv(ws.metadata / "master.csv", dtype=str, keep_default_na=False)[["pdb_id", "cleaned_file"]].values)
     clouds, _ = pocket_manifest(cfg, ws, require_features=False)
     done = [p.with_name("featurized.csv") for p in clouds]
     jobs = [(p, cleaned[p.parent.name]) for p, f in zip(clouds, done)
@@ -73,6 +86,9 @@ def shape_cluster_site(run_dir: Path, site_id: str) -> Path:
 
     Returns:
         Path of the site's clustering_metadata.csv.
+
+    Raises:
+        KeyError: If the site is not in sites.csv.
     """
     cfg, ws = _site(run_dir, site_id)
     d_shape = pd.read_csv(compute_shape_matrix(cfg, ws), index_col=0)
@@ -96,6 +112,7 @@ def two_stage_site(run_dir: Path, site_id: str) -> Path:
 
     Raises:
         ValueError: If fewer than two of the site's pockets are featurised.
+        KeyError: If the site is not in sites.csv.
     """
     cfg, ws = _site(run_dir, site_id)
     if len(pocket_manifest(cfg, ws, require_features=True)[0]) < 2:
@@ -116,6 +133,22 @@ def _site_keys(ws: Workspace) -> Dict[str, FrozenSet[str]]:
             for sid, group in table.groupby("site_id")}
 
 
+def _repoint(site_dir: Path) -> None:
+    """Point the pocket_file paths of a renamed site's clustering tables at its new folder.
+
+    Args:
+        site_dir: The site folder, under its new name.
+    """
+    for path in (site_dir / "metadata").rglob("*.csv"):
+        if "pocket_file" not in pd.read_csv(path, nrows=0).columns:
+            continue
+        table = pd.read_csv(path, dtype=str, keep_default_na=False)
+        # pocket_file is <site>/pockets/<pdb_id>/<file>; crossdock files hold folder-relative paths only.
+        table["pocket_file"] = [str(site_dir.joinpath(*Path(p).parts[-3:])) if p else p
+                                for p in table["pocket_file"]]
+        table.to_csv(path, index=False)
+
+
 def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
     """Regroup the run's ligands with a new link cutoff; a site whose ligands are unchanged keeps its folder.
 
@@ -134,12 +167,22 @@ def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
         if payload is not None and "failure" not in payload:
             records.append(Structure.from_json(payload))
 
+    # A crashed regroup leaves parked folders: one whose name is free is that old site, the rest are copies.
+    for stale in sorted(p for p in ws.sites.glob(f"{PARKED}site_*") if p.is_dir()):
+        real = ws.sites / stale.name[len(PARKED):]
+        if real.exists():
+            shutil.rmtree(stale)
+        else:
+            stale.rename(real)
+
     old_keys = _site_keys(ws)
-    # Out of the way first, so the new sites written under the same ids do not land in old folders.
-    parked = {}
-    for folder in sorted(p for p in ws.sites.glob("site_*") if p.is_dir()):
-        parked[folder.name] = folder.rename(ws.sites / f".regroup_{folder.name}")
+    # discover_sites skips on a matching grouping.json and would then not rewrite the sites' ligands.pdb.
+    (ws.sites / "grouping.json").unlink(missing_ok=True)
+    parked: Dict[str, Path] = {}
     try:
+        # Out of the way first, so the new sites written under the same ids do not land in old folders.
+        for folder in sorted(p for p in ws.sites.glob("site_*") if p.is_dir()):
+            parked[folder.name] = folder.rename(ws.sites / f"{PARKED}{folder.name}")
         table = discover_sites(cfg, ws, records)
     except Exception:
         for sid, folder in parked.items():
@@ -149,7 +192,9 @@ def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
 
     changed = []
     for sid, keys in _site_keys(ws).items():
-        match = next((old for old, k in old_keys.items() if k == keys and old in parked), None)
+        # A folder whose extraction never finished has nothing worth keeping.
+        match = next((old for old, k in old_keys.items() if k == keys and old in parked
+                      and (parked[old] / "metadata" / "master.csv").exists()), None)
         if match is None:
             changed.append(sid)
             continue
@@ -158,6 +203,8 @@ def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
             shutil.copy2(fresh / "ligands.pdb", kept / "ligands.pdb")
         shutil.rmtree(fresh, ignore_errors=True)
         kept.rename(fresh)
+        if match != sid:
+            _repoint(fresh)
     for folder in parked.values():
         shutil.rmtree(folder)
 
@@ -174,18 +221,21 @@ def site_status(run_dir: Path, site_id: str) -> Dict[str, bool]:
         site_id: The site.
 
     Returns:
-        ``clouds, geodesics, shape_clustered, featurised, two_stage, crossdock`` to whether it is done.
+        ``clouds, geodesics, shape_clustered, featurised, two_stage, crossdock`` to whether it is done;
+        shape_clustered means any clustering, two_stage a two-stage or single one over featurised pockets.
+
+    Raises:
+        KeyError: If the site is not in sites.csv.
     """
-    ws = layout.site_workspace(layout.workspace(run_dir), site_id)
+    ws = _site_ws(run_dir, site_id)
     clouds = list(ws.pockets.glob("*/binding_site.csv"))
     params = ws.metadata / "clustering_params.json"
-    two_stage = (ws.metadata / "feature_distance_matrix.csv").exists()
-    shape_only = params.exists() and json.loads(params.read_text(encoding="utf-8")).get("mode") == "shape_only"
+    mode = json.loads(params.read_text(encoding="utf-8")).get("mode") if params.exists() else None
     return {
         "clouds": bool(clouds),
         "geodesics": bool(clouds) and all(c.with_name("geospectral_cache.npz").exists() for c in clouds),
-        "shape_clustered": bool(shape_only or two_stage),
+        "shape_clustered": params.exists(),
         "featurised": bool(clouds) and all(c.with_name("featurized.csv").exists() for c in clouds),
-        "two_stage": two_stage,
+        "two_stage": mode in ("two_stage", "single") and (ws.metadata / "feature_distance_matrix.csv").exists(),
         "crossdock": (ws.screening / "crossdock" / "docking_jobs.csv").exists(),
     }
