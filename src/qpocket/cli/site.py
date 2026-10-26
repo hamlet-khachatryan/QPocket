@@ -7,22 +7,18 @@ import click
 import pandas as pd
 
 from qpocket.arms import sites as steps
-from qpocket.io import layout
-from qpocket.pipelines.sites import read_sites
 
 _RUN_DIR = click.argument("run_dir", type=click.Path(exists=True, file_okay=False))
 _SITE = click.option("--site", "site_id", required=True, help="Site id, e.g. site_01.")
 
 
 def _reported(func):
-    """Turn the step's expected failures into a one-line click error."""
+    """Turn the step's own SiteError into a one-line click error; other exceptions keep their traceback."""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except KeyError as exc:
-            raise click.ClickException(str(exc.args[0]))
-        except (ValueError, FileNotFoundError) as exc:
+        except steps.SiteError as exc:
             raise click.ClickException(str(exc))
     return wrapper
 
@@ -37,7 +33,7 @@ def site_cli() -> None:
 @_reported
 def list_command(run_dir: str) -> None:
     """Print the run's sites and which steps each has done."""
-    table = read_sites(layout.workspace(run_dir))
+    table = steps.site_table(run_dir)
     status = pd.DataFrame([steps.site_status(run_dir, s) for s in table["site_id"]], index=table.index)
     click.echo(pd.concat([table, status], axis=1).to_string(index=False))
 

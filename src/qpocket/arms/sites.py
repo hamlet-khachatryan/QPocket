@@ -24,11 +24,33 @@ PARKED = ".regroup_"
 NEEDS_FEATURES = "two-stage clustering needs featurised pockets; run Featurise first"
 
 
-def _site_ws(run_dir: Path, site_id: str) -> Workspace:
+class SiteError(Exception):
+    """A site step cannot run for a reason the user can fix: not a run, unknown site, pockets not featurised."""
+
+
+def site_table(run_dir: Path) -> pd.DataFrame:
+    """The run's site table.
+
+    Args:
+        run_dir: The run directory.
+
+    Returns:
+        Contents of ``sites/sites.csv``.
+
+    Raises:
+        SiteError: If the directory is not a QPocket run.
+    """
     ws = layout.workspace(run_dir)
-    known = list(read_sites(ws)["site_id"])
+    if not (ws.sites / "sites.csv").is_file():
+        raise SiteError(f"{run_dir} is not a QPocket run (no sites/sites.csv)")
+    return read_sites(ws)
+
+
+def _site_ws(run_dir: Path, site_id: str) -> Workspace:
+    known = list(site_table(run_dir)["site_id"])
     if site_id not in known:
-        raise KeyError(f"unknown site {site_id!r}; known: {', '.join(known) or 'none'}")
+        raise SiteError(f"unknown site {site_id!r}; known: {', '.join(known) or 'none'}")
+    ws = layout.workspace(run_dir)
     return layout.site_workspace(ws, site_id)
 
 
@@ -60,7 +82,7 @@ def featurize_site(run_dir: Path, site_id: str, workers: Optional[int] = None) -
         The pdb_ids featurised now; a cloud whose featurized.csv is newer than it is skipped.
 
     Raises:
-        KeyError: If the site is not in sites.csv.
+        SiteError: If the directory is not a run or the site is not in sites.csv.
     """
     cfg, ws = _site(run_dir, site_id)
     cleaned = dict(pd.read_csv(ws.metadata / "master.csv", dtype=str, keep_default_na=False)[["pdb_id", "cleaned_file"]].values)
@@ -88,7 +110,7 @@ def shape_cluster_site(run_dir: Path, site_id: str) -> Path:
         Path of the site's clustering_metadata.csv.
 
     Raises:
-        KeyError: If the site is not in sites.csv.
+        SiteError: If the directory is not a run or the site is not in sites.csv.
     """
     cfg, ws = _site(run_dir, site_id)
     d_shape = pd.read_csv(compute_shape_matrix(cfg, ws), index_col=0)
@@ -111,12 +133,11 @@ def two_stage_site(run_dir: Path, site_id: str) -> Path:
         Path of the site's clustering_metadata.csv.
 
     Raises:
-        ValueError: If fewer than two of the site's pockets are featurised.
-        KeyError: If the site is not in sites.csv.
+        SiteError: If the run or site is unknown, or fewer than two of the site's pockets are featurised.
     """
     cfg, ws = _site(run_dir, site_id)
     if len(pocket_manifest(cfg, ws, require_features=True)[0]) < 2:
-        raise ValueError(NEEDS_FEATURES)
+        raise SiteError(NEEDS_FEATURES)
     if cfg.distance.clustering.mode == "shape_only":  # this step is the two-stage one, whatever the run chose
         cfg = evolve(cfg, "distance.clustering.mode", "two_stage")
     archive_clustering(ws.metadata)
@@ -159,6 +180,7 @@ def regroup_sites(run_dir: Path, link_cutoff: float) -> pd.DataFrame:
     Returns:
         The new site table.
     """
+    site_table(run_dir)  # refuses a directory that is not a run
     ws = layout.workspace(run_dir)
     cfg = evolve(load_run_config(run_dir), "sites.link_cutoff", float(link_cutoff))
     records = []
@@ -225,7 +247,7 @@ def site_status(run_dir: Path, site_id: str) -> Dict[str, bool]:
         shape_clustered means any clustering, two_stage a two-stage or single one over featurised pockets.
 
     Raises:
-        KeyError: If the site is not in sites.csv.
+        SiteError: If the directory is not a run or the site is not in sites.csv.
     """
     ws = _site_ws(run_dir, site_id)
     clouds = list(ws.pockets.glob("*/binding_site.csv"))

@@ -2,6 +2,7 @@
 import pytest
 from click.testing import CliRunner
 
+from qpocket.arms import sites as steps
 from qpocket.cli import cli
 from tests.test_site_steps import _finished_run, fake_features  # noqa: F401
 
@@ -48,3 +49,24 @@ def test_two_stage_before_featurise_is_a_one_line_error(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     result = _invoke("cluster", str(root), "--site", "site_01")
     assert result.exit_code != 0 and "Featurise" in result.output
+
+
+def test_a_directory_that_is_not_a_run_is_a_one_line_error(tmp_path):
+    result = _invoke("list", str(tmp_path))
+    assert result.exit_code != 0 and "is not a QPocket run" in result.output
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_featurize_unknown_site(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    result = _invoke("featurize", str(root), "--site", "site_99")
+    assert result.exit_code != 0 and "unknown site" in result.output
+
+
+def test_unexpected_errors_keep_their_traceback(tmp_path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise KeyError("x")
+
+    monkeypatch.setattr(steps, "featurize_site", boom)
+    result = _invoke("featurize", str(tmp_path), "--site", "site_01")
+    assert isinstance(result.exception, KeyError)

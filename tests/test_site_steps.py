@@ -86,7 +86,7 @@ def test_shape_then_featurise_then_two_stage(tmp_path, monkeypatch, fake_feature
 
 def test_two_stage_before_featurise_raises(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
-    with pytest.raises(ValueError, match="Featurise"):
+    with pytest.raises(steps.SiteError, match="Featurise"):
         steps.two_stage_site(root, "site_01")
 
 
@@ -159,6 +159,6 @@ def test_leftover_parked_folders_do_not_break_regroup(tmp_path, monkeypatch):
 def test_unknown_site_is_refused(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     for step in (steps.site_status, steps.featurize_site, steps.shape_cluster_site, steps.two_stage_site):
-        with pytest.raises(KeyError, match="unknown site 'site_99'"):
+        with pytest.raises(steps.SiteError, match="unknown site 'site_99'"):
             step(root, "site_99")
     assert not (root / "sites" / "site_99").exists()
