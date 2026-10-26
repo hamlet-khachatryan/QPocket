@@ -1,10 +1,11 @@
 """Site discovery: ligands from every structure grouped into sites and tabulated."""
+import numpy as np
 import pandas as pd
 
 from qpocket.config import QPocketConfig
 from qpocket.core.types import Ligand, Structure
 from qpocket.io import layout
-from qpocket.pipelines.sites import discover_sites, read_sites
+from qpocket.pipelines.sites import discover_sites, extract_all_sites, extract_site, read_sites
 
 
 def _lig(tmp_path, pdb_id, resname, resseq, atoms):
@@ -54,3 +55,105 @@ def test_rerun_with_same_inputs_is_skipped(tmp_path):
     stamp = (ws.sites / "sites.csv").stat().st_mtime_ns
     discover_sites(QPocketConfig(), ws, recs)
     assert (ws.sites / "sites.csv").stat().st_mtime_ns == stamp
+
+
+# ── per-site clouds ──────────────────────────────────────────────────────────
+
+def _protein(tmp_path, name):
+    path = tmp_path / f"{name}.pdb"
+    path.write_text("ATOM      1  CA  TYR A   1       6.000   0.000   0.000  1.00  0.00           C\n"
+                    "ATOM      2  CA  ALA A   2      -3.000   3.000   0.000  1.00  0.00           C\n"
+                    "ATOM      3  CA  GLY A   3      40.000  40.000  40.000  1.00  0.00           C\n"
+                    "END\n")
+    return str(path)
+
+
+def _cavities(tmp_path, name, points):
+    path = tmp_path / f"{name}_cav.csv"
+    pd.DataFrame([(x, y, z, i % 2) for i, (x, y, z) in enumerate(points)],
+                 columns=["x", "y", "z", "cavity"]).to_csv(path, index=False)
+    return str(path)
+
+
+INSIDE = [(float(x), 2.0, 0.0) for x in range(-3, 7)]  # ten points along the site
+FAR = [(30.0, 30.0, 30.0)]
+
+
+def _structure(tmp_path, pdb_id, ligs=(), points=INSIDE + FAR, state="BOUND_STATE", contacts=("TYR_1_A|HBDonor",)):
+    prot = _protein(tmp_path, pdb_id)
+    return Structure(pdb_id, "x", 0.5, prot, cleaned_file=prot, protonated_file=prot, protein_state=state,
+                     ligands=tuple(ligs), contacts=tuple((lig.key, tuple(contacts)) for lig in ligs),
+                     cavities_file=_cavities(tmp_path, pdb_id, points) if points else None)
+
+
+def _site_run(tmp_path, cfg=None):
+    cfg = cfg or QPocketConfig()
+    ws = layout.create(str(tmp_path), "run")
+    lig = _lig(tmp_path, "P1", "LIG", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 3, 0, 0)])._replace(smiles="CC")
+    holo = _structure(tmp_path, "P1", [lig])
+    sites = discover_sites(cfg, ws, [holo])
+    return cfg, ws, sites.iloc[0], holo
+
+
+def test_holo_and_apo_clouds_cut_by_same_box(tmp_path):
+    cfg, ws, site_row, holo = _site_run(tmp_path)
+    apo = extract_site(cfg, ws, site_row, _structure(tmp_path, "APO1", state="UNBOUND_STATE"))
+    bound = extract_site(cfg, ws, site_row, holo)
+    assert apo.protein_state == "UNBOUND_STATE" and apo.observed == ("no_ligand_found",) and not apo.actives
+    assert bound.protein_state == "BOUND_STATE" and bound.observed == ("TYR_1_A|HBDonor",)
+    assert bound.ligand_id == "LIG" and bound.actives == (("CC", "LIG", holo.ligands[0].file),)
+    lo, hi = np.array([-4.0, -4.0, -4.0]), np.array([7.0, 4.0, 4.0])  # ligand span plus box_padding 4
+    for pid in ("APO1", "P1"):
+        pocket = ws.sites / "site_01" / "pockets" / pid
+        pts = pd.read_csv(pocket / "binding_site.csv")[["x", "y", "z"]].to_numpy()
+        assert len(pts) == len(INSIDE) and ((pts >= lo) & (pts <= hi)).all()
+        assert (pocket / "geospectral_cache.npz").exists()
+    assert apo.potential == ("ALA_2_A", "TYR_1_A")  # residues within 4 Å of the cloud
+
+
+def test_closed_site(tmp_path):
+    cfg, ws, site_row, _ = _site_run(tmp_path)
+    out = extract_site(cfg, ws, site_row, _structure(tmp_path, "APO2", points=FAR, state="UNBOUND_STATE"))
+    assert out.protein_state == "CAVITY_CLOSED"
+    assert not (ws.sites / "site_01" / "pockets" / out.pdb_id / "binding_site.csv").exists()
+
+
+def test_failed_and_cavity_free_structures_still_get_a_record(tmp_path):
+    cfg, ws, site_row, _ = _site_run(tmp_path)
+    assert extract_site(cfg, ws, site_row, _structure(tmp_path, "F1", state="FAILED")).protein_state == "FAILED"
+    none = extract_site(cfg, ws, site_row, _structure(tmp_path, "N1", points=(), state="NO_ANY_CAVITY_FOUND"))
+    assert none.protein_state == "NO_ANY_CAVITY_FOUND"
+
+
+def test_two_ligands_at_one_site_are_two_actives(tmp_path):
+    cfg = QPocketConfig()
+    ws = layout.create(str(tmp_path), "run")
+    small = _lig(tmp_path, "P1", "BTN", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 1, 0, 0)])._replace(smiles="CC")
+    big = _lig(tmp_path, "P1", "BTN", 2, [("C1", "C", 2, 0, 0), ("C2", "C", 3, 0, 0),
+                                          ("C3", "C", 3, 1, 0)])._replace(smiles="CCC")
+    rec = _structure(tmp_path, "P1", [small, big])
+    site_row = discover_sites(cfg, ws, [rec]).iloc[0]
+    out = extract_site(cfg, ws, site_row, rec)
+    assert len(out.actives) == 2 and len({a[2] for a in out.actives}) == 2
+    assert out.ligand_file == big.file  # the largest one is the cross-docking pose
+
+
+def test_extract_all_sites_crops_to_contacts_and_collects_per_site(tmp_path):
+    from dataclasses import replace
+
+    base = QPocketConfig()
+    cfg = replace(base, reference=replace(base.reference, pocket_definition="Interactions", interaction_padding=2.5),
+                  compute=replace(base.compute, workers=1))
+    cfg, ws, sites_row, holo = _site_run(tmp_path, cfg)
+    apo = _structure(tmp_path, "APO1", state="UNBOUND_STATE")
+    failed = _structure(tmp_path, "F1", state="FAILED")
+    extract_all_sites(cfg, ws, read_sites(ws), [holo, apo, failed])
+    site = ws.sites / "site_01"
+    assert pd.read_csv(site / "contact_atoms.csv")[["x", "y", "z"]].values.tolist() == [[6.0, 0.0, 0.0]]
+    # only points within 2.5 Å of the TYR atom at (6, 0, 0) survive
+    assert pd.read_csv(site / "pockets" / "APO1" / "binding_site.csv")["x"].tolist() == [5.0, 6.0]
+    master = pd.read_csv(site / "metadata" / "master.csv")
+    assert list(master["pdb_id"]) == ["P1", "APO1", "F1"]
+    assert list(master["protein_state"]) == ["BOUND_STATE", "UNBOUND_STATE", "FAILED"]
+    assert (site / "screening" / "actives.smi").read_text() == (
+        f"SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCC\tP1\tLIG\t{holo.ligands[0].file}\n")

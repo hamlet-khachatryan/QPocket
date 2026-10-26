@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Any, List, Sequence, Tuple
 
 import pandas as pd
 from eliot import log_message, start_action
@@ -118,19 +118,13 @@ def write_feature_record(meta_dir: Path, enabled: Sequence[str]) -> Path:
     return path
 
 
-def _observed(record: Structure) -> List[str]:
-    """Union of a structure's ligand contacts (sentinels dropped), or the no-ligand sentinel."""
-    found = sorted({entry for _, entries in record.contacts for entry in entries if "|" in entry})
-    return found or ["no_ligand_found"]
-
-
-def collect_run(ws: "layout.Workspace", records: Sequence[Structure], failures: Sequence[Failure],
+def collect_run(ws: "layout.Workspace", records: Sequence[Any], failures: Sequence[Failure],
                 features: Sequence[str], compression: str) -> None:
-    """Write the run-wide tables from the per-structure records.
+    """Write the master, actives and interaction tables of a run or a site.
 
     Args:
-        ws: The run.
-        records: Finished records, in input order; that order decides HDF5 insertion order and tie-breaks.
+        ws: The run or the site.
+        records: Records with pdb_id, master_row(), potential, observed and actives, in input order.
         failures: Structures that dropped out.
         features: Feature plug-in names.
         compression: HDF5 compression.
@@ -143,18 +137,18 @@ def collect_run(ws: "layout.Workspace", records: Sequence[Structure], failures: 
             ws.metadata / "failures.csv", index=False)
 
         with open(ws.screening / "actives.smi", "w", encoding="utf-8") as f:
-            f.write("SMILES\tPDB_ID\tLigand_Name\n")
+            f.write("SMILES\tPDB_ID\tLigand_Name\tLigand_File\n")
             for r in records:
-                for ligand in r.ligands:
-                    if ligand.smiles:
-                        f.write(f"{ligand.smiles}\t{r.pdb_id}\t{ligand.resname}\n")
+                for smiles, name, ligand_file in r.actives:
+                    if smiles:
+                        f.write(f"{smiles}\t{r.pdb_id}\t{name}\t{ligand_file}\n")
 
         write_feature_record(ws.metadata, features)
         obs_h5 = ws.metadata / "observed_interactions.h5"
         pot_h5 = ws.metadata / "potential_interactions.h5"
-        # shortcut: one run-wide archive and no potential contacts; upgrade when sites write their own.
-        hdf5.save_interactions({r.pdb_id: [] for r in records}, pot_h5, compression=compression)
-        hdf5.save_interactions({r.pdb_id: _observed(r) for r in records}, obs_h5,
+        hdf5.save_interactions({r.pdb_id: list(r.potential) for r in records}, pot_h5,
+                               compression=compression)
+        hdf5.save_interactions({r.pdb_id: list(r.observed) for r in records}, obs_h5,
                                compression=compression)
         log_message(message_type="interaction_data_saved", n_structures=len(records))
         try:

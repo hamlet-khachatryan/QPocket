@@ -39,7 +39,8 @@ def generate_decoys_lude(
         return
 
     # actives.smi format: SMILES\tPDB_ID\tLigand_Name  (no header)
-    df_actives = pd.read_csv(actives_path, sep="\t", header=None, names=["SMILES", "PDB_ID", "Ligand_Name"])
+    df_actives = pd.read_csv(actives_path, sep="\t", header=None, names=["SMILES", "PDB_ID", "Ligand_Name"],
+                             usecols=[0, 1, 2])
     actives_smiles = df_actives["SMILES"].tolist()
     active_ids = df_actives["PDB_ID"].tolist()
 

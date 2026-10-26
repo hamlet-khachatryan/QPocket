@@ -200,7 +200,7 @@ def test_collect_writes_master_actives_failures_and_archives(ws):
     assert list(master["pdb_id"]) == ["A", "B"] and list(master["n_ligands"]) == [2, 0]
     assert list(master.columns) == ["pdb_id", "rmsd_to_ref", "aligned_file", "cleaned_file",
                                     "protonated_file", "cavities_file", "n_ligands", "protein_state"]
-    assert (ws.screening / "actives.smi").read_text() == "SMILES\tPDB_ID\tLigand_Name\nCC\tA\tL\n"
+    assert (ws.screening / "actives.smi").read_text() == "SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCC\tA\tL\t\n"
     assert pd.read_csv(ws.metadata / "failures.csv").to_dict("records") == [
         {"pdb_id": "C", "stage": "align", "reason": "x"}]
     from qpocket.io import hdf5

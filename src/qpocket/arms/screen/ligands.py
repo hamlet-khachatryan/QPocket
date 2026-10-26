@@ -20,14 +20,17 @@ def distinct_actives(actives_smi: Path, master_csv: Path) -> pd.DataFrame:
     """One row per distinct active, with the crystal pose files it came from.
 
     Args:
-        actives_smi: screening/actives.smi (header SMILES, PDB_ID, Ligand_Name).
-        master_csv: metadata/master.csv, for each structure's ligand_file.
+        actives_smi: screening/actives.smi (header SMILES, PDB_ID, Ligand_Name, optionally Ligand_File).
+        master_csv: metadata/master.csv, for each structure's ligand_file when actives_smi has no Ligand_File.
 
     Returns:
         active_id, smiles, canonical and crystal_files (";"-joined), in first-seen order.
     """
     rows = pd.read_csv(actives_smi, sep="\t")
-    ligand_file = pd.read_csv(master_csv).set_index("pdb_id")["ligand_file"].to_dict()
+    if "Ligand_File" in rows.columns:
+        rows["crystal"] = rows["Ligand_File"]
+    else:
+        rows["crystal"] = rows["PDB_ID"].map(pd.read_csv(master_csv).set_index("pdb_id")["ligand_file"])
     rows["canonical"] = rows["SMILES"].astype(str).map(_canonical)
     dropped = int(rows["canonical"].isna().sum())
     if dropped:
@@ -36,8 +39,7 @@ def distinct_actives(actives_smi: Path, master_csv: Path) -> pd.DataFrame:
     for canonical, group in rows.dropna(subset=["canonical"]).groupby("canonical", sort=False):
         code = str(group["Ligand_Name"].iloc[0])
         used[code] = used.get(code, 0) + 1
-        files = [str(ligand_file[p]) for p in group["PDB_ID"]
-                 if isinstance(ligand_file.get(p), str) and ligand_file.get(p)]
+        files = [f for f in group["crystal"] if isinstance(f, str) and f]
         out.append({"active_id": code if used[code] == 1 else f"{code}_{used[code]}",
                     "smiles": str(group["SMILES"].iloc[0]), "canonical": canonical,
                     "crystal_files": ";".join(files)})

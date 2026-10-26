@@ -76,3 +76,17 @@ def test_every_bound_structure_reaches_actives_smi(tmp_path_factory):
     actives = pd.read_csv(run / "screening/actives.smi", sep="\t")
     assert set(actives["PDB_ID"].astype(str)) == bound, "a bound structure is missing"
     assert all("=O" in s for s in actives.loc[actives["Ligand_Name"] == "WDG", "SMILES"]), "bond orders lost"
+
+
+def test_distinct_actives_reads_ligand_file_column(tmp_path):
+    """Per-site actives carry their own crystal pose; master.csv holds only one per structure."""
+    import pandas as pd
+
+    from qpocket.arms.screen.ligands import distinct_actives
+
+    smi = tmp_path / "actives.smi"
+    smi.write_text("SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCCO\tP1\tETH\tlig_a.pdb\nOCC\tP1\tETH\tlig_b.pdb\n")
+    master = tmp_path / "master.csv"
+    pd.DataFrame({"pdb_id": ["P1"], "ligand_file": ["other.pdb"]}).to_csv(master, index=False)
+    df = distinct_actives(smi, master)
+    assert df.loc[0, "crystal_files"] == "lig_a.pdb;lig_b.pdb"

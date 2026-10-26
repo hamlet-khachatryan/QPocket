@@ -338,6 +338,35 @@ class Structure(NamedTuple):
                    protein_state=self.protein_state or "FAILED")
         return row
 
+    # shortcut: the run-level collect reads a structure like a site record; drop when Task 8 trims it.
+    @property
+    def potential(self) -> Tuple[str, ...]:
+        """No pocket at run level, so no lining residues.
+
+        Returns:
+            An empty tuple.
+        """
+        return ()
+
+    @property
+    def observed(self) -> Tuple[str, ...]:
+        """Union of every ligand's contacts, or the no-ligand sentinel.
+
+        Returns:
+            Sorted RES_NUM_CHAIN|Type entries, or ``("no_ligand_found",)``.
+        """
+        found = sorted({entry for _, entries in self.contacts for entry in entries if "|" in entry})
+        return tuple(found) or ("no_ligand_found",)
+
+    @property
+    def actives(self) -> Tuple[Tuple[str, str, str], ...]:
+        """Every ligand as (SMILES, ligand name, ligand file).
+
+        Returns:
+            One entry per ligand.
+        """
+        return tuple((lig.smiles, lig.resname, lig.file) for lig in self.ligands)
+
     def to_json(self) -> Dict[str, Any]:
         """Plain form for a sidecar.
 
