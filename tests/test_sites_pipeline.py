@@ -1,163 +1,192 @@
-"""Site discovery: ligands from every structure grouped into sites and tabulated."""
-from pathlib import Path
+"""Cavity-defined sites: CavFind cavities grouped into sites, ligands assigned, misses reported."""
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
 
 from qpocket.config import QPocketConfig
-from qpocket.core.types import Ligand, Structure
 from qpocket.io import layout
-from qpocket.pipelines.sites import discover_sites, extract_all_sites, extract_site, read_sites
-from tests.site_helpers import FAR, INSIDE, _lig, _structure
+from qpocket.pipelines.sites import SITE_COLUMNS, discover_sites, extract_all_sites, read_sites
+from tests.site_helpers import INSIDE, _lig, _structure
 
 
-def _rec(lig_list, contacts=()):
-    return Structure(lig_list[0].pdb_id if lig_list else "P3", "x", ligands=tuple(lig_list),
-                     contacts=tuple((lig.key, tuple(contacts)) for lig in lig_list))
+def _cfg(**sites):
+    base = QPocketConfig()
+    return replace(base, sites=replace(base.sites, **sites),
+                   compute=replace(base.compute, workers=1, backend="thread"))
 
 
-def _setup(tmp_path):
-    ws = layout.create(str(tmp_path), "run")
-    a = _lig(tmp_path, "P1", "AAA", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 3, 0, 0), ("H1", "H", 9, 9, 9)])
-    a2 = _lig(tmp_path, "P2", "AAA", 1, [("C1", "C", 1, 0, 0), ("C2", "C", 2, 1, 0)])
-    far = _lig(tmp_path, "P2", "BBB", 2, [("C1", "C", 50, 0, 0)])
-    recs = [_rec([a], ["TYR_1_A|HBDonor"]), _rec([a2, far], ["no_ligand_found", "ALA_2_A|Hydrophobic"]),
-            Structure("P3", "x")]
-    return ws, recs
+def _run(tmp_path, records, **sites):
+    cfg = _cfg(**sites)
+    ws = layout.create(str(tmp_path / "work"), "run")
+    table = discover_sites(cfg, ws, records)
+    extract_all_sites(cfg, ws, table, records)
+    return ws, table
 
 
-def test_two_sites_from_three_structures(tmp_path):
-    ws, recs = _setup(tmp_path)
-    sites = discover_sites(QPocketConfig(), ws, recs).set_index("site_id")
-    assert list(sites.index) == ["site_01", "site_02"]
-    assert sites.loc["site_01", "n_holo_structures"] == 2 and sites.loc["site_01", "n_ligands"] == 2
-    assert sites.loc["site_01", "extent"] == 3.0  # the hydrogen at (9,9,9) is ignored
-    assert sites.loc["site_01", "contact_residues"] == "ALA_2_A;TYR_1_A"
-    assert (ws.sites / "site_01" / "ligands.pdb").exists()
-    assert list(pd.read_csv(ws.structures / "ligands.csv").site_id) == ["site_01", "site_01", "site_02"]
-    assert read_sites(ws).shape[0] == 2
+def _ligand(tmp_path, pdb_id, x0=0.0, resseq=1, y=0.0, z=0.0):
+    atoms = [(f"C{i}", "C", x0 + i, y, z) for i in range(4)]
+    return _lig(tmp_path, pdb_id, "LIG", resseq, atoms)._replace(smiles="CCCC")
 
 
-def test_no_ligands_gives_empty_table(tmp_path):
-    ws = layout.create(str(tmp_path), "run")
-    sites = discover_sites(QPocketConfig(), ws, [Structure("P1", "x")])
-    assert sites.empty and (ws.sites / "sites.csv").read_text().startswith("site_id,")
+def _grid(x, y=(0, 4), z=(0, 4)):
+    return [(float(a), float(b), float(c)) for a in range(x[0], x[1] + 1)
+            for b in range(y[0], y[1] + 1) for c in range(z[0], z[1] + 1)]
+
+
+def _master(ws, site_id):
+    return pd.read_csv(ws.sites / site_id / "metadata" / "master.csv").set_index("pdb_id")
+
+
+def _misses(ws):
+    return pd.read_csv(ws.sites / "cavfind_misses.csv", keep_default_na=False)
+
+
+def test_holo_cloud_is_the_structures_own_cavity_points_unmodified(tmp_path):
+    holo = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])
+    ws, table = _run(tmp_path, [holo])
+    sid = table.site_id.iloc[0]
+    cloud = pd.read_csv(ws.sites / sid / "pockets" / "P1" / "binding_site.csv")
+    cav = pd.read_csv(holo.cavities_file)
+    expected = cav[cav.cavity == 0][["x", "y", "z"]].reset_index(drop=True)
+    pd.testing.assert_frame_equal(cloud[["x", "y", "z"]], expected)
+    assert _master(ws, sid).loc["P1", "protein_state"] == "BOUND_STATE"
+
+
+def test_two_cavities_of_one_structure_in_one_site_are_pooled(tmp_path):
+    block = np.array(_grid((0, 6)), float)                    # 175 points per cavity
+    rows = [(*p, 0) for p in block] + [(*(p + [0.2, 0, 0]), 1) for p in block]
+    path = tmp_path / "P1_two.csv"
+    pd.DataFrame(rows, columns=["x", "y", "z", "cavity"]).to_csv(path, index=False)
+    holo = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])._replace(cavities_file=str(path))
+    ws, table = _run(tmp_path, [holo])
+    assert len(table) == 1
+    cloud = pd.read_csv(ws.sites / table.site_id.iloc[0] / "pockets" / "P1" / "binding_site.csv")
+    assert len(cloud) == 2 * len(block)
+
+
+def test_apo_structure_gets_a_cloud_without_ligand(tmp_path):
+    holo = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])
+    apo = _structure(tmp_path, "APO1", state="UNBOUND_STATE")
+    ws, table = _run(tmp_path, [holo, apo])
+    sid = table.site_id.iloc[0]
+    assert _master(ws, sid).loc["APO1", "protein_state"] == "UNBOUND_STATE"
+    assert (ws.sites / sid / "pockets" / "APO1" / "binding_site.csv").exists()
+    assert table.set_index("site_id").loc[sid, ["n_holo", "n_apo"]].tolist() == [1, 1]
+
+
+def test_ligand_without_cavity_at_its_site_is_a_miss(tmp_path):
+    holo = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])
+    blind = _structure(tmp_path, "X1", [_ligand(tmp_path, "X1")], points=[(30.0, 30.0, 30.0)])
+    ws, table = _run(tmp_path, [holo, blind])
+    sid = table.site_id.iloc[0]
+    miss = _misses(ws).set_index("pdb_id")
+    assert miss.loc["X1", "reason"] == "no_cavity_at_site" and miss.loc["X1", "sites"] == sid
+    assert "X1" not in _master(ws, sid).index
+    assert not (ws.sites / sid / "pockets" / "X1").exists()
+    assert table.set_index("site_id").loc[sid, "n_cavfind_miss"] == 1
+
+
+def test_ligand_in_no_site_is_a_miss(tmp_path):
+    lost = _ligand(tmp_path, "P1", x0=50.0, resseq=2)
+    holo = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1"), lost])
+    ws, _ = _run(tmp_path, [holo])
+    miss = _misses(ws)
+    assert miss[["ligand_key", "reason", "sites"]].values.tolist() == [[lost.key, "no_site", ""]]
+
+
+def test_holo_somewhere_is_not_a_miss(tmp_path):
+    a = _structure(tmp_path, "A", points=_grid((0, 10)), state="UNBOUND_STATE")
+    b = _structure(tmp_path, "B", points=_grid((0, 10)), state="UNBOUND_STATE")
+    c = _structure(tmp_path, "C", [_ligand(tmp_path, "C", x0=6.5, y=2, z=2)], points=_grid((6, 16)))
+    ws, table = _run(tmp_path, [a, b, c])
+    assert len(table) == 2
+    lig = pd.read_csv(ws.structures / "ligands.csv", keep_default_na=False)
+    assert len(lig.site_ids.iloc[0].split(";")) == 2          # the ligand lies in both boxes
+    assert _misses(ws).empty
+    states = [_master(ws, sid)["protein_state"].to_dict().get("C") for sid in table.site_id]
+    assert sorted(s for s in states if s) == ["BOUND_STATE"]
+
+
+def test_small_cavities_never_join(tmp_path):
+    rec = _structure(tmp_path, "P1", points=[(0.0, 0.0, 0.0)], state="UNBOUND_STATE")  # 8 voxels < 50
+    ws, table = _run(tmp_path, [rec])
+    assert table.empty
+    assert pd.read_csv(ws.sites / "cavities.csv", keep_default_na=False).site_ids.tolist() == [""]
+
+
+def test_site_kept_by_ligand_below_structure_share(tmp_path):
+    holo = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])
+    other = _structure(tmp_path, "P2", points=(), state="UNBOUND_STATE")
+    _, table = _run(tmp_path, [holo, other], min_structure_fraction=0.9)
+    assert len(table) == 1
+
+
+def test_site_dropped_without_ligand_below_structure_share(tmp_path):
+    apo = _structure(tmp_path, "P1", state="UNBOUND_STATE")
+    other = _structure(tmp_path, "P2", points=(), state="UNBOUND_STATE")
+    _, table = _run(tmp_path, [apo, other], min_structure_fraction=0.9)
+    assert table.empty
+
+
+def test_sites_named_by_rank_and_nearest_residue(tmp_path):
+    near = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])
+    far_pts = [(float(x), 30.0, 30.0) for x in range(30, 40)]
+    twice = [_structure(tmp_path, f"F{i}", points=INSIDE + far_pts, state="UNBOUND_STATE") for i in range(2)]
+    ws, table = _run(tmp_path, [near] + twice)
+    # the site near TYR 1 has all three structures, the far one two; GLY 3 sits at (40, 40, 40)
+    assert table.site_id.tolist() == ["S1-Y1", "S2-G3"]
+    assert (ws.sites / "S1-Y1" / "ligands.pdb").exists()
+    assert list(table.columns) == SITE_COLUMNS
+
+
+def test_structure_without_candidates_reports_misses(tmp_path):
+    holo = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])
+    none = _structure(tmp_path, "N1", [_ligand(tmp_path, "N1")], points=(), state="NO_ANY_CAVITY_FOUND")
+    ws, table = _run(tmp_path, [holo, none])
+    assert _misses(ws).set_index("pdb_id").loc["N1", "reason"] == "no_cavity_at_site"
+    assert "N1" not in _master(ws, table.site_id.iloc[0]).index
+
+
+def test_no_candidates_gives_empty_sites(tmp_path):
+    rec = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")], points=())
+    ws, table = _run(tmp_path, [rec])
+    assert table.empty and (ws.sites / "sites.csv").read_text().startswith("site_id,")
+    assert _misses(ws).reason.tolist() == ["no_site"]
+    assert read_sites(ws).empty
 
 
 def test_rerun_with_same_inputs_is_skipped(tmp_path):
-    ws, recs = _setup(tmp_path)
-    discover_sites(QPocketConfig(), ws, recs)
+    cfg = _cfg()
+    ws = layout.create(str(tmp_path / "work"), "run")
+    recs = [_structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])]
+    discover_sites(cfg, ws, recs)
     stamp = (ws.sites / "sites.csv").stat().st_mtime_ns
-    discover_sites(QPocketConfig(), ws, recs)
+    discover_sites(cfg, ws, recs)
     assert (ws.sites / "sites.csv").stat().st_mtime_ns == stamp
 
 
-# ── per-site clouds ──────────────────────────────────────────────────────────
-
-def _site_run(tmp_path, cfg=None):
-    cfg = cfg or QPocketConfig()
-    ws = layout.create(str(tmp_path), "run")
-    lig = _lig(tmp_path, "P1", "LIG", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 3, 0, 0)])._replace(smiles="CC")
-    holo = _structure(tmp_path, "P1", [lig])
-    sites = discover_sites(cfg, ws, [holo])
-    return cfg, ws, sites.iloc[0], holo
-
-
-def test_holo_and_apo_clouds_cut_by_same_box(tmp_path):
-    cfg, ws, site_row, holo = _site_run(tmp_path)
-    apo = extract_site(cfg, ws, site_row, _structure(tmp_path, "APO1", state="UNBOUND_STATE"))
-    bound = extract_site(cfg, ws, site_row, holo)
-    assert apo.protein_state == "UNBOUND_STATE" and apo.observed == ("no_ligand_found",) and not apo.actives
-    assert bound.protein_state == "BOUND_STATE" and bound.observed == ("TYR_1_A|HBDonor",)
-    assert bound.ligand_id == "LIG" and bound.actives == (("CC", "LIG", holo.ligands[0].file),)
-    lo, hi = np.array([-4.0, -4.0, -4.0]), np.array([7.0, 4.0, 4.0])  # ligand span plus box_padding 4
-    for pid in ("APO1", "P1"):
-        pocket = ws.sites / "site_01" / "pockets" / pid
-        pts = pd.read_csv(pocket / "binding_site.csv")[["x", "y", "z"]].to_numpy()
-        assert len(pts) == len(INSIDE) and ((pts >= lo) & (pts <= hi)).all()
-        assert (pocket / "geospectral_cache.npz").exists()
-    assert apo.potential == ("ALA_2_A", "TYR_1_A")  # residues within 4 Å of the cloud
-
-
-def test_closed_site(tmp_path):
-    cfg, ws, site_row, _ = _site_run(tmp_path)
-    out = extract_site(cfg, ws, site_row, _structure(tmp_path, "APO2", points=FAR, state="UNBOUND_STATE"))
-    assert out.protein_state == "CAVITY_CLOSED"
-    assert not (ws.sites / "site_01" / "pockets" / out.pdb_id / "binding_site.csv").exists()
-
-
-def test_failed_and_cavity_free_structures_still_get_a_record(tmp_path):
-    cfg, ws, site_row, _ = _site_run(tmp_path)
-    assert extract_site(cfg, ws, site_row, _structure(tmp_path, "F1", state="FAILED")).protein_state == "FAILED"
-    none = extract_site(cfg, ws, site_row, _structure(tmp_path, "N1", points=(), state="NO_ANY_CAVITY_FOUND"))
-    assert none.protein_state == "NO_ANY_CAVITY_FOUND"
+def test_a_pair_that_raises_is_still_listed_at_the_site(tmp_path):
+    cfg = _cfg()
+    ws = layout.create(str(tmp_path / "work"), "run")
+    holo = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])
+    broken = _structure(tmp_path, "BAD", state="UNBOUND_STATE")
+    table = discover_sites(cfg, ws, [holo, broken])
+    with open(broken.cavities_file, "w") as handle:
+        handle.write("not,a,cloud\n1,2,3\n")
+    extract_all_sites(cfg, ws, table, [holo, broken])
+    sid = table.site_id.iloc[0]
+    master = _master(ws, sid)
+    assert list(master.index) == ["P1", "BAD"] and master.loc["BAD", "protein_state"] == "FAILED"
+    assert list(pd.read_csv(ws.sites / sid / "metadata" / "failures.csv")["pdb_id"]) == ["BAD"]
 
 
 def test_two_ligands_at_one_site_are_two_actives(tmp_path):
-    cfg = QPocketConfig()
-    ws = layout.create(str(tmp_path), "run")
-    small = _lig(tmp_path, "P1", "BTN", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 1, 0, 0)])._replace(smiles="CC")
-    big = _lig(tmp_path, "P1", "BTN", 2, [("C1", "C", 2, 0, 0), ("C2", "C", 3, 0, 0),
-                                          ("C3", "C", 3, 1, 0)])._replace(smiles="CCC")
+    small = _ligand(tmp_path, "P1", resseq=1)
+    big = _lig(tmp_path, "P1", "BTN", 2, [(f"C{i}", "C", 1.0 + i * 0.5, 1.0, 0.0) for i in range(6)])._replace(
+        smiles="CCCCCC")
     rec = _structure(tmp_path, "P1", [small, big])
-    site_row = discover_sites(cfg, ws, [rec]).iloc[0]
-    out = extract_site(cfg, ws, site_row, rec)
-    assert len(out.actives) == 2 and len({a[2] for a in out.actives}) == 2
-    assert out.ligand_file == big.file  # the largest one is the cross-docking pose
-
-
-def test_extract_all_sites_crops_to_contacts_and_collects_per_site(tmp_path):
-    from dataclasses import replace
-
-    base = QPocketConfig()
-    cfg = replace(base, reference=replace(base.reference, pocket_definition="Interactions", interaction_padding=2.5),
-                  compute=replace(base.compute, workers=1))
-    cfg, ws, sites_row, holo = _site_run(tmp_path, cfg)
-    apo = _structure(tmp_path, "APO1", state="UNBOUND_STATE")
-    failed = _structure(tmp_path, "F1", state="FAILED")
-    extract_all_sites(cfg, ws, read_sites(ws), [holo, apo, failed])
-    site = ws.sites / "site_01"
-    assert pd.read_csv(site / "contact_atoms.csv")[["x", "y", "z"]].values.tolist() == [[6.0, 0.0, 0.0]]
-    # only points within 2.5 Å of the TYR atom at (6, 0, 0) survive
-    assert pd.read_csv(site / "pockets" / "APO1" / "binding_site.csv")["x"].tolist() == [5.0, 6.0]
-    master = pd.read_csv(site / "metadata" / "master.csv")
-    assert list(master["pdb_id"]) == ["P1", "APO1", "F1"]
-    assert list(master["protein_state"]) == ["BOUND_STATE", "UNBOUND_STATE", "FAILED"]
-    assert (site / "screening" / "actives.smi").read_text() == (
-        f"SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCC\tP1\tLIG\t{holo.ligands[0].file}\n")
-
-
-def _interactions_cfg():
-    from dataclasses import replace
-
-    base = QPocketConfig()
-    return replace(base, reference=replace(base.reference, pocket_definition="Interactions", interaction_padding=2.5),
-                   compute=replace(base.compute, workers=1))
-
-
-def test_a_site_without_contacts_is_not_cropped(tmp_path):
-    cfg = _interactions_cfg()
-    ws = layout.create(str(tmp_path), "run")
-    lig = _lig(tmp_path, "P1", "LIG", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 3, 0, 0)])
-    holo = _structure(tmp_path, "P1", [lig], contacts=())
-    discover_sites(cfg, ws, [holo])
-    apo = _structure(tmp_path, "APO1", state="UNBOUND_STATE")
-    extract_all_sites(cfg, ws, read_sites(ws), [holo, apo])
-    master = pd.read_csv(ws.sites / "site_01" / "metadata" / "master.csv")
-    assert list(master["protein_state"]) == ["BOUND_STATE", "UNBOUND_STATE"]
-    assert len(pd.read_csv(ws.sites / "site_01" / "pockets" / "APO1" / "binding_site.csv")) == len(INSIDE)
-
-
-def test_a_pair_that_raises_is_still_listed_at_the_site(tmp_path):
-    cfg, ws, _, holo = _site_run(tmp_path, _interactions_cfg())
-    broken = _structure(tmp_path, "BAD", state="UNBOUND_STATE")
-    Path(broken.cavities_file).write_text("not,a,cloud\n1,2,3\n")
-    extract_all_sites(cfg, ws, read_sites(ws), [holo, broken])
-    site = ws.sites / "site_01" / "metadata"
-    master = pd.read_csv(site / "master.csv").set_index("pdb_id")
-    assert list(master.index) == ["P1", "BAD"] and master.loc["BAD", "protein_state"] == "FAILED"
-    assert master.loc["BAD", "rmsd_to_ref"] == 0.5 and master.loc["BAD", "aligned_file"] == broken.aligned_file
-    assert list(pd.read_csv(site / "failures.csv")["pdb_id"]) == ["BAD"]
-    from qpocket.io import hdf5
-
-    assert list(hdf5.read_interactions(site / "observed_interactions.h5")["BAD"]) == ["no_ligand_found"]
+    ws, table = _run(tmp_path, [rec])
+    sid = table.site_id.iloc[0]
+    assert len((ws.sites / sid / "screening" / "actives.smi").read_text().splitlines()) == 3
+    assert _master(ws, sid).loc["P1", "ligand_file"] == big.file

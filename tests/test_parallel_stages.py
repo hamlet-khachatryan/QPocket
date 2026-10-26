@@ -113,7 +113,7 @@ def test_the_sites_task_writes_what_the_serial_run_writes(tmp_path, monkeypatch)
     root = run.run(cfg)
 
     outputs = ("metadata/master.csv", "metadata/failures.csv", "sites/sites.csv",
-               "sites/site_01/metadata/master.csv", "sites/site_01/pockets/P2/binding_site.csv")
+               "sites/S1-Y1/metadata/master.csv", "sites/S1-Y1/pockets/P2/binding_site.csv")
     serial = {rel: (root / rel).read_text() for rel in outputs}
 
     ws = layout.workspace(root)

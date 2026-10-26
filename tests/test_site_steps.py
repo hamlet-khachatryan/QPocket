@@ -11,9 +11,11 @@ from qpocket.config import QPocketConfig, evolve, load_run_config
 from qpocket.io import layout
 from qpocket.pipelines import run, structure
 
+NEAR, FAR = "S1-Y1", "S2-Y1"
+
 
 def _finished_run(tmp_path, monkeypatch):
-    """Three structures; site_01 holds two ligands 3.5 Å apart, site_02 one ligand far away."""
+    """Three structures; the near site (S1-Y1) holds two ligands, the far site (S2-Y1) one."""
     from dataclasses import replace
 
     from qpocket.core.types import RawStructure, Sources
@@ -21,9 +23,9 @@ def _finished_run(tmp_path, monkeypatch):
 
     inputs = tmp_path / "inputs"
     inputs.mkdir()
-    near = _lig(inputs, "P1", "AAA", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 3, 0, 0)])
-    close = _lig(inputs, "P1", "BBB", 2, [("C1", "C", 6.5, 0, 0), ("C2", "C", 7, 0, 0)])
-    far = _lig(inputs, "P2", "CCC", 3, [("C1", "C", 50, 0, 0), ("C2", "C", 51, 0, 0)])
+    near = _lig(inputs, "P1", "AAA", 1, [("C1", "C", 0, 2, 0), ("C2", "C", 3, 2, 0)])
+    close = _lig(inputs, "P1", "BBB", 2, [("C1", "C", 6.5, 2, 0), ("C2", "C", 7, 2, 0)])
+    far = _lig(inputs, "P2", "CCC", 3, [("C1", "C", 50, 2, 0), ("C2", "C", 51, 2, 0)])
     rng = np.random.default_rng(0)
 
     def points():  # a jittered line through both sites, different per structure
@@ -66,87 +68,87 @@ def fake_features(monkeypatch):
 
 def test_shape_then_featurise_then_two_stage(tmp_path, monkeypatch, fake_features):
     root = _finished_run(tmp_path, monkeypatch)
-    status = steps.site_status(root, "site_01")
+    status = steps.site_status(root, NEAR)
     assert status == {"clouds": True, "geodesics": True, "shape_clustered": False, "featurised": False,
                       "two_stage": False, "crossdock": False, "n_featurised": 0, "n_clouds": 3}
 
-    steps.shape_cluster_site(root, "site_01")
-    status = steps.site_status(root, "site_01")
+    steps.shape_cluster_site(root, NEAR)
+    status = steps.site_status(root, NEAR)
     assert status["shape_clustered"] and not status["featurised"] and not status["two_stage"]
 
-    assert sorted(steps.featurize_site(root, "site_01")) == ["APO1", "P1", "P2"]
-    assert steps.site_status(root, "site_01")["featurised"]
-    assert not steps.site_status(root, "site_01")["two_stage"]
+    assert sorted(steps.featurize_site(root, NEAR)) == ["APO1", "P1", "P2"]
+    assert steps.site_status(root, NEAR)["featurised"]
+    assert not steps.site_status(root, NEAR)["two_stage"]
 
-    steps.two_stage_site(root, "site_01")
-    status = steps.site_status(root, "site_01")
+    steps.two_stage_site(root, NEAR)
+    status = steps.site_status(root, NEAR)
     assert status["two_stage"] and status["shape_clustered"] and not status["crossdock"]
-    assert list((root / "sites" / "site_01" / "metadata" / "clustering_history").iterdir())
+    assert list((root / "sites" / NEAR / "metadata" / "clustering_history").iterdir())
 
 
 def test_one_failed_featurisation_still_allows_two_stage(tmp_path, monkeypatch, fake_features):
     root = _finished_run(tmp_path, monkeypatch)
-    steps.featurize_site(root, "site_01")
-    (root / "sites" / "site_01" / "pockets" / "P2" / "featurized.csv").unlink()
-    status = steps.site_status(root, "site_01")
+    steps.featurize_site(root, NEAR)
+    (root / "sites" / NEAR / "pockets" / "P2" / "featurized.csv").unlink()
+    status = steps.site_status(root, NEAR)
     assert not status["featurised"] and (status["n_featurised"], status["n_clouds"]) == (2, 3)
-    steps.two_stage_site(root, "site_01")
-    assert steps.site_status(root, "site_01")["two_stage"]
+    steps.two_stage_site(root, NEAR)
+    assert steps.site_status(root, NEAR)["two_stage"]
 
 
 def test_shape_clustering_one_pocket_is_a_site_error(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     for pid in ("P1", "APO1"):
-        (root / "sites" / "site_01" / "pockets" / pid / "binding_site.csv").unlink()
+        (root / "sites" / NEAR / "pockets" / pid / "binding_site.csv").unlink()
     with pytest.raises(steps.SiteError, match="fewer than 2 pockets"):
-        steps.shape_cluster_site(root, "site_01")
+        steps.shape_cluster_site(root, NEAR)
 
 
 def test_two_stage_that_writes_no_matrix_raises(tmp_path, monkeypatch, fake_features):
     root = _finished_run(tmp_path, monkeypatch)
-    steps.featurize_site(root, "site_01")
-    steps.two_stage_site(root, "site_01")  # an earlier matrix must not pass for this run's
+    steps.featurize_site(root, NEAR)
+    steps.two_stage_site(root, NEAR)  # an earlier matrix must not pass for this run's
     monkeypatch.setattr(steps, "compute_spectral_distance_matrix", lambda cfg, ws: None)
     with pytest.raises(steps.SiteError, match="wrote no"):
-        steps.two_stage_site(root, "site_01")
+        steps.two_stage_site(root, NEAR)
 
 
 def test_featurise_records_the_feature_set(tmp_path, monkeypatch, fake_features):
     import json
 
     root = _finished_run(tmp_path, monkeypatch)
-    record = root / "sites" / "site_01" / "metadata" / "features.json"
+    record = root / "sites" / NEAR / "metadata" / "features.json"
     assert not record.exists()
-    steps.featurize_site(root, "site_01")
+    steps.featurize_site(root, NEAR)
     assert json.loads(record.read_text())["enabled"] == list(load_run_config(root).features.enabled)
 
 
 def test_two_stage_before_featurise_raises(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     with pytest.raises(steps.SiteError, match="Featurise"):
-        steps.two_stage_site(root, "site_01")
+        steps.two_stage_site(root, NEAR)
 
 
 def test_featurise_skips_done(tmp_path, monkeypatch, fake_features):
     root = _finished_run(tmp_path, monkeypatch)
-    steps.featurize_site(root, "site_01")
-    assert steps.featurize_site(root, "site_01") == []
-    cloud = root / "sites" / "site_01" / "pockets" / "P2" / "binding_site.csv"
+    steps.featurize_site(root, NEAR)
+    assert steps.featurize_site(root, NEAR) == []
+    cloud = root / "sites" / NEAR / "pockets" / "P2" / "binding_site.csv"
     later = cloud.with_name("featurized.csv").stat().st_mtime + 10
     os.utime(cloud, (later, later))  # a touched but unchanged cloud is still featurised
-    assert steps.featurize_site(root, "site_01") == []
+    assert steps.featurize_site(root, NEAR) == []
     cloud.write_text(cloud.read_text() + "0.0,0.0,0.0\n")
-    assert steps.featurize_site(root, "site_01") == ["P2"]
+    assert steps.featurize_site(root, NEAR) == ["P2"]
 
 
 def test_rerun_leaves_features_current(tmp_path, monkeypatch, fake_features):
     root = _finished_run(tmp_path, monkeypatch)
-    steps.featurize_site(root, "site_01")
-    cloud = root / "sites" / "site_01" / "pockets" / "P2" / "binding_site.csv"
+    steps.featurize_site(root, NEAR)
+    cloud = root / "sites" / NEAR / "pockets" / "P2" / "binding_site.csv"
     before = cloud.stat().st_mtime_ns
     run.run(load_run_config(root))
     assert cloud.stat().st_mtime_ns == before
-    assert steps.featurize_site(root, "site_01") == []
+    assert steps.featurize_site(root, NEAR) == []
 
 
 def test_regroup_keeps_unchanged_site(tmp_path, monkeypatch):
@@ -224,5 +226,5 @@ def test_a_run_saved_with_the_silhouette_defaults_still_clusters(tmp_path, monke
     saved.distance.clustering.chem = {"method": "kmedoids", "k": None, "k_range": [2, 6],
                                       "criterion": "count", "threshold": None}
     path.write_text(OmegaConf.to_yaml(saved), encoding="utf-8")
-    steps.shape_cluster_site(root, "site_01")
-    assert steps.site_status(root, "site_01")["shape_clustered"]
+    steps.shape_cluster_site(root, NEAR)
+    assert steps.site_status(root, NEAR)["shape_clustered"]

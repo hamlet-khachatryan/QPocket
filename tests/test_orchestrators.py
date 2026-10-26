@@ -64,9 +64,11 @@ def test_run_writes_sites_and_no_matrices(tmp_path, monkeypatch):
 
     from qpocket.config import load_run_config
 
+    from tests.site_helpers import site_ids
+
     root = run.run(_fake_run(tmp_path, monkeypatch))
     assert (root / "sites" / "sites.csv").exists()
-    master = pd.read_csv(root / "sites" / "site_01" / "metadata" / "master.csv")
+    master = pd.read_csv(root / "sites" / site_ids(root)[0] / "metadata" / "master.csv")
     assert list(master["pdb_id"]) == ["P1", "APO1"]
     assert list(pd.read_csv(root / "metadata" / "master.csv")["pdb_id"]) == ["P1", "APO1"]
     assert (root / "metadata" / "failures.csv").exists()
@@ -74,15 +76,17 @@ def test_run_writes_sites_and_no_matrices(tmp_path, monkeypatch):
     assert not (root / "screening" / "actives.smi").exists()
     assert not list(root.rglob("*distance_matrix.csv"))
     assert not list(root.rglob("featurized.csv"))
-    assert load_run_config(root).sites.link_cutoff == 4.0
+    assert load_run_config(root).sites.cavity_overlap == 0.5
 
 
 def test_rerun_keeps_site_results(tmp_path, monkeypatch):
     cfg = _fake_run(tmp_path, monkeypatch)
+    from tests.site_helpers import site_ids
+
     root = run.run(cfg)
-    marker = root / "sites" / "site_01" / "metadata" / "keep.txt"
+    marker = root / "sites" / site_ids(root)[0] / "metadata" / "keep.txt"
     marker.write_text("x")
-    cloud = root / "sites" / "site_01" / "pockets" / "APO1" / "binding_site.csv"
+    cloud = root / "sites" / site_ids(root)[0] / "pockets" / "APO1" / "binding_site.csv"
     text, mtime = cloud.read_text(), cloud.stat().st_mtime_ns
     run.run(cfg)
     assert marker.read_text() == "x"
@@ -90,18 +94,18 @@ def test_rerun_keeps_site_results(tmp_path, monkeypatch):
 
 
 def test_rerun_reconciles_renumbered_sites(tmp_path, monkeypatch):
-    """A third structure joins the far site, which becomes site_01: only the untouched site keeps its results."""
+    """A third structure joins the far site, which takes rank 1: only the untouched site keeps its results."""
     from dataclasses import replace
 
     from qpocket.core.types import RawStructure, Sources
-    from tests.site_helpers import INSIDE, _lig, _structure
+    from tests.site_helpers import INSIDE, _lig, _structure, site_ids
 
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     points = INSIDE + [(float(x), 2.0, 0.0) for x in range(47, 55)]
     near = _lig(inputs, "P1", "AAA", 1, [("C1", "C", 0, 0, 0), ("C2", "C", 3, 0, 0)])
     records = {"P1": _structure(inputs, "P1", [near], points=points),
-               "P2": _structure(inputs, "P2", [_lig(inputs, "P2", "CCC", 2, [("C1", "C", 50, 0, 0)])],
+               "P2": _structure(inputs, "P2", [_lig(inputs, "P2", "CCC", 2, [("C1", "C", 50, 2, 0)])],
                                 points=points)}
     current = {}
     monkeypatch.setattr(run, "ingest", lambda cfg, ws: Sources(current["raws"][0], current["raws"]))
@@ -114,18 +118,22 @@ def test_rerun_reconciles_renumbered_sites(tmp_path, monkeypatch):
     current["raws"] = tuple(RawStructure(pid, inputs / f"{pid}.pdb") for pid in records)
     root = run.run(cfg)
     sites = root / "sites"
-    assert "AAA" in (sites / "site_01" / "ligands.pdb").read_text()
-    (sites / "site_01" / "metadata" / "keep.txt").write_text("near")
-    (sites / "site_02" / "metadata" / "keep.txt").write_text("far")
+    assert site_ids(root) == ["S1-Y1", "S2-Y1"]           # tied on structures: the near site first
+    assert "AAA" in (sites / "S1-Y1" / "ligands.pdb").read_text()
+    (sites / "S1-Y1" / "metadata" / "keep.txt").write_text("near")
+    (sites / "S2-Y1" / "metadata" / "keep.txt").write_text("far")
 
-    records["P3"] = _structure(inputs, "P3", [_lig(inputs, "P3", "DDD", 3, [("C1", "C", 51, 0, 0)])], points=points)
+    far_only = [(float(x), 2.0, 0.0) for x in range(47, 55)]
+    records["P3"] = _structure(inputs, "P3", [_lig(inputs, "P3", "DDD", 3, [("C1", "C", 51, 2, 0)])],
+                               points=far_only)
     current["raws"] = tuple(RawStructure(pid, inputs / f"{pid}.pdb") for pid in records)
     run.run(cfg)
 
-    assert "AAA" in (sites / "site_02" / "ligands.pdb").read_text()
-    assert (sites / "site_02" / "metadata" / "keep.txt").read_text() == "near"
-    assert not (sites / "site_01" / "metadata" / "keep.txt").exists()
-    assert (sites / "site_02" / "pockets" / "P3" / "binding_site.csv").exists()
+    assert site_ids(root) == ["S1-Y1", "S2-Y1"]           # the far site now has three structures
+    assert "AAA" in (sites / "S2-Y1" / "ligands.pdb").read_text()
+    assert (sites / "S2-Y1" / "metadata" / "keep.txt").read_text() == "near"
+    assert not (sites / "S1-Y1" / "metadata" / "keep.txt").exists()
+    assert (sites / "S1-Y1" / "pockets" / "P3" / "binding_site.csv").exists()
     assert not list(sites.glob(".regroup_*"))
 
 
@@ -133,7 +141,8 @@ def test_run_with_no_ligands(tmp_path, monkeypatch):
     import pandas as pd
 
     root = run.run(_fake_run(tmp_path, monkeypatch, holo=False))
-    assert pd.read_csv(root / "sites" / "sites.csv").empty
+    sites = pd.read_csv(root / "sites" / "sites.csv")
+    assert len(sites) == 1 and sites["n_holo"].tolist() == [0]   # the cavities still make a site
     assert list(pd.read_csv(root / "metadata" / "master.csv")["pdb_id"]) == ["P1", "APO1"]
 
 
@@ -147,15 +156,17 @@ def test_site_extraction_runs_on_worker_processes(tmp_path, monkeypatch):
     records = [run.process(None, None, None, raw) for raw in run.ingest(cfg, None).structures]
     ws = layout.create(cfg.paths.workdir, "run")
     extract_all_sites(cfg, ws, discover_sites(cfg, ws, records), records)
-    master = pd.read_csv(ws.sites / "site_01" / "metadata" / "master.csv")
+    from tests.site_helpers import site_ids
+
+    master = pd.read_csv(ws.sites / site_ids(ws.root)[0] / "metadata" / "master.csv")
     assert list(master["protein_state"]) == ["BOUND_STATE", "UNBOUND_STATE"]
 
 
 def test_saved_config_loads_back_through_validation(tmp_path):
     from qpocket.config import load_qpocket_config, load_run_config, save_run_config
 
-    cfg = load_qpocket_config(overrides=["reference.pdb_id=1ABC", "sites.link_cutoff=6.5"])
+    cfg = load_qpocket_config(overrides=["reference.pdb_id=1ABC", "sites.cavity_overlap=0.4"])
     ws = layout.create(str(tmp_path), "run")
     save_run_config(cfg, ws)
     loaded = load_run_config(ws.root)
-    assert loaded.sites.link_cutoff == 6.5 and loaded.reference.pdb_id == "1ABC"
+    assert loaded.sites.cavity_overlap == 0.4 and loaded.reference.pdb_id == "1ABC"
