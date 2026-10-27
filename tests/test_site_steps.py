@@ -263,3 +263,74 @@ def test_regroup_that_flips_a_ligand_refreshes_the_site_tables(tmp_path, monkeyp
     assert master.loc["P2", "protein_state"] == "UNBOUND_STATE"
     assert "CCC" not in (site / "screening" / "actives.smi").read_text()
     assert (site / "metadata" / "marker.txt").read_text() == "kept"   # same cavities: the folder is kept
+
+
+# --- manual site edits ----------------------------------------------------------
+
+def test_merge_then_undo_restores_the_automatic_sites(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    before = (root / "sites" / "cavities.csv").read_text()
+    merged = steps.add_override(root, steps.merge_override(root, [NEAR, FAR]))
+    assert len(merged) == 1
+    assert steps.list_overrides(root)[0]["status"] == "applied"
+    table = steps.undo_override(root, 0)
+    assert list(table["site_id"]) == [NEAR, FAR]
+    assert (root / "sites" / "cavities.csv").read_text() == before
+    assert steps.list_overrides(root) == []
+
+
+def test_drop_removes_the_site_folder(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    table = steps.add_override(root, steps.drop_override(root, FAR))
+    assert list(table["site_id"]) == [NEAR] and not (root / "sites" / FAR).exists()
+    entry = steps.list_overrides(root)[0]
+    assert entry["op"] == "drop" and entry["label"] == FAR and entry["status"] == "applied"
+
+
+def test_split_of_a_single_core_site_is_refused(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    with pytest.raises(steps.SiteError, match="one strict cavity group"):
+        steps.split_override(root, NEAR)   # its three cavities form one strict group; FAR's form two
+
+
+def test_split_makes_one_site_per_strict_group(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    table = steps.add_override(root, steps.split_override(root, FAR))
+    entry = steps.list_overrides(root)[0]
+    assert entry["status"] == "applied" and entry["parts"] == 2
+    assert NEAR in set(table["site_id"])  # the other site is untouched
+    assert set(entry["site_ids"]) <= set(table["site_id"])
+
+
+def test_merge_needs_two_known_sites(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    with pytest.raises(steps.SiteError):
+        steps.merge_override(root, [NEAR])
+    with pytest.raises(steps.SiteError, match="unknown site"):
+        steps.merge_override(root, [NEAR, "S9-X1"])
+    with pytest.raises(steps.SiteError):
+        steps.undo_override(root, 0)
+
+
+def test_preview_lists_only_what_exists(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    steps.shape_cluster_site(root, FAR)
+    before = (root / "sites" / "sites.csv").read_text()
+    losses = steps.preview_changes(root, overrides=[steps.merge_override(root, [NEAR, FAR])])
+    assert losses == {NEAR: [], FAR: ["clustering"]}
+    assert steps.preview_changes(root, ligand_fraction=0.4) == {}  # membership unchanged
+    assert (root / "sites" / "sites.csv").read_text() == before   # a preview writes nothing
+
+
+def test_override_survives_a_regroup(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    steps.add_override(root, steps.drop_override(root, FAR))
+    table = steps.regroup_sites(root, ligand_fraction=0.4)
+    assert list(table["site_id"]) == [NEAR]
+
+
+def test_site_results_counts_featurised_pockets(tmp_path, monkeypatch, fake_features):
+    root = _finished_run(tmp_path, monkeypatch)
+    assert steps.site_results(root, NEAR) == []
+    steps.featurize_site(root, NEAR, workers=1)
+    assert steps.site_results(root, NEAR) == [f"featurised pockets ({len(list((root / 'sites' / NEAR / 'pockets').glob('*/featurized.csv')))})"]

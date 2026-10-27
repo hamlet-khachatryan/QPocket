@@ -17,7 +17,7 @@ from scipy.spatial.distance import cdist
 from qpocket.config import QPocketConfig, _plain
 from qpocket.constants import THREE_TO_ONE_MAPPING
 from qpocket.core.result import Failure, guarded
-from qpocket.core.sites import (apply_overrides, box_iou, cavity_cores, element_symbol, grid_spacing, ligand_sites, median_box,
+from qpocket.core.sites import (apply_overrides, cavity_cores, element_symbol, grid_spacing, ligand_sites, median_box,
                                 merge_sites, site_members, site_name, voxel_box)
 from qpocket.core.types import Ligand, Structure
 from qpocket.io import layout
@@ -113,6 +113,111 @@ def _potential(cleaned_file: Optional[str], cloud: np.ndarray) -> Tuple[str, ...
                             + "_" + near["chain_id"])))
 
 
+def _inputs(p, records: Sequence[Structure]) -> Tuple[list, list, list, dict]:
+    """Every cavity, the candidates big enough to form sites, the ligands, and the stamp of these inputs."""
+    all_cavities, candidates = [], []          # candidates: (pdb_id, cavity, points)
+    for rec in records:
+        for cavity, group in _cavities(rec).groupby("cavity", sort=True):
+            pts = group[["x", "y", "z"]].to_numpy(dtype=float)
+            all_cavities.append((rec.pdb_id, int(cavity), pts))
+            if len(pts) >= p.min_cavity_points:
+                candidates.append((rec.pdb_id, int(cavity), pts))
+    ligands = [lig for rec in records for lig in rec.ligands]
+    overrides = _plain(list(p.overrides or []))
+    stamp = {"sites": {k: getattr(p, k) for k in ("min_cavity_points", "cavity_overlap", "min_structure_fraction",
+                                                   "ligand_fraction", "box_padding")},
+             "inputs": hashlib.sha256(json.dumps(
+                 [[c[0], c[1], len(c[2]), float(c[2].sum())] for c in all_cavities]
+                 + [lig.key for lig in ligands]).encode()).hexdigest(),
+             "overrides": overrides}
+    return all_cavities, candidates, ligands, stamp
+
+
+class Grouping(NamedTuple):
+    """The sites one grouping makes, before anything is written (see :func:`group_sites`)."""
+
+    half: float
+    boxes: np.ndarray
+    cores: List[List[int]]
+    groups: List[List[int]]
+    site_boxes: np.ndarray
+    members: List[List[int]]
+    dropped: List[List[int]]
+    applied: List[Dict[str, Any]]
+    lig_sites: List[List[int]]
+    kept: List[int]
+    centres: Dict[int, np.ndarray]
+    ref_id: Optional[str]
+    names: Dict[int, str]
+    member_ids: Dict[int, Dict[str, List[int]]]
+
+    @property
+    def site_keys(self) -> Dict[str, FrozenSet[str]]:
+        """Per site id, its member cavities as ``pdb_id:cavity``."""
+        return {self.names[k]: frozenset(f"{pdb}:{c}" for pdb, cavs in self.member_ids[k].items() for c in cavs)
+                for k in self.kept}
+
+
+def _group(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structure], candidates: list,
+           ligands: list) -> Grouping:
+    """Group candidate cavities into sites, apply the overrides, assign ligands and name the kept sites."""
+    p = cfg.sites
+    by_id = {r.pdb_id: r for r in records}
+    overrides = _plain(list(p.overrides or []))
+    half = grid_spacing([c[2] for c in candidates]) / 2
+    boxes = np.array([voxel_box(c[2], half) for c in candidates]).reshape(-1, 6)
+    cores = cavity_cores(boxes, p.cavity_overlap)
+    groups = merge_sites(cores, boxes, p.cavity_overlap)
+    site_boxes = np.array([median_box(boxes[g]) for g in groups]).reshape(-1, 6)
+    members = site_members(site_boxes, boxes, p.cavity_overlap, groups=groups)
+    dropped, applied = [], []
+    if overrides:
+        keys = [(c[0], c[1]) for c in candidates]
+        groups, dropped, applied = apply_overrides(groups, cores, members, keys, overrides)
+        site_boxes = np.array([median_box(boxes[g]) for g in groups]).reshape(-1, 6)
+        members = site_members(site_boxes, boxes, p.cavity_overlap, groups=groups)
+    # Dropped sites' boxes still catch their ligands, so those are reported as dropped, not as in no site.
+    dropped_boxes = np.array([median_box(boxes[g]) for g in dropped]).reshape(-1, 6)
+    lig_sites = ligand_sites([_heavy_coords(lig.file) for lig in ligands], np.vstack([site_boxes, dropped_boxes]),
+                             p.ligand_fraction, p.box_padding)
+
+    n_struct = [len({candidates[i][0] for i in m}) for m in members]
+    has_ligand = [any(k in s for s in lig_sites) for k in range(len(groups))]
+    kept = [k for k in range(len(groups))
+            if n_struct[k] >= p.min_structure_fraction * len(records) or has_ligand[k]]
+    centres = {k: (site_boxes[k, :3] + site_boxes[k, 3:]) / 2 for k in kept}
+    kept.sort(key=lambda k: (-n_struct[k], *centres[k]))
+    ref_id = _reference_id(cfg, ws, records)
+
+    names: Dict[int, str] = {}
+    member_ids: Dict[int, Dict[str, List[int]]] = {}
+    for rank, k in enumerate(kept, start=1):
+        per: Dict[str, List[int]] = {}
+        for i in members[k]:
+            per.setdefault(candidates[i][0], []).append(candidates[i][1])
+        member_ids[k] = per
+        frame = ref_id if ref_id in per else next(iter(per), ref_id)
+        names[k] = site_name(rank, _nearest_residue(by_id[frame].cleaned_file if frame in by_id else None,
+                                                    centres[k]))
+    return Grouping(half, boxes, cores, groups, site_boxes, members, dropped, applied, lig_sites, kept, centres,
+                    ref_id, names, member_ids)
+
+
+def group_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structure]) -> Grouping:
+    """The sites these settings would make, written nowhere.
+
+    Args:
+        cfg: Run configuration (the ``sites`` block).
+        ws: The run (read for the reference structure only).
+        records: Every structure of the run.
+
+    Returns:
+        The grouping; ``site_keys`` gives each site's member cavities.
+    """
+    _, candidates, ligands, _ = _inputs(cfg.sites, records)
+    return _group(cfg, ws, records, candidates, ligands)
+
+
 def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structure]) -> pd.DataFrame:
     """Group the run's CavFind cavities into sites, assign ligands, report CavFind misses, write the tables.
 
@@ -127,21 +232,7 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
     p = cfg.sites
     by_id = {r.pdb_id: r for r in records}
     with start_action(action_type="discover_sites", n_structures=len(records)) as action:
-        all_cavities, candidates = [], []          # candidates: (pdb_id, cavity, points)
-        for rec in records:
-            for cavity, group in _cavities(rec).groupby("cavity", sort=True):
-                pts = group[["x", "y", "z"]].to_numpy(dtype=float)
-                all_cavities.append((rec.pdb_id, int(cavity), pts))
-                if len(pts) >= p.min_cavity_points:
-                    candidates.append((rec.pdb_id, int(cavity), pts))
-        ligands = [lig for rec in records for lig in rec.ligands]
-        overrides = _plain(list(p.overrides or []))
-        stamp = {"sites": {k: getattr(p, k) for k in ("min_cavity_points", "cavity_overlap", "min_structure_fraction",
-                                                       "ligand_fraction", "box_padding")},
-                 "inputs": hashlib.sha256(json.dumps(
-                     [[c[0], c[1], len(c[2]), float(c[2].sum())] for c in all_cavities]
-                     + [lig.key for lig in ligands]).encode()).hexdigest(),
-                 "overrides": overrides}
+        all_cavities, candidates, ligands, stamp = _inputs(p, records)
         grouping, sites_csv = ws.sites / "grouping.json", ws.sites / "sites.csv"
         saved = json.loads(grouping.read_text(encoding="utf-8")) if grouping.is_file() else None
         # Only the stamp's keys count; a grouping.json from before overrides has none, which means [].
@@ -150,41 +241,8 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
             log_message(message_type="sites_skipped")
             return read_sites(ws)
 
-        half = grid_spacing([c[2] for c in candidates]) / 2
-        boxes = np.array([voxel_box(c[2], half) for c in candidates]).reshape(-1, 6)
-        cores = cavity_cores(boxes, p.cavity_overlap)
-        groups = merge_sites(cores, boxes, p.cavity_overlap)
-        site_boxes = np.array([median_box(boxes[g]) for g in groups]).reshape(-1, 6)
-        members = site_members(site_boxes, boxes, p.cavity_overlap, groups=groups)
-        dropped, applied = [], []
-        if overrides:
-            keys = [(c[0], c[1]) for c in candidates]
-            groups, dropped, applied = apply_overrides(groups, cores, members, keys, overrides)
-            site_boxes = np.array([median_box(boxes[g]) for g in groups]).reshape(-1, 6)
-            members = site_members(site_boxes, boxes, p.cavity_overlap, groups=groups)
-        # Dropped sites' boxes still catch their ligands, so those are reported as dropped, not as in no site.
-        dropped_boxes = np.array([median_box(boxes[g]) for g in dropped]).reshape(-1, 6)
-        lig_sites = ligand_sites([_heavy_coords(lig.file) for lig in ligands], np.vstack([site_boxes, dropped_boxes]),
-                                 p.ligand_fraction, p.box_padding)
-
-        n_struct = [len({candidates[i][0] for i in m}) for m in members]
-        has_ligand = [any(k in s for s in lig_sites) for k in range(len(groups))]
-        kept = [k for k in range(len(groups))
-                if n_struct[k] >= p.min_structure_fraction * len(records) or has_ligand[k]]
-        centres = {k: (site_boxes[k, :3] + site_boxes[k, 3:]) / 2 for k in kept}
-        kept.sort(key=lambda k: (-n_struct[k], *centres[k]))
-        ref_id = _reference_id(cfg, ws, records)
-
-        names: Dict[int, str] = {}
-        member_ids: Dict[int, Dict[str, List[int]]] = {}
-        for rank, k in enumerate(kept, start=1):
-            per: Dict[str, List[int]] = {}
-            for i in members[k]:
-                per.setdefault(candidates[i][0], []).append(candidates[i][1])
-            member_ids[k] = per
-            frame = ref_id if ref_id in per else next(iter(per), ref_id)
-            names[k] = site_name(rank, _nearest_residue(by_id[frame].cleaned_file if frame in by_id else None,
-                                                        centres[k]))
+        (half, boxes, cores, groups, site_boxes, members, dropped, applied, lig_sites, kept, centres,
+         ref_id, names, member_ids) = _group(cfg, ws, records, candidates, ligands)
 
         rows, miss_rows, lig_rows = [], [], []
         holo_at: Dict[int, Set[str]] = {k: set() for k in kept}

@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 
-from qpocket.config import QPocketConfig, evolve, load_run_config, plugin_params, save_run_config, validate_config
+from qpocket.config import QPocketConfig, _plain, evolve, load_run_config, plugin_params, save_run_config, validate_config
 from qpocket.core.ports import CHARGES
 from qpocket.core.result import Failure, guarded
 from qpocket.core.types import Structure
@@ -19,7 +19,8 @@ from qpocket.pipelines import parallel, structure
 from qpocket.pipelines.collect import write_feature_record
 from qpocket.pipelines.clustering import archive_clustering, cluster_shape_only, write_clustering
 from qpocket.pipelines.distance import compute_shape_matrix, compute_spectral_distance_matrix, pocket_manifest
-from qpocket.pipelines.sites import extract_all_sites, read_sites, sync_sites
+from qpocket.pipelines.sites import (_membership, _site_keys, extract_all_sites, group_sites, read_sites,
+                                     sync_sites)
 from qpocket.pipelines.tasks import TaskError, resolve_pdb_id
 
 #: Beside featurized.csv: the sha256 of the binding_site.csv it was built from.
@@ -256,23 +257,186 @@ def regroup_sites(run_dir: Path, **overrides: float) -> pd.DataFrame:
     if unknown:
         raise ValueError(f"unknown site parameter(s) {', '.join(unknown)}; known: {', '.join(TUNABLE)}")
     site_table(run_dir)  # refuses a directory that is not a run
-    ws = layout.workspace(run_dir)
-    cfg = load_run_config(run_dir)
-    for key, value in overrides.items():
+    return _resite(run_dir, _with_params(load_run_config(run_dir), overrides))
+
+
+def _with_params(cfg: QPocketConfig, params: Dict[str, float]) -> QPocketConfig:
+    for key, value in params.items():
         cfg = evolve(cfg, f"sites.{key}", int(value) if key == "min_cavity_points" else float(value))
-    validate_config(cfg)
+    return cfg
+
+
+def _records(ws: Workspace) -> List[Structure]:
     records = []
     for pid in pd.read_csv(ws.metadata / "master.csv", dtype=str)["pdb_id"]:
         payload = layout.read_part(ws, pid)
         if payload is not None and "failure" not in payload:
             records.append(Structure.from_json(payload))
+    return records
 
+
+def _resite(run_dir: Path, cfg: QPocketConfig) -> pd.DataFrame:
+    """Rebuild the run's sites under ``cfg``, keep the unchanged sites' folders, and save ``cfg``."""
+    validate_config(cfg)
+    ws = layout.workspace(run_dir)
+    records = _records(ws)
     table, _ = sync_sites(cfg, ws, records)
     # Every site, kept ones too: a kept site's cavities are the same, but its ligands and so its
     # holo/apo states may not be. Unchanged clouds keep their mtime and cached geodesics.
     extract_all_sites(cfg, ws, table, records)
     save_run_config(cfg, ws)
     return table
+
+
+#: What a site loses when its members change: label, then a glob under the site folder.
+RESULTS = (("clustering", "metadata/clustering_metadata.csv"), ("featurised pockets", "pockets/*/featurized.csv"),
+           ("final metadata", "final"), ("docking", "screening/crossdock/docking_jobs.csv"))
+
+
+def site_results(run_dir: Path, site_id: str) -> List[str]:
+    """The results a site holds that a change of its members would delete.
+
+    Args:
+        run_dir: The run directory.
+        site_id: The site.
+
+    Returns:
+        Labels from RESULTS that exist, featurised pockets with their count.
+    """
+    folder = Path(run_dir) / "sites" / site_id
+    found = []
+    for label, pattern in RESULTS:
+        hits = list(folder.glob(pattern))
+        if hits:
+            found.append(f"{label} ({len(hits)})" if "*" in pattern else label)
+    return found
+
+
+def preview_changes(run_dir: Path, overrides: Optional[List[Dict[str, Any]]] = None,
+                    **params: float) -> Dict[str, List[str]]:
+    """Which existing sites a regroup or an override change would alter, and what each would lose.
+
+    Args:
+        run_dir: The run directory.
+        overrides: The full override list to try; the run's own when None.
+        **params: Site parameters to try, as for :func:`regroup_sites`.
+
+    Returns:
+        Old site id to its :func:`site_results`, for every site whose member cavities would change; writes nothing.
+    """
+    site_table(run_dir)
+    ws = layout.workspace(run_dir)
+    cfg = _with_params(load_run_config(run_dir), params)
+    if overrides is not None:
+        cfg = evolve(cfg, "sites.overrides", overrides)
+    new = set(group_sites(cfg, ws, _records(ws)).site_keys.values())
+    return {sid: site_results(run_dir, sid) for sid, keys in _site_keys(ws).items() if keys not in new}
+
+
+def _cavities_of(run_dir: Path, site_id: str) -> List[List[Any]]:
+    _site_ws(run_dir, site_id)  # refuses an unknown site
+    per = _membership(layout.workspace(run_dir)).get(site_id, {})
+    return [[pdb, int(c)] for pdb, cavs in sorted(per.items()) for c in sorted(cavs)]
+
+
+def merge_override(run_dir: Path, site_ids: Sequence[str]) -> Dict[str, Any]:
+    """The override that merges these sites, not yet applied.
+
+    Args:
+        run_dir: The run directory.
+        site_ids: Two or more sites.
+
+    Returns:
+        ``{"op": "merge", "sites": [...], "label": ...}``.
+
+    Raises:
+        SiteError: On fewer than two sites or an unknown one.
+    """
+    if len(set(site_ids)) < 2:
+        raise SiteError("pick at least two sites to merge")
+    return {"op": "merge", "sites": [_cavities_of(run_dir, sid) for sid in site_ids], "label": " + ".join(site_ids)}
+
+
+def drop_override(run_dir: Path, site_id: str) -> Dict[str, Any]:
+    """The override that drops this site, not yet applied; its ligands become misses (``site_dropped``)."""
+    return {"op": "drop", "cavities": _cavities_of(run_dir, site_id), "label": site_id}
+
+
+def split_override(run_dir: Path, site_id: str) -> Dict[str, Any]:
+    """The override that splits this site into its strict cavity groups, not yet applied.
+
+    Args:
+        run_dir: The run directory.
+        site_id: The site.
+
+    Returns:
+        ``{"op": "split", "cavities": [...], "label": ...}``.
+
+    Raises:
+        SiteError: On an unknown site, or one with a single strict cavity group.
+    """
+    cavities = _cavities_of(run_dir, site_id)
+    grouping = Path(run_dir) / "sites" / "grouping.json"
+    cores = json.loads(grouping.read_text(encoding="utf-8")).get("cores", {}) if grouping.is_file() else {}
+    if len(cores.get(site_id, [])) < 2:
+        raise SiteError(f"{site_id} has one strict cavity group; nothing to split")
+    return {"op": "split", "cavities": cavities, "label": site_id}
+
+
+def list_overrides(run_dir: Path) -> List[Dict[str, Any]]:
+    """The run's overrides, each with the ``status`` and ``site_ids`` of its last application.
+
+    Args:
+        run_dir: The run directory.
+
+    Returns:
+        Config entries in order, with ``status`` ("applied", "unmatched", or "pending"), ``site_ids`` and ``parts``.
+    """
+    overrides = _plain(list(load_run_config(run_dir).sites.overrides or []))
+    grouping = Path(run_dir) / "sites" / "grouping.json"
+    saved = json.loads(grouping.read_text(encoding="utf-8")) if grouping.is_file() else {}
+    applied = saved.get("applied", []) if saved.get("overrides") == overrides else []
+    return [{**o, "status": "pending", "site_ids": [], **{k: v for k, v in a.items() if k != "op"}}
+            for o, a in zip(overrides, applied + [{}] * (len(overrides) - len(applied)))]
+
+
+def apply_site_overrides(run_dir: Path, overrides: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Rebuild the sites with exactly these overrides, saved into the run's config.
+
+    Args:
+        run_dir: The run directory.
+        overrides: The full list, in the order they apply.
+
+    Returns:
+        The new site table.
+    """
+    site_table(run_dir)
+    return _resite(run_dir, evolve(load_run_config(run_dir), "sites.overrides", overrides))
+
+
+def add_override(run_dir: Path, override: Dict[str, Any]) -> pd.DataFrame:
+    """Append one override and rebuild the sites; see :func:`apply_site_overrides`."""
+    current = _plain(list(load_run_config(run_dir).sites.overrides or []))
+    return apply_site_overrides(run_dir, current + [override])
+
+
+def undo_override(run_dir: Path, index: int) -> pd.DataFrame:
+    """Remove the override at ``index`` and rebuild the sites.
+
+    Args:
+        run_dir: The run directory.
+        index: Position in :func:`list_overrides`.
+
+    Returns:
+        The new site table.
+
+    Raises:
+        SiteError: If there is no override at ``index``.
+    """
+    current = _plain(list(load_run_config(run_dir).sites.overrides or []))
+    if not 0 <= index < len(current):
+        raise SiteError(f"no override #{index}; the run has {len(current)}")
+    return apply_site_overrides(run_dir, current[:index] + current[index + 1:])
 
 
 def site_status(run_dir: Path, site_id: str) -> Dict[str, Union[bool, int]]:
