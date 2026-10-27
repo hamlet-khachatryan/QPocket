@@ -104,3 +104,82 @@ def heatmap(M: pd.DataFrame, order: Sequence[str], blocks, how: str):
                            showarrow=False, yanchor="bottom", font=dict(size=12, color="#52514e"))
         cum += len(members)
     return fig
+
+
+def cluster_map(M: pd.DataFrame, labels: pd.Series) -> pd.DataFrame:
+    """Median distance between every pair of clusters, as a percentile of the site's pairs.
+
+    Args:
+        M: Symmetrised distance table of the site.
+        labels: Cluster per pocket, indexed by pocket id.
+
+    Returns:
+        k × k table indexed by cluster; the diagonal is the median within-cluster distance.
+    """
+    from qpocket.core.clustering import to_percentile
+
+    full = M.to_numpy(dtype=float)
+    labels = labels.reindex(M.index)
+    clusters = sorted(labels.dropna().unique())
+    out = pd.DataFrame(index=clusters, columns=clusters, dtype=float)
+    for a in clusters:
+        rows = (labels == a).to_numpy()
+        for b in clusters:
+            cols = (labels == b).to_numpy()
+            block = full[np.ix_(rows, cols)]
+            values = block[np.triu_indices(len(block), k=1)] if a == b else block.ravel()
+            median = float(np.median(values)) if len(values) else 0.0
+            out.loc[a, b] = float(to_percentile(full, [median])[0])
+    return out
+
+
+def cluster_map_figure(cmap: pd.DataFrame, colours: Dict, height: int = 380):
+    """The k × k cluster map as a styled heatmap, cluster swatches along both axes.
+
+    Args:
+        cmap: From :func:`cluster_map`.
+        colours: Colour per cluster label in ``cmap.index`` (missing ones are drawn grey).
+        height: Figure height (px).
+
+    Returns:
+        A plotly Figure; hover shows both clusters and the percentile.
+    """
+    import plotly.graph_objects as go
+
+    from qpocket.viz.style import GREY, apply
+
+    names = [f"S{int(c) + 1}" if isinstance(c, (int, np.integer)) else str(c) for c in cmap.index]
+    fig = go.Figure(go.Heatmap(
+        z=cmap.to_numpy(dtype=float), x=names, y=names, zmin=0, zmax=100,
+        colorscale=[[0, "#123a5a"], [0.5, "#9cc0da"], [1, "#f4f8fb"]],
+        colorbar=dict(title=dict(text="pct", font=dict(size=9)), thickness=8, len=0.8),
+        hovertemplate="%{y} × %{x}: p%{z:.0f}<extra></extra>"))
+    fig = apply(fig)
+    fig.update_layout(height=height,
+                      yaxis=dict(autorange="reversed", showline=False, ticks="", tickfont=dict(size=9)),
+                      xaxis=dict(showline=False, ticks="", tickfont=dict(size=9)))
+    # cluster swatches along the axes, the same colours as the tree and the landscape
+    for i, cluster in enumerate(cmap.index):
+        colour = colours.get(cluster, GREY)
+        fig.add_shape(type="rect", xref="paper", yref="y", x0=-0.035, x1=-0.012, y0=i - 0.4, y1=i + 0.4,
+                      fillcolor=colour, line=dict(width=0))
+    return fig
+
+
+def member_block(M: pd.DataFrame, labels: pd.Series, a, b) -> pd.DataFrame:
+    """The distances among the members of two clusters, ordered by cluster then by tree order.
+
+    Args:
+        M: Symmetrised distance table.
+        labels: Cluster per pocket, indexed by pocket id.
+        a: One cluster.
+        b: The other (may equal ``a``).
+
+    Returns:
+        Square table over the two clusters' members.
+    """
+    labels = labels.reindex(M.index)
+    order: List[str] = []
+    for cluster in ([a] if a == b else [a, b]):
+        order.extend(leaf_order(M, [i for i in M.index if labels[i] == cluster]))
+    return M.loc[order, order]

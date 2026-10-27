@@ -432,3 +432,56 @@ def grid_notes(panels: List[dict], *, across_clusters: bool, fallbacks: Sequence
             if run_interactions is not None else str(len(picks)))
         _notes.append(f"highlighted: {_classes}")
     return _notes
+
+
+def _label(row) -> str:
+    from qpocket.viz.clusters import cluster_name
+
+    shape = row.get("shape_cluster_id", row.get("cluster_id", 0))
+    state = "holo" if row.get("protein_state") == "BOUND_STATE" else "apo"
+    return f"{row['pdb_id']} · {cluster_name(shape)} · {state}"
+
+
+def cloud_options(active_info: pd.DataFrame) -> Dict[str, str]:
+    """Every pocket of the site for the cloud picker, labelled ``id · cluster · holo|apo``.
+
+    Args:
+        active_info: The site table (pdb_id, cluster ids, protein_state).
+
+    Returns:
+        Label to pdb_id, in master order.
+    """
+    return {_label(row): str(row["pdb_id"]) for _, row in active_info.iterrows()}
+
+
+def default_cloud_selection(active_info: pd.DataFrame, selected_cluster, limit: int = 40) -> List[str]:
+    """The pockets shown before anyone picks: representatives, then the selected cluster's members.
+
+    Args:
+        active_info: The site table, in master order.
+        selected_cluster: A cluster_id, or None.
+        limit: At most this many.
+
+    Returns:
+        pdb_ids, without repeats.
+    """
+    reps = active_info.loc[active_info["is_representative"].astype(bool), "pdb_id"].astype(str).tolist() \
+        if "is_representative" in active_info else []
+    members = active_info.loc[active_info["cluster_id"] == selected_cluster, "pdb_id"].astype(str).tolist() \
+        if selected_cluster is not None else []
+    return list(dict.fromkeys(reps + members))[: max(int(limit), 0)]
+
+
+def capped(selection: Sequence[str], limit: int = 40) -> Tuple[List[str], str]:
+    """At most ``limit`` pockets, and a note saying how many were left out.
+
+    Args:
+        selection: Picked pdb_ids.
+        limit: The cap.
+
+    Returns:
+        (kept, note); the note is empty when nothing was dropped.
+    """
+    kept = list(selection)[:limit]
+    dropped = len(selection) - len(kept)
+    return kept, (f"Showing the first {limit}; {dropped} more selected are not drawn." if dropped else "")

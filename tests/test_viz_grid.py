@@ -56,3 +56,41 @@ def test_difference_on_a_partly_featurised_site_shows_feature_values():
                ("B", pd.Series({"pdb_id": "B"}), _pocket(1).drop(columns="apbs"))]
     out = grid.panel_values(pockets, "difference from representative", "apbs", pockets[0][1], 1.0, "default", 0.0)
     assert out.label == "apbs" and np.array_equal(out.values["B"][1], [0.0, 0.0])
+
+
+# --- the cloud picker --------------------------------------------------------------------
+
+def _picker_info():
+    import pandas as pd
+
+    return pd.DataFrame({
+        "pdb_id": [f"P{i}" for i in range(8)],
+        "cluster_id": [0, 0, 0, 1, 1, 2, 2, 2],
+        "shape_cluster_id": [0, 0, 0, 1, 1, 2, 2, 2],
+        "chem_cluster_id": 0,
+        "is_representative": [False, True, False, True, False, False, False, True],
+        "protein_state": ["BOUND_STATE", "UNBOUND_STATE"] * 4,
+    })
+
+
+def test_cloud_options_label_every_pocket():
+    from qpocket.viz.grid import cloud_options
+
+    options = cloud_options(_picker_info())
+    assert len(options) == 8 and options["P1 · S1 · apo"] == "P1"
+
+
+def test_default_selection_representatives_first():
+    from qpocket.viz.grid import default_cloud_selection
+
+    picked = default_cloud_selection(_picker_info(), 2, limit=40)
+    assert picked == ["P1", "P3", "P7", "P5", "P6"]
+    assert default_cloud_selection(_picker_info(), 2, limit=2) == ["P1", "P3"]
+
+
+def test_cloud_selection_capped_with_note():
+    from qpocket.viz.grid import capped
+
+    kept, note = capped([f"P{i}" for i in range(55)], 40)
+    assert len(kept) == 40 and "15" in note
+    assert capped(["P1"], 40) == (["P1"], "")

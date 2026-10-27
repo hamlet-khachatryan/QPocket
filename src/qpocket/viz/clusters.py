@@ -111,3 +111,44 @@ def cluster_table(info: pd.DataFrame, m, clouds: Dict[str, np.ndarray], min_size
                      "shape_within": float("nan"), "chem_within": float("nan"), "shared_volume": float("nan"),
                      "representative": f"{len(small)} clusters < {min_size}"})
     return pd.DataFrame(rows, columns=TABLE_COLUMNS)
+
+
+def cluster_name(shape: int, chem: Optional[int] = None) -> str:
+    """How a cluster is named everywhere: S1, S2, … and S1·c2 for a chemistry subcluster."""
+    return f"S{int(shape) + 1}" if chem is None else f"S{int(shape) + 1}·c{int(chem) + 1}"
+
+
+def landscape_figure(coords: pd.DataFrame, colour_by: str, colours: Dict, height: int = 460):
+    """The pocket landscape: small, semi-transparent points, labels on hover only.
+
+    Args:
+        coords: x, y, pdb_id, shape_cluster_id, chem_cluster_id, protein_state, and any feature column.
+        colour_by: "cluster", or a numeric column drawn on a diverging scale around 0.
+        colours: ``(shape, chem)`` colours from :func:`qpocket.viz.style.cluster_colours`.
+        height: Figure height (px).
+
+    Returns:
+        A styled plotly Figure with markers only.
+    """
+    import plotly.graph_objects as go
+
+    from qpocket.viz.style import GREY, apply
+
+    hover = [f"{p} · {cluster_name(s, c)} · {'holo' if st == 'BOUND_STATE' else 'apo'}"
+             for p, s, c, st in zip(coords["pdb_id"], coords["shape_cluster_id"], coords["chem_cluster_id"],
+                                    coords["protein_state"])]
+    if colour_by == "cluster":
+        marker = dict(size=6, opacity=0.7, line=dict(width=0),
+                      color=[colours.get((int(s), int(c)), GREY)
+                             for s, c in zip(coords["shape_cluster_id"], coords["chem_cluster_id"])])
+    else:
+        values = coords[colour_by].astype(float)
+        bound = float(np.nanmax(np.abs(values))) or 1.0
+        marker = dict(size=6, opacity=0.8, line=dict(width=0), color=values, colorscale="RdBu_r",
+                      cmin=-bound, cmax=bound, colorbar=dict(title=dict(text=colour_by, font=dict(size=9)),
+                                                             thickness=8))
+    fig = go.Figure(go.Scattergl(x=coords["x"], y=coords["y"], mode="markers", marker=marker,
+                                 hovertext=hover, hoverinfo="text", customdata=coords["pdb_id"]))
+    fig = apply(fig)
+    fig.update_layout(height=height, dragmode="lasso", xaxis=dict(title="1"), yaxis=dict(title="2"))
+    return fig
