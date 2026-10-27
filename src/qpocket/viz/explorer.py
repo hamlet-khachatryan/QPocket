@@ -30,8 +30,10 @@ def _():
     from qpocket.viz import controls as qcontrols
     from qpocket.viz import pages as qpages
     from qpocket.viz.pages import site as qsite_page
+    from qpocket.viz.pages import exploration as qexplore
+    from qpocket.arms import final as qfinal
 
-    return Path, json, lru_cache, mo, np, pd, px, qcontrols, qpages, qsite_page, qsites, qviz
+    return Path, json, lru_cache, mo, np, pd, px, qcontrols, qexplore, qfinal, qpages, qsite_page, qsites, qviz
 
 
 @app.cell
@@ -260,6 +262,7 @@ def _(get_site_steps, mo, qpages, qsites, run_dir, site_dir):
     _no_clouds = " (needs clouds)" if not site_steps["clouds"] else ""
     shape_button = mo.ui.run_button(label="Shape clustering" + _no_clouds, disabled=bool(_no_clouds))
     featurise_button = mo.ui.run_button(label="Featurise" + _no_clouds, disabled=bool(_no_clouds))
+    featurise_workers = mo.ui.number(start=0, stop=512, step=1, value=0, label="Workers (0 = half the cores)")
     # two_stage_site's own precondition: two featurised pockets, not every cloud.
     two_stage_button = mo.ui.run_button(
         label=f"Two-stage clustering ({site_steps['n_featurised']}/{site_steps['n_clouds']} featurised)",
@@ -276,21 +279,24 @@ def _(get_site_steps, mo, qpages, qsites, run_dir, site_dir):
     ])
     qpages.on("Exploration", mo.vstack([
         mo.md(f"### Steps for {_sid}\n{_done}"),
-        mo.hstack([shape_button, featurise_button, two_stage_button], justify="start"),
+        mo.hstack([shape_button, featurise_workers, featurise_button, two_stage_button], justify="start",
+                  align="end"),
         get_site_steps() or mo.md(""),
         mo.accordion({"Run them from a terminal instead": mo.plain_text(_commands)}),
     ]))
-    return featurise_button, shape_button, two_stage_button
+    return featurise_button, featurise_workers, shape_button, two_stage_button
 
 
 @app.cell
-def _(featurise_button, mo, qsites, run_dir, set_site_steps, shape_button, site_dir, two_stage_button):
+def _(featurise_button, featurise_workers, mo, qsites, run_dir, set_site_steps, shape_button, site_dir,
+      two_stage_button):
     mo.stop(not (shape_button.value or featurise_button.value or two_stage_button.value))
     import traceback as _traceback
 
     _name, _step = next((n, f) for n, f, b in [
         ("Shape clustering", qsites.shape_cluster_site, shape_button),
-        ("Featurise", qsites.featurize_site, featurise_button),
+        ("Featurise", lambda r, s: qsites.featurize_site(r, s, workers=int(featurise_workers.value)),
+         featurise_button),
         ("Two-stage clustering", qsites.two_stage_site, two_stage_button),
     ] if b.value)
     with mo.status.spinner(title=f"{_name} for {site_dir.name}…"):
@@ -723,12 +729,12 @@ def _(apply_clustering, mo, pending_settings, qpages, site_dir):
 
 
 @app.cell
-def _(applied_at, info, mo, pd, qpages, site_dir):
+def _(applied_at, get_rep_version, info, mo, pd, qpages, site_dir):
     # ---- The grouping every view below follows -------------------------------
     # The clustering section is the decision point: it writes
     # metadata/clustering_metadata.csv, and this reads that file back. Depending
     # on applied_at is what makes these views refresh after Apply.
-    _ = applied_at
+    _ = (applied_at, get_rep_version())
     active_info = info.copy()
     _stored_path = site_dir / "metadata" / "clustering_metadata.csv"
     if _stored_path.exists():
@@ -750,6 +756,54 @@ def _(applied_at, info, mo, pd, qpages, site_dir):
         + f" · {int(active_info['is_representative'].sum())} representatives"
     ))
     return (active_info,)
+
+
+@app.cell
+def _(mo):
+    # Bumped by a representative swap, so every view re-reads the clustering; the swap's outcome.
+    get_rep_version, set_rep_version = mo.state(0)
+    get_rep_message, set_rep_message = mo.state("")
+    return get_rep_message, get_rep_version, set_rep_message, set_rep_version
+
+
+@app.cell
+def _(active_info, mo, qviz):
+    _names = qviz.clusters.cluster_labels_of(active_info) if "cluster_id" in active_info else {}
+    _sizes = active_info["cluster_id"].value_counts() if len(_names) else {}
+    rep_cluster = mo.ui.dropdown(
+        options={f"{_names[int(c)]} ({_sizes[c]})": int(c)
+                 for c in sorted(_sizes.index, key=lambda c: (-_sizes[c], c))} if len(_names) else {},
+        label="Cluster")
+    return (rep_cluster,)
+
+
+@app.cell
+def _(active_info, get_rep_message, mo, qexplore, qpages, rep_cluster):
+    rep_member = mo.ui.dropdown(
+        options=qexplore.representative_options(active_info, rep_cluster.value) if rep_cluster.value is not None
+        else {}, label="Representative")
+    set_rep_button = mo.ui.run_button(label="Set representative", disabled=rep_cluster.value is None)
+    qpages.on("Exploration", mo.vstack([
+        mo.md("### Representatives\nEach cluster's medoid by default. Swap one here; cross-docking and Finalise "
+              "use it. Applying a new clustering starts from medoids again."),
+        mo.hstack([rep_cluster, rep_member, set_rep_button], justify="start", align="end"),
+        mo.md(get_rep_message()),
+    ]))
+    return rep_member, set_rep_button
+
+
+@app.cell
+def _(mo, qsites, rep_cluster, rep_member, run_dir, set_rep_button, set_rep_message, set_rep_version, site_dir):
+    mo.stop(not set_rep_button.value)
+    try:
+        if rep_member.value is None:
+            raise qsites.SiteError("pick the member to make representative")
+        qsites.set_representative(run_dir, site_dir.name, rep_cluster.value, rep_member.value)
+        set_rep_message(f"_{rep_member.value} is now the representative of its cluster._")
+        set_rep_version(lambda v: v + 1)
+    except qsites.SiteError as _e:
+        set_rep_message(f"_{_e}_")
+    return
 
 
 @app.cell
@@ -1407,6 +1461,75 @@ def _(fingerprint_plot, mo, qpages, run_interactions):
     )
     qpages.on("Exploration", mo.hstack([residue_picker], justify="start"))
     return (residue_picker,)
+
+
+@app.cell
+def _(active_info, mo, qexplore, qpages, qviz, run_interactions):
+    # Contacted share over each cluster's ligand-bound members; hover gives the lining share too.
+    _names = qviz.clusters.cluster_labels_of(active_info) if "cluster_id" in active_info else {}
+    _members = qexplore.cluster_members(active_info, _names) if _names else {}
+    qpages.on("Exploration", mo.vstack([
+        mo.md("## Residue contacts by cluster\nShare of each cluster's ligand-bound structures whose ligand "
+              "contacts the residue."),
+        qexplore.residue_heatmap(qexplore.residue_profile(run_interactions, _members)),
+    ]))
+    return
+
+
+@app.cell
+def _(mo):
+    # Bumped by Finalise, so the status and the Screening guard re-read final/; Finalise's outcome.
+    get_final_version, set_final_version = mo.state(0)
+    get_final_message, set_final_message = mo.state("")
+    return get_final_message, get_final_version, set_final_message, set_final_version
+
+
+@app.cell
+def _(active_info, get_final_message, get_final_version, mo, qfinal, qpages, run_dir, site_dir):
+    _ = (active_info, get_final_version())   # re-read after Apply, a representative swap, or Finalise
+    _status = qfinal.final_status(run_dir, site_dir.name)
+    _history = site_dir / "final" / "history"
+    _n_history = len([p for p in _history.iterdir() if p.is_dir()]) if _history.is_dir() else 0
+    if _status == "current":
+        import json as _json
+
+        _when = _json.loads((site_dir / "final" / "settings.json").read_text())["finalised_at"]
+        _line = f"Finalised {_when} and current · {_n_history} earlier version(s) in `final/history/`."
+    elif _status == "stale":
+        _line = "Finalised, but the clustering or a representative changed since: finalise again."
+    else:
+        _line = "Not finalised yet."
+    finalise_button = mo.ui.run_button(label="Finalise site")
+    qpages.on("Exploration", mo.vstack([
+        mo.md("## Finalise\nFreezes this site's clustering, representatives, residue profile and actives into "
+              f"`{site_dir / 'final'}`; Screening reads it.\n\n**{_line}**"),
+        finalise_button,
+        mo.md(get_final_message()),
+    ]))
+    return (finalise_button,)
+
+
+@app.cell
+def _(finalise_button, mo, qfinal, qsites, run_dir, set_final_message, set_final_version, site_dir):
+    mo.stop(not finalise_button.value)
+    try:
+        _folder = qfinal.finalise_site(run_dir, site_dir.name)
+        set_final_message(f"_Finalised into `{_folder}`._")
+    except qsites.SiteError as _e:
+        set_final_message(f"_{_e}_")
+    set_final_version(lambda v: v + 1)
+    return
+
+
+@app.cell
+def _(active_info, get_final_version, mo, qfinal, qpages, run_dir, site_dir):
+    _ = (active_info, get_final_version())
+    _status = qfinal.final_status(run_dir, site_dir.name)
+    _why = {"missing": " It has no final metadata yet.",
+            "stale": " Its clustering or a representative changed since it was finalised."}.get(_status, "")
+    qpages.on("Screening", mo.callout(mo.md(f"Finalise this site on the Exploration page.{_why}"), kind="warn")
+              if _status != "current" else mo.md(f"_Screening {site_dir.name} from its final metadata._"))
+    return
 
 
 @app.cell

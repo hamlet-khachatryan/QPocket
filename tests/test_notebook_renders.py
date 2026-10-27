@@ -91,7 +91,8 @@ def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered
         assert text in shown, f"{text!r} never rendered"
     assert ("No distance matrix for this site yet" in shown) is not shape_clustered
     if shape_clustered:  # the clustering views need the site's distance matrices
-        for text in ("percentile", "Pockets shown", "shared volume"):
+        for text in ("percentile", "Pockets shown", "shared volume", "Finalise site", "Set representative",
+                     "Residue contacts by cluster", "Finalise this site on the Exploration page.", "Not finalised yet"):
             assert text in shown, f"{text!r} never rendered"
     assert "Two-stage clustering (0/3 featurised)" in shown
     assert "silhouette" not in shown.lower()
@@ -163,7 +164,7 @@ def test_a_two_stage_site_renders_the_chemistry_views(tmp_path, monkeypatch):
     assert finished, "no cell ran at all"
     assert not errors, "cells left showing errors: " + "; ".join(
         str(e.get("msg") or e.get("type"))[:160] for e in errors[:5])
-    for text in ("Chemistry cut (percentile)", "Cluster distances", "Pockets shown"):
+    for text in ("Chemistry cut (percentile)", "Cluster distances", "Pockets shown", "Residue contacts by cluster"):
         assert text in shown, f"{text!r} never rendered"
 
 
@@ -296,3 +297,20 @@ def test_a_site_edit_waits_for_confirm_and_keeps_its_outcome(tmp_path, monkeypat
     for cell, html in first + dropped + confirmed:
         last[cell] = html
     assert any(f"Done: drop {far}" in html for html in last.values()), "the outcome was wiped or never shown"
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_finalise_from_the_page_writes_final_and_clears_the_guard(tmp_path, monkeypatch):
+    from qpocket.arms import final
+
+    root = _site_run(tmp_path, monkeypatch, True)
+
+    def finalise(outputs):
+        button = _element_id("\n".join(outputs), "button", "Finalise site")
+        assert button, "no Finalise site button"
+        return [button], [1]
+
+    first, clicked = _session(root, [finalise])
+    assert final.final_status(root, "S1-Y1") == "current"
+    shown = "\n".join(html for _, html in clicked)
+    assert "Finalised into" in shown and "Screening S1-Y1 from its final metadata" in shown
