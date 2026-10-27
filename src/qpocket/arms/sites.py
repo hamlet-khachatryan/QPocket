@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 
@@ -280,17 +280,21 @@ def _resite(run_dir: Path, cfg: QPocketConfig) -> pd.DataFrame:
     validate_config(cfg)
     ws = layout.workspace(run_dir)
     records = _records(ws)
+    # Saved first: sync_sites records the overrides in grouping.json as it groups, so a failure later on
+    # leaves the config and the sites agreeing on what was asked for.
+    save_run_config(cfg, ws)
     table, _ = sync_sites(cfg, ws, records)
     # Every site, kept ones too: a kept site's cavities are the same, but its ligands and so its
     # holo/apo states may not be. Unchanged clouds keep their mtime and cached geodesics.
     extract_all_sites(cfg, ws, table, records)
-    save_run_config(cfg, ws)
     return table
 
 
-#: What a site loses when its members change: label, then a glob under the site folder.
-RESULTS = (("clustering", "metadata/clustering_metadata.csv"), ("featurised pockets", "pockets/*/featurized.csv"),
-           ("final metadata", "final"), ("docking", "screening/crossdock/docking_jobs.csv"))
+#: What a site loses when its members change: label, then globs under the site folder.
+RESULTS = (("clustering", ("metadata/clustering_metadata.csv",)),
+           ("featurised pockets", ("pockets/*/featurized.csv",)),
+           ("final metadata", ("final",)),
+           ("docking", ("screening/crossdock/docking_jobs.csv", "screening/docking_jobs.csv")))
 
 
 def site_results(run_dir: Path, site_id: str) -> List[str]:
@@ -305,16 +309,31 @@ def site_results(run_dir: Path, site_id: str) -> List[str]:
     """
     folder = Path(run_dir) / "sites" / site_id
     found = []
-    for label, pattern in RESULTS:
-        hits = list(folder.glob(pattern))
+    for label, patterns in RESULTS:
+        hits = [hit for pattern in patterns for hit in folder.glob(pattern)]
         if hits:
-            found.append(f"{label} ({len(hits)})" if "*" in pattern else label)
+            found.append(f"{label} ({len(hits)})" if any("*" in p for p in patterns) else label)
     return found
 
 
-def preview_changes(run_dir: Path, overrides: Optional[List[Dict[str, Any]]] = None,
-                    **params: float) -> Dict[str, List[str]]:
-    """Which existing sites a regroup or an override change would alter, and what each would lose.
+class SitePreview(NamedTuple):
+    """What a regroup or an override change would do.
+
+    Attributes:
+        losses: Old site id to the results it would lose, for every site whose member cavities change.
+        n_before: Sites now.
+        n_after: Sites after the change.
+        n_new: Sites after the change whose member cavities no current site has.
+    """
+
+    losses: Dict[str, List[str]]
+    n_before: int
+    n_after: int
+    n_new: int
+
+
+def preview(run_dir: Path, overrides: Optional[List[Dict[str, Any]]] = None, **params: float) -> SitePreview:
+    """Group the sites as a change would, and compare with the current ones; writes nothing.
 
     Args:
         run_dir: The run directory.
@@ -322,7 +341,7 @@ def preview_changes(run_dir: Path, overrides: Optional[List[Dict[str, Any]]] = N
         **params: Site parameters to try, as for :func:`regroup_sites`.
 
     Returns:
-        Old site id to its :func:`site_results`, for every site whose member cavities would change; writes nothing.
+        The losses and site counts.
     """
     site_table(run_dir)
     ws = layout.workspace(run_dir)
@@ -330,7 +349,15 @@ def preview_changes(run_dir: Path, overrides: Optional[List[Dict[str, Any]]] = N
     if overrides is not None:
         cfg = evolve(cfg, "sites.overrides", overrides)
     new = set(group_sites(cfg, ws, _records(ws)).site_keys.values())
-    return {sid: site_results(run_dir, sid) for sid, keys in _site_keys(ws).items() if keys not in new}
+    old = _site_keys(ws)
+    losses = {sid: site_results(run_dir, sid) for sid, keys in old.items() if keys not in new}
+    return SitePreview(losses, len(old), len(new), len(new - set(old.values())))
+
+
+def preview_changes(run_dir: Path, overrides: Optional[List[Dict[str, Any]]] = None,
+                    **params: float) -> Dict[str, List[str]]:
+    """Which existing sites a change would alter, and what each would lose (:func:`preview`'s losses)."""
+    return preview(run_dir, overrides, **params).losses
 
 
 def _cavities_of(run_dir: Path, site_id: str) -> List[List[Any]]:

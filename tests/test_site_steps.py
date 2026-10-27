@@ -346,3 +346,51 @@ def test_split_works_on_a_grouping_made_before_cores_were_recorded(tmp_path, mon
     assert steps.split_override(root, FAR)["op"] == "split"
     with pytest.raises(steps.SiteError, match="one strict cavity group"):
         steps.split_override(root, NEAR)
+
+
+# --- review fixes -------------------------------------------------------------
+
+def _members(root, site_id):
+    table = pd.read_csv(root / "sites" / "cavities.csv", keep_default_na=False)
+    return {(r.pdb_id, r.cavity) for r in table.itertuples() if site_id in r.site_ids.split(";")}
+
+
+def test_a_merged_site_keeps_its_ligands_and_members(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    union = _members(root, NEAR) | _members(root, FAR)
+    table = steps.add_override(root, steps.merge_override(root, [NEAR, FAR]))
+    row = table.iloc[0]
+    assert len(table) == 1 and row.n_ligands == 3 and row.n_holo == 2
+    assert _members(root, row.site_id) == union
+
+
+def test_split_parts_do_not_overlap_and_the_preview_says_a_site_is_new(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    split = steps.split_override(root, FAR)
+    preview = steps.preview(root, overrides=[split])
+    assert preview.n_before == 2 and preview.n_after == 3 and FAR in preview.losses
+    table = steps.add_override(root, split)
+    parts = [_members(root, sid) for sid in table["site_id"] if sid != NEAR]
+    assert len(parts) == 2 and not (parts[0] & parts[1])
+
+
+def test_preview_counts_screening_docking(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    jobs = root / "sites" / FAR / "screening" / "docking_jobs.csv"
+    jobs.parent.mkdir(parents=True, exist_ok=True)
+    jobs.write_text("job_id\n")
+    assert steps.site_results(root, FAR) == ["docking"]
+
+
+def test_a_failed_apply_keeps_the_config_in_step(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    drop = steps.drop_override(root, FAR)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("extraction died")
+
+    monkeypatch.setattr(steps, "extract_all_sites", broken)
+    with pytest.raises(RuntimeError):
+        steps.add_override(root, drop)
+    listed = steps.list_overrides(root)
+    assert len(listed) == 1 and listed[0]["status"] == "applied"

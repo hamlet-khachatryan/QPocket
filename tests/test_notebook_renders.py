@@ -179,3 +179,120 @@ def test_tabs_guard_without_a_site(tmp_path, monkeypatch):
     assert finished and not errors, "; ".join(str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
     assert "Pick a site on the Site page." in shown and "qp-on-Exploration qp-on-Screening" in shown
     assert "No sites to draw." in shown
+
+
+def _element_id(html: str, kind: str, label: str):
+    """The object id of the last UI element of this kind (button, multiselect, …) whose label holds ``label``."""
+    import html as _html
+    import re
+
+    found = None
+    for _ in range(4):  # callouts and stacks carry their children as escaped HTML in an attribute
+        for match in re.finditer(r"object-id=['\"]([^'\"]+)['\"]", html):
+            element = html[match.end():match.end() + 1500].split("marimo-ui-element", 1)[0]
+            if f"<marimo-{kind}" in element and label in _html.unescape(element):
+                found = match.group(1)
+        html = _html.unescape(html).replace("\\u003c", "<").replace("\\u003e", ">").replace('\\"', '"')
+    return found
+
+
+def _session(root, actions, settle: float = 25.0):
+    """Serve the explorer, let it run, then perform ``actions`` (callables given the outputs so far).
+
+    Each action returns ``(object_ids, values)`` to send; after each, outputs are collected for ``settle`` s.
+    Returns the outputs after each step, as lists of (cell_id, output html) pairs.
+    """
+    import asyncio
+    import urllib.request
+
+    port = _free_port()
+    server = subprocess.Popen(
+        [sys.executable, "-m", "marimo", "run", str(NOTEBOOK), "--headless",
+         "--no-token", "-p", str(port), "--", "--runs", str(root)],
+        cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    session_id = str(uuid.uuid4())
+
+    async def drive():
+        import re
+
+        page = await asyncio.to_thread(lambda: urllib.request.urlopen(f"http://127.0.0.1:{port}/").read().decode())
+        token = re.search(r"""(?:serverToken|server_token)["']?\s*:\s*["']([^"']+)""", page)
+        assert token, "no server token in the page"
+        steps = []
+        async with websockets.connect(f"ws://127.0.0.1:{port}/ws?session_id={session_id}", max_size=None) as ws:
+            async def collect(seconds):
+                seen = []
+                try:
+                    async with asyncio.timeout(seconds):
+                        async for raw in ws:
+                            message = json.loads(raw)
+                            if message.get("op") != "cell-op":
+                                continue
+                            output = (message.get("data") or {}).get("output") or {}
+                            data = output.get("data")
+                            if isinstance(data, str):
+                                seen.append((message["data"].get("cell_id"), data))
+                except (asyncio.TimeoutError, TimeoutError):
+                    pass
+                return seen
+
+            steps.append(await collect(90.0))
+            for action in actions:
+                ids, values = action([html for step in steps for _, html in step])
+                body = json.dumps({"objectIds": ids, "values": values}).encode()
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/kernel/set_ui_element_value", data=body, method="POST",
+                    headers={"Content-Type": "application/json", "Marimo-Session-Id": session_id,
+                             "Marimo-Server-Token": token.group(1)})
+                await asyncio.to_thread(urllib.request.urlopen, request)
+                steps.append(await collect(settle))
+        return steps
+
+    try:
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            with socket.socket() as probe:
+                if probe.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(1.0)
+        else:
+            pytest.fail("marimo did not start")
+        return asyncio.run(drive())
+    finally:
+        server.terminate()
+        server.wait(timeout=60)
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_a_site_edit_waits_for_confirm_and_keeps_its_outcome(tmp_path, monkeypatch):
+    """Drop… only previews (the site table does not re-read); Confirm applies, and its message stays."""
+    import pandas as pd
+
+    root = _site_run(tmp_path, monkeypatch, False)
+    far = "S2-Y1"
+
+    def pick(outputs):
+        html = "\n".join(outputs)
+        sites = _element_id(html, "multiselect", "Sites")
+        assert sites, "no site multiselect"
+        return [sites], [[far]]
+
+    def drop(outputs):
+        button = _element_id("\n".join(outputs), "button", "Drop…")
+        assert button, "no Drop… button"
+        return [button], [1]
+
+    def confirm(outputs):
+        button = _element_id("\n".join(outputs), "button", "Confirm")
+        assert button, "no Confirm button after Drop…"
+        return [button], [1]
+
+    first, _, dropped, confirmed = _session(root, [pick, drop, confirm])
+    assert any(f"Pending: drop {far}" in html for _, html in dropped), "Drop… showed no pending change"
+    assert not any("Binding sites" in html for _, html in dropped), "previewing re-read the site table"
+    assert pd.read_csv(root / "sites" / "sites.csv")["site_id"].tolist() == ["S1-Y1"]
+    last = {}
+    for cell, html in first + dropped + confirmed:
+        last[cell] = html
+    assert any(f"Done: drop {far}" in html for html in last.values()), "the outcome was wiped or never shown"

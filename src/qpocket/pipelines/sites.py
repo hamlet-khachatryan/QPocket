@@ -17,7 +17,7 @@ from scipy.spatial.distance import cdist
 from qpocket.config import QPocketConfig, _plain
 from qpocket.constants import THREE_TO_ONE_MAPPING
 from qpocket.core.result import Failure, guarded
-from qpocket.core.sites import (apply_overrides, cavity_cores, element_symbol, grid_spacing, ligand_sites, median_box,
+from qpocket.core.sites import (apply_overrides, joined_box, cavity_cores, element_symbol, grid_spacing, ligand_sites, median_box,
                                 merge_sites, site_members, site_name, voxel_box)
 from qpocket.core.types import Ligand, Structure
 from qpocket.io import layout
@@ -180,9 +180,10 @@ def _group(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structure], cand
     dropped, applied = [], []
     if overrides:
         keys = [(c[0], c[1]) for c in candidates]
-        groups, dropped, applied = apply_overrides(groups, cores, members, keys, overrides)
-        site_boxes = np.array([median_box(boxes[g]) for g in groups]).reshape(-1, 6)
-        members = site_members(site_boxes, boxes, p.cavity_overlap, groups=groups)
+        done = apply_overrides(groups, cores, members, keys, overrides)
+        groups, members, dropped, applied = done.groups, done.members, done.dropped, done.report
+        # Built from the parts, never re-derived: a median over merged sites lies between them.
+        site_boxes = np.array([joined_box(boxes, part) for part in done.parts]).reshape(-1, 6)
     # Dropped sites' boxes still catch their ligands, so those are reported as dropped, not as in no site.
     dropped_boxes = np.array([median_box(boxes[g]) for g in dropped]).reshape(-1, 6)
     lig_sites = ligand_sites([_heavy_coords(lig.file) for lig in ligands], np.vstack([site_boxes, dropped_boxes]),

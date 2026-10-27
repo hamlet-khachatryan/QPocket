@@ -251,7 +251,8 @@ def _cavs(*idx):
 def _apply(overrides, groups=_GROUPS):
     from qpocket.core.sites import apply_overrides
 
-    return apply_overrides([list(g) for g in groups], _CORES, [list(g) for g in groups], _KEYS, overrides)
+    done = apply_overrides([list(g) for g in groups], _CORES, [list(g) for g in groups], _KEYS, overrides)
+    return done.groups, done.dropped, done.report
 
 
 def test_merge_override_joins_two_groups():

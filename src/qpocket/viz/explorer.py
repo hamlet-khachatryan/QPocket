@@ -110,9 +110,9 @@ def _(Path, mo, run_selector):
 
 
 @app.cell
-def _(mo, pd, qpages, qsites, regrouped, run_dir):
-    # regrouped is None until Regroup sites runs; depending on it re-reads the table.
-    _ = regrouped
+def _(get_sites_version, mo, pd, qpages, qsites, run_dir):
+    # Bumped only by a confirmed site change, so previewing one never re-reads the table or resets the picker.
+    _ = get_sites_version()
     _empty = pd.DataFrame(columns=["site_id", "n_structures", "n_holo", "n_apo", "n_cavfind_miss",
                                    "n_ligands", "lining_residues", "centre_x", "centre_y", "centre_z"])
     try:
@@ -334,9 +334,13 @@ def _(mo, qpages, qviz, run_dir):
 
 @app.cell
 def _(mo):
-    # A site change waiting for Confirm: {"label", "params"} for a regroup, {"label", "overrides"} for an edit.
+    # A site change waiting for Confirm: {"run", "label", "params"} for a regroup, {"run", "label", "overrides"}
+    # for an edit; the outcome of the last one; and a counter a confirmed change bumps to re-read the sites.
     get_pending_site_change, set_pending_site_change = mo.state(None)
-    return get_pending_site_change, set_pending_site_change
+    get_site_change_message, set_site_change_message = mo.state("")
+    get_sites_version, set_sites_version = mo.state(0)
+    return (get_pending_site_change, get_site_change_message, get_sites_version, set_pending_site_change,
+            set_site_change_message, set_sites_version)
 
 
 @app.cell
@@ -370,7 +374,9 @@ def _(drop_button, edit_sites, merge_button, mo, qpages, qsites, regroup_button,
                 for o in qsites.list_overrides(run_dir)]
     try:
         if regroup_button.value:
-            _change = {"label": "regroup", "params": {k: float(v) for k, v in regroup_controls.value.items()}}
+            _params = {k: float(v) for k, v in regroup_controls.value.items()}
+            _change = {"label": "regroup (" + ", ".join(f"{k} {v:g}" for k, v in _params.items()) + ")",
+                       "params": _params}
         elif merge_button.value:
             _change = {"label": f"merge {' + '.join(_picked)}",
                        "overrides": _current + [qsites.merge_override(run_dir, _picked)]}
@@ -385,54 +391,79 @@ def _(drop_button, edit_sites, merge_button, mo, qpages, qsites, regroup_button,
             _make = qsites.drop_override if drop_button.value else qsites.split_override
             _change = {"label": f"{'drop' if drop_button.value else 'split'} {_picked[0]}",
                        "overrides": _current + [_make(run_dir, _picked[0])]}
-        set_pending_site_change(_change)
+        set_pending_site_change({**_change, "run": str(run_dir)})
         _out = mo.md("")
-    except qsites.SiteError as _e:
+    except Exception as _e:  # a site error is the user's to fix; anything else must not leave an old change pending
         set_pending_site_change(None)
-        _out = mo.callout(mo.md(str(_e)), kind="warn")
+        _out = mo.callout(mo.md(str(_e) if isinstance(_e, qsites.SiteError) else f"{type(_e).__name__}: {_e}"),
+                          kind="warn")
     qpages.on("Site", _out)
     return
 
 
 @app.cell
 def _(get_pending_site_change, mo, qpages, qsite_page, qsites, run_dir):
+    # A change requested on another run is never shown here, so it cannot be confirmed against this one.
     pending_site_change = get_pending_site_change()
+    if pending_site_change is not None and pending_site_change.get("run") != str(run_dir):
+        pending_site_change = None
     confirm_site_change = mo.ui.run_button(label="Confirm", kind="danger")
+    cancel_site_change = mo.ui.run_button(label="Cancel")
     if pending_site_change is None:
         _out = mo.md("")
     else:
         with mo.status.spinner(title="Working out what would change…"):
             try:
-                _losses = qsites.preview_changes(run_dir, overrides=pending_site_change.get("overrides"),
-                                                 **pending_site_change.get("params", {}))
-                _what = (f"{len(_losses)} site(s) would change and lose their results:\n\n"
-                         f"{qsite_page.loss_markdown(_losses)}" if _losses else "No site's members change.")
+                _p = qsites.preview(run_dir, overrides=pending_site_change.get("overrides"),
+                                    **pending_site_change.get("params", {}))
+                _counts = f"{_p.n_before} sites now, {_p.n_after} after ({_p.n_new} new or changed)."
+                _with = {sid: items for sid, items in _p.losses.items() if items}
+                _what = (f"{_counts} {len(_p.losses)} current site(s) change; these lose results:\n\n"
+                         f"{qsite_page.loss_markdown(_with)}" if _with else
+                         f"{_counts} {len(_p.losses)} current site(s) change; none holds results."
+                         if _p.losses else f"{_counts} No current site's members change.")
             except Exception as _e:
                 _what = f"Cannot preview this change: {type(_e).__name__}: {_e}"
         _out = mo.callout(mo.vstack([mo.md(f"**Pending: {pending_site_change['label']}.** {_what}"),
-                                     confirm_site_change]), kind="warn")
+                                     mo.hstack([confirm_site_change, cancel_site_change], justify="start")]),
+                          kind="warn")
     qpages.on("Site", _out)
-    return confirm_site_change, pending_site_change
+    return cancel_site_change, confirm_site_change, pending_site_change
 
 
 @app.cell
-def _(confirm_site_change, mo, pending_site_change, qpages, qsites, run_dir, set_pending_site_change):
-    # No mo.stop: the site table depends on this, and must show before any change.
-    regrouped = None
-    _message = ""
-    if confirm_site_change.value and pending_site_change is not None:
+def _(cancel_site_change, confirm_site_change, mo, pending_site_change, qsites, run_dir,
+      set_pending_site_change, set_site_change_message, set_sites_version):
+    # Outputs nothing the site table reads: the table re-reads on the version bump, and the outcome is kept in
+    # state, so this cell rerunning (it does, whenever the pending change is cleared) wipes neither.
+    if cancel_site_change.value:
+        set_pending_site_change(None)
+        set_site_change_message("")
+    elif confirm_site_change.value and pending_site_change is not None \
+            and pending_site_change.get("run") == str(run_dir):
         with mo.status.spinner(title=f"Applying: {pending_site_change['label']}…"):
             try:
                 if "params" in pending_site_change:
-                    regrouped = qsites.regroup_sites(run_dir, **pending_site_change["params"])
+                    _table = qsites.regroup_sites(run_dir, **pending_site_change["params"])
                 else:
-                    regrouped = qsites.apply_site_overrides(run_dir, pending_site_change["overrides"])
-                _message = f"_Done: {pending_site_change['label']}; the run has {len(regrouped)} sites._"
+                    _table = qsites.apply_site_overrides(run_dir, pending_site_change["overrides"])
+                _message = f"Done: {pending_site_change['label']}; the run has {len(_table)} sites."
+                _kind = "success"
             except Exception as _e:
-                _message = f"_{pending_site_change['label']} failed: {type(_e).__name__}: {_e}_"
+                _message = f"{pending_site_change['label']} failed: {type(_e).__name__}: {_e}"
+                _kind = "danger"
+        set_site_change_message((str(run_dir), _kind, _message))
         set_pending_site_change(None)
-    qpages.on("Site", mo.md(_message))
-    return (regrouped,)
+        set_sites_version(lambda v: v + 1)
+    return
+
+
+@app.cell
+def _(get_site_change_message, mo, qpages, run_dir):
+    _last = get_site_change_message()
+    qpages.on("Site", mo.callout(mo.md(_last[2]), kind=_last[1])
+              if _last and _last[0] == str(run_dir) else mo.md(""))
+    return
 
 
 @app.cell

@@ -1,7 +1,7 @@
 """Binding-site discovery: ligands a structure holds, and sites built from cavity boxes (pure)."""
 from __future__ import annotations
 
-from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
@@ -235,9 +235,32 @@ def match_site(recorded: Set[Tuple[str, int]], member_sets: Sequence[Set[Tuple[s
     return best if best_score >= min_jaccard else None
 
 
+class Overridden(NamedTuple):
+    """Site groups after manual overrides (see :func:`apply_overrides`).
+
+    Attributes:
+        groups: Candidate indices each site was built from.
+        members: Per site, every candidate belonging to it; never recomputed from a box after an override.
+        parts: Per site, the index groups whose median boxes, joined, make its box.
+        dropped: Groups removed by a drop.
+        report: Per override ``{op, status, parts, groups}``; status is applied or unmatched.
+    """
+
+    groups: List[List[int]]
+    members: List[List[int]]
+    parts: List[List[List[int]]]
+    dropped: List[List[int]]
+    report: List[Dict]
+
+
+def joined_box(boxes: np.ndarray, parts: Sequence[Sequence[int]]) -> np.ndarray:
+    """The box around the median boxes of several groups: a merged site covers each part where it lies."""
+    medians = np.array([median_box(boxes[list(p)]) for p in parts]).reshape(-1, 6)
+    return np.concatenate([medians[:, :3].min(axis=0), medians[:, 3:].max(axis=0)])
+
+
 def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: List[List[int]],
-                    keys: Sequence[Tuple[str, int]],
-                    overrides: Sequence[Mapping]) -> Tuple[List[List[int]], List[List[int]], List[Dict]]:
+                    keys: Sequence[Tuple[str, int]], overrides: Sequence[Mapping]) -> Overridden:
     """Re-apply manual merges, drops and splits, in order, to the automatic site groups.
 
     Args:
@@ -248,10 +271,11 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
         overrides: ``{"op": "merge", "sites": [cavities, ...]}`` or ``{"op": "drop"|"split", "cavities": [[pdb, cav], ...]}``.
 
     Returns:
-        New groups, dropped groups, and per override ``{op, status, parts, groups}`` (status applied|unmatched).
+        The groups, their members and box parts, the dropped groups, and a report per override.
     """
     own = [sorted(g) for g in groups]
     mem = [set(m) for m in members]
+    parts = [[list(g)] for g in own]
     dropped: List[List[int]] = []
     report: List[Dict] = []
 
@@ -261,6 +285,13 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
     def recorded(cavities) -> Set[Tuple[str, int]]:
         return {(str(p), int(c)) for p, c in cavities}
 
+    def replace(drop: List[int], new_own, new_mem, new_parts) -> None:
+        nonlocal own, mem, parts
+        keep = [k for k in range(len(own)) if k not in drop]
+        own = [own[k] for k in keep] + new_own
+        mem = [mem[k] for k in keep] + new_mem
+        parts = [parts[k] for k in keep] + new_parts
+
     for override in overrides:
         op = override["op"]
         sets = [keyed(k) for k in range(len(own))]
@@ -268,29 +299,26 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
         if op == "merge":
             hits = sorted({k for part in override["sites"]
                            for k in [match_site(recorded(part), sets)] if k is not None})
+            entry["parts"] = len(hits)
             if len(hits) >= 2:
-                merged, merged_mem = sorted(i for k in hits for i in own[k]), set().union(*(mem[k] for k in hits))
-                own = [g for k, g in enumerate(own) if k not in hits] + [merged]
-                mem = [m for k, m in enumerate(mem) if k not in hits] + [merged_mem]
-                entry = {"op": op, "status": "applied", "parts": len(hits), "groups": [merged]}
-            else:
-                entry["parts"] = len(hits)
+                merged = sorted(i for k in hits for i in own[k])
+                replace(hits, [merged], [set().union(*(mem[k] for k in hits))], [[p for k in hits for p in parts[k]]])
+                entry.update(status="applied", groups=[merged])
         elif op in ("drop", "split"):
             k = match_site(recorded(override["cavities"]), sets)
             if k is not None and op == "drop":
-                dropped.append(own.pop(k))
-                mem.pop(k)
+                dropped.append(own[k])
+                replace([k], [], [], [])
                 entry["status"] = "applied"
             elif k is not None:
                 inside = set(own[k])
-                parts = [sorted(c) for c in cores if c and set(c) <= inside]
-                if len(parts) >= 2:
-                    own = own[:k] + own[k + 1:] + parts
-                    mem = mem[:k] + mem[k + 1:] + [set(p) for p in parts]
-                    entry = {"op": op, "status": "applied", "parts": len(parts), "groups": parts}
-                else:
-                    entry = {"op": op, "status": "unmatched", "parts": len(parts)}
+                pieces = [sorted(c) for c in cores if c and set(c) <= inside]
+                entry["parts"] = len(pieces)
+                if len(pieces) >= 2:
+                    # A part is its own cavities only; taking overlap members back would rebuild the site it left.
+                    replace([k], pieces, [set(p) for p in pieces], [[p] for p in pieces])
+                    entry.update(status="applied", groups=pieces)
         else:
             raise ValueError(f"unknown site override {op!r}; known: merge, drop, split")
         report.append(entry)
-    return own, dropped, report
+    return Overridden(own, [sorted(m) for m in mem], parts, dropped, report)
