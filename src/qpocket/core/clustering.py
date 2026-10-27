@@ -41,14 +41,14 @@ METHODS: Tuple[str, ...] = (AFFINITY,) + LINKAGES
 #: Every method :func:`cluster_labels` understands.
 ALL_METHODS: Tuple[str, ...] = (AFFINITY, KMEDOIDS) + LINKAGES
 
-#: How a hierarchical tree is cut: into a number of clusters, at a height, or at
-#: a fraction of the tree's tallest merge.
-CRITERIA: Tuple[str, ...] = ("cluster count", "distance threshold", "relative height")
+#: How a hierarchical tree is cut: into a number of clusters, at a height, at
+#: a fraction of the tree's tallest merge, or at a percentile of the pairwise distances.
+CRITERIA: Tuple[str, ...] = ("cluster count", "distance threshold", "relative height", "site percentile")
 
-COUNT, THRESHOLD, RELATIVE = CRITERIA
+COUNT, THRESHOLD, RELATIVE, PERCENTILE = CRITERIA
 
 #: The config's short criterion names, onto :data:`CRITERIA`.
-_CRITERION_NAMES = {"count": COUNT, "threshold": THRESHOLD, "relative": RELATIVE}
+_CRITERION_NAMES = {"count": COUNT, "threshold": THRESHOLD, "relative": RELATIVE, "percentile": PERCENTILE}
 
 #: What a count stage without k is told; old runs saved k null under "count".
 NEEDS_K = "a 'count' cut has no k: set k or use criterion 'threshold' or 'relative'"
@@ -353,6 +353,43 @@ def kmedoids_labels(
     )
 
 
+def pair_distances(distances: np.ndarray) -> np.ndarray:
+    """Every pairwise distance once: the strict upper triangle of a square matrix."""
+    d = np.asarray(distances, dtype=float)
+    return d[np.triu_indices(len(d), k=1)]
+
+
+def percentile_height(distances: np.ndarray, percentile: float) -> float:
+    """The cut height a percentile names: that quantile of the matrix's pairwise distances.
+
+    Args:
+        distances: Square distance matrix of the whole site.
+        percentile: In (0, 100).
+
+    Returns:
+        The distance, or 0.0 when there are fewer than two structures.
+    """
+    pairs = pair_distances(distances)
+    return float(np.percentile(pairs, percentile)) if len(pairs) else 0.0
+
+
+def to_percentile(distances: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """Where values fall among the matrix's pairwise distances, as percentiles in [0, 100].
+
+    Args:
+        distances: Square distance matrix of the whole site.
+        values: Distances to place, e.g. merge heights.
+
+    Returns:
+        The share of pairs at or below each value, times 100.
+    """
+    pairs = np.sort(pair_distances(distances))
+    values = np.asarray(values, dtype=float)
+    if not len(pairs):
+        return np.zeros_like(values)
+    return np.clip(np.searchsorted(pairs, values, side="right") / len(pairs) * 100.0, 0.0, 100.0)
+
+
 def cluster_labels(
     distances: np.ndarray,
     method: str = AFFINITY,
@@ -367,9 +404,9 @@ def cluster_labels(
     Args:
         distances: Square, symmetric distance matrix.
         method: One of :data:`ALL_METHODS`.
-        criterion: One of :data:`CRITERIA`, or its short name ``"count"``, ``"threshold"`` or ``"relative"``.
+        criterion: One of :data:`CRITERIA`, or its short name ``"count"``, ``"threshold"``, ``"relative"`` or ``"percentile"``.
         n_clusters: Wanted cluster count, used by the count criterion.
-        threshold: Cut height for the threshold criterion; for the relative one, the fraction of the tallest merge to cut at. When every distance is equal and non-zero, every merge sits at the same height, so a fraction below 1 leaves each structure on its own.
+        threshold: Cut height for the threshold criterion; for the relative one, the fraction of the tallest merge to cut at; for the percentile one, the percentile of the pairwise distances. When every distance is equal and non-zero, every merge sits at the same height, so a fraction below 1 leaves each structure on its own.
         damping: Affinity Propagation damping.
         preference_percentile: Affinity Propagation preference percentile.
 
@@ -390,7 +427,7 @@ def cluster_labels(
     if method == KMEDOIDS:
         return kmedoids_labels(d, n_clusters=n_clusters)
 
-    if criterion in (THRESHOLD, RELATIVE) and threshold is None:
+    if criterion in (THRESHOLD, RELATIVE, PERCENTILE) and threshold is None:
         short = {v: k for k, v in _CRITERION_NAMES.items()}[criterion]
         raise ValueError(f"a '{short}' cut needs a threshold")
 
@@ -411,6 +448,9 @@ def cluster_labels(
         raw = fcluster(link, t=cut, criterion="distance")
     elif criterion == RELATIVE:
         cut = float(threshold) * float(link[:, 2].max())
+        raw = fcluster(link, t=cut, criterion="distance")
+    elif criterion == PERCENTILE:
+        cut = percentile_height(d, float(threshold))
         raw = fcluster(link, t=cut, criterion="distance")
     else:
         raise ValueError(f"unknown criterion {criterion!r}; expected one of {CRITERIA}")
