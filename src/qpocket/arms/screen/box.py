@@ -185,7 +185,16 @@ def saved_box(run_dir: Path, site_id: str) -> Tuple[Optional[dict], str]:
     Returns:
         (box or None, "none" | "stale" | "current"); stale when the site was finalised again, or its final is stale.
     """
-    site = Path(run_dir) / "sites" / site_id
+    return saved_box_at(Path(run_dir) / "sites" / site_id)
+
+
+#: The keys of a box that docking uses.
+BOX_KEYS = tuple(f"{part}_{axis}" for part in ("center", "size", "min", "max") for axis in "xyz")
+
+
+def saved_box_at(site: Path) -> Tuple[Optional[dict], str]:
+    """:func:`saved_box` for a site folder."""
+    site = Path(site)
     path = site / "screening" / "box.json"
     if not path.exists():
         return None, "none"

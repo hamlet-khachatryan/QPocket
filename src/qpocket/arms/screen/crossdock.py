@@ -6,7 +6,7 @@ import shlex
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -112,25 +112,38 @@ def _write_runners(folder: Path, n_jobs: int, cfg: ScreenConfig) -> str:
             f"cd {shlex.quote(str(folder))} && qpocket screen run-local docking_jobs.csv --workers 0   # this machine")
 
 
-def _snapshot_representatives(ws, folder: Path) -> Tuple[Path, Optional[str]]:
-    """Stage a copy of the site's clustering output, so a later re-cluster leaves this docking alone.
+def _snapshot_representatives(ws, folder: Path) -> Tuple[Path, Optional[str], List[str]]:
+    """Stage a copy of the representatives to dock, so a later re-cluster leaves this docking alone.
 
     Args:
         ws: The run or site.
         folder: The task folder.
 
     Returns:
-        The staging folder, moved into place by :func:`_commit_snapshot` once the task list is written,
-        and the clustering mode that chose the representatives (None when it is not recorded).
+        The staging folder (moved into place by :func:`_commit_snapshot` once the task list is written),
+        the clustering mode that chose the representatives (None when not recorded), and warnings.
+        A site's current final metadata is preferred over its applied clustering.
     """
+    from qpocket.io import final as io_final
+
     folder.mkdir(parents=True, exist_ok=True)
     staged = Path(tempfile.mkdtemp(prefix=f".{REPRESENTATIVES_USED}.", dir=folder))
-    shutil.copy2(ws.metadata / "selected_representatives.csv", staged)
+    warnings: List[str] = []
+    status = io_final.final_status(ws.root)
+    if status == "current":
+        clusters = io_final.read_final(ws.root)["clusters"]
+        chosen = clusters["is_representative"].astype(str).str.lower() == "true"
+        clusters.loc[chosen, ["pdb_id", "cluster", "cluster_id"]].to_csv(
+            staged / "selected_representatives.csv", index=False)
+    else:
+        warnings.append(f"{'stale' if status == 'stale' else 'no'} final metadata for {ws.root.name}; "
+                        "using the applied clustering's representatives")
+        shutil.copy2(ws.metadata / "selected_representatives.csv", staged)
     params = ws.metadata / "clustering_params.json"
     if not params.exists():
-        return staged, None
+        return staged, None, warnings
     shutil.copy2(params, staged)
-    return staged, json.loads(params.read_text(encoding="utf-8")).get("mode")
+    return staged, json.loads(params.read_text(encoding="utf-8")).get("mode"), warnings
 
 
 def _commit_snapshot(staged: Path, folder: Path) -> None:
@@ -156,9 +169,9 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
     ws = layout.workspace(Path(run_dir).resolve())
     folder = ws.screening / CROSSDOCK_DIR
     with start_action(action_type="crossdock_prepare", run=str(ws.root)):
-        staged, clustering_mode = _snapshot_representatives(ws, folder)
+        staged, clustering_mode, warnings = _snapshot_representatives(ws, folder)
         try:
-            plan = _prepare_in(ws, folder, staged, clustering_mode, cfg)
+            plan = _prepare_in(ws, folder, staged, clustering_mode, cfg, warnings)
         except BaseException:
             shutil.rmtree(staged, ignore_errors=True)
             raise
@@ -166,7 +179,8 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
         return plan
 
 
-def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], cfg: ScreenConfig) -> ScreeningPlan:
+def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], cfg: ScreenConfig,
+                warnings: Sequence[str] = ()) -> ScreeningPlan:
     """Write receptors, ligands, box and task list for the staged representatives.
 
     Args:
@@ -175,10 +189,12 @@ def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], 
         staged: The staged representatives snapshot.
         clustering_mode: Recorded in box.json.
         cfg: Screening config.
+        warnings: Earlier warnings, carried into the plan.
 
     Returns:
         The plan.
     """
+    from qpocket.arms.screen.box import BOX_KEYS, saved_box_at
     from qpocket.arms.screen.campaign import engine_for
 
     rep_ids = _representatives(staged)
@@ -192,17 +208,23 @@ def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], 
             receptors[rep] = path.relative_to(folder).as_posix()
     if not receptors:
         raise ReceptorPreparationError(f"no receptor could be prepared: {describe_failures(failures)}")
-    warnings = (f"{len(failures)} of {len(rep_ids)} receptors failed and are left out: "
-                f"{describe_failures(failures)}",) if failures else ()
+    warnings = list(warnings) + ([f"{len(failures)} of {len(rep_ids)} receptors failed and are left out: "
+                                  f"{describe_failures(failures)}"] if failures else [])
     if failures:
         log_message(message_type="warning", stage="prepare_receptor", failed=describe_failures(failures))
     actives = distinct_actives(ws.screening / "actives.smi", ws.metadata / "master.csv")
     actives.to_csv(folder / "ligands.csv", index=False)
     ligands = {a: p.relative_to(folder).as_posix()
                for a, p in prepare_ligands(actives, folder / "ligands", cfg).items()}
-    box = shared_box(ws, list(receptors), cfg.crossdock.box_mode, cfg.crossdock.box_padding)
-    (folder / "box.json").write_text(json.dumps({"mode": cfg.crossdock.box_mode,
-                                                  "padding": cfg.crossdock.box_padding,
+    saved, saved_status = saved_box_at(ws.root)
+    if saved_status == "current":
+        box, mode, padding, source = {k: saved[k] for k in BOX_KEYS}, saved["mode"], saved["padding"], "saved"
+    else:
+        warnings.append("the saved box predates the last Finalise; using the configured box"
+                        if saved_status == "stale" else "no saved box; using the configured box")
+        mode, padding, source = cfg.crossdock.box_mode, cfg.crossdock.box_padding, "config"
+        box = shared_box(ws, list(receptors), mode, padding)
+    (folder / "box.json").write_text(json.dumps({"mode": mode, "padding": padding, "source": source,
                                                   "clustering_mode": clustering_mode,
                                                   **{k: float(v) for k, v in box.items()}}, indent=2),
                                      encoding="utf-8")
@@ -218,7 +240,7 @@ def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], 
     command = _write_runners(folder, len(jobs), cfg)
     log_message(message_type="crossdock_prepared", receptors=len(receptors), actives=len(ligands),
                 jobs=len(jobs))
-    return ScreeningPlan(jobs_csv, [folder / "run_docking.sbatch"], command, warnings)
+    return ScreeningPlan(jobs_csv, [folder / "run_docking.sbatch"], command, tuple(warnings))
 
 
 class CrossdockResult(NamedTuple):

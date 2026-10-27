@@ -238,7 +238,8 @@ def test_a_partial_failure_is_on_the_plan_for_the_cli_to_print(run, monkeypatch)
 
     monkeypatch.setattr(crossdock, "prepare_receptor", _failing({"R1": "RuntimeError: boom"}))
     plan = crossdock.prepare(run.root)
-    assert len(plan.warnings) == 1 and "R1" in plan.warnings[0] and "boom" in plan.warnings[0]
+    failed = [w for w in plan.warnings if "receptors failed" in w]
+    assert len(failed) == 1 and "R1" in failed[0] and "boom" in failed[0]
 
 
 def test_the_cli_prints_the_failures_without_a_traceback(run, monkeypatch):
@@ -256,3 +257,74 @@ def test_the_cli_prints_the_failures_without_a_traceback(run, monkeypatch):
     failed = CliRunner().invoke(screen_cli, ["prepare", "--workdir", str(run.root)])
     assert failed.exit_code != 0 and "uv sync --extra screen" in failed.output
     assert "Traceback" not in failed.output and not isinstance(failed.exception, crossdock.ReceptorPreparationError)
+
+
+# --- prepare prefers the final representatives and the saved box ---------------
+
+def _finalise(ws, reps):
+    """A minimal current final for the site fixture: these representatives, the applied clustering's hash."""
+    from qpocket.io.tables import file_hash
+
+    meta = ws.metadata
+    pd.DataFrame({"pdb_id": ["R1", "R2"], "cluster_id": [0, 1], "is_representative": [True, True],
+                  "dist_to_exemplar": [0.0, 0.0]}).to_csv(meta / "clustering_metadata.csv", index=False)
+    folder = ws.root / "final"
+    folder.mkdir(exist_ok=True)
+    pd.DataFrame({"pdb_id": ["R1", "R2"], "cluster": ["S1", "S2"], "cluster_id": [0, 1],
+                  "is_representative": [r in reps for r in ("R1", "R2")], "dist_to_representative": 0.0,
+                  "holo": True}).to_csv(folder / "clusters.csv", index=False)
+    for name in ("residue_profile.csv", "ligands.csv"):
+        (folder / name).write_text("cluster\n")
+    (folder / "settings.json").write_text(json.dumps({"clustering_hash": file_hash(meta / "clustering_metadata.csv")}))
+
+
+def _saved(ws, final_hash, **bounds):
+    box = {"mode": "representative_pockets", "padding": 1.0, "final_hash": final_hash,
+           **{f"{s}_{a}": v for s, v in (("min", -1.0), ("max", 1.0)) for a in "xyz"},
+           "center_x": 0.0, "center_y": 0.0, "center_z": 0.0, "size_x": 2.0, "size_y": 2.0, "size_z": 2.0, **bounds}
+    (ws.screening / "box.json").write_text(json.dumps(box))
+
+
+def test_prepare_uses_the_final_representatives(site):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    _finalise(ws, {"R2"})
+    crossdock.prepare(ws.root)
+    folder = ws.screening / "crossdock"
+    assert set(pd.read_csv(folder / "docking_jobs.csv")["representative"]) == {"R2"}
+    assert pd.read_csv(folder / "representatives_used" / "selected_representatives.csv")["pdb_id"].tolist() == ["R2"]
+
+
+def test_prepare_uses_a_current_saved_box(site):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    _finalise(ws, {"R1", "R2"})
+    _saved(ws, json.loads((ws.root / "final" / "settings.json").read_text())["clustering_hash"], max_x=42.0)
+    plan = crossdock.prepare(ws.root)
+    written = json.loads((ws.screening / "crossdock" / "box.json").read_text())
+    assert written["source"] == "saved" and written["max_x"] == 42.0
+    assert pd.read_csv(plan.jobs_csv)["center_x"].iloc[0] == 0.0
+    assert not plan.warnings
+
+
+def test_a_box_saved_for_an_older_final_is_ignored(site):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    _finalise(ws, {"R1", "R2"})
+    _saved(ws, "an-older-final", max_x=42.0)
+    plan = crossdock.prepare(ws.root)
+    written = json.loads((ws.screening / "crossdock" / "box.json").read_text())
+    assert written["source"] == "config" and written["max_x"] != 42.0
+    assert any("predates the last Finalise" in w for w in plan.warnings)
+
+
+def test_prepare_without_final_warns(site):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    plan = crossdock.prepare(ws.root)
+    assert any("no final metadata" in w for w in plan.warnings)
+    assert any("no saved box" in w for w in plan.warnings)
