@@ -62,6 +62,7 @@ def cluster_colours(shape_labels: Sequence[int], chem_labels: Optional[Sequence[
         hue = HUES[rank % len(HUES)]
         subs = sorted((key for key in sub_sizes if key[0] == shape), key=lambda k: (-sub_sizes[k], k[1]))
         for step, key in enumerate(subs):
-            small = shape_sizes[shape] < min_size or sub_sizes[key] < min_size
+            # the largest subcluster carries its shape cluster's hue even when it is small itself
+            small = shape_sizes[shape] < min_size or (step > 0 and sub_sizes[key] < min_size)
             colours[key] = GREY if small else _tint(hue, step)
     return colours

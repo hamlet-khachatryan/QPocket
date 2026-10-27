@@ -103,3 +103,23 @@ def test_within_is_a_site_percentile():
     assert ((shape_rows["shape_within"] >= 0) & (shape_rows["shape_within"] <= 100)).all()
     chem_rows = table[table["level"] == "chem"]
     assert chem_rows["chem_within"].max() < shape_rows["chem_within"].min()   # subclusters are tighter
+
+
+def test_collapsed_tree_with_chemistry_is_fast_and_lean():
+    import time
+
+    rng = np.random.default_rng(3)
+    pts = rng.normal(size=(400, 3))
+    d = np.linalg.norm(pts[:, None] - pts[None], axis=2)
+    chem = np.linalg.norm(rng.normal(size=(400, 3))[:, None] - rng.normal(size=(400, 3))[None], axis=2)
+    chem = (chem + chem.T) / 2
+    np.fill_diagonal(chem, 0)
+    m = ts.RunMatrices([f"P{i}" for i in range(400)], d, chem, (d + chem) / 2)
+    result = ts.preview(m, ts.percentile_settings(ClusteringParams(), 15.0, 20.0))
+    colours = _colours(result)
+    start = time.time()
+    fig = ts.collapsed_figure(m, result, 15.0, 20.0, "average", colours)
+    table = cluster_table(_info(m, result), m, {}, min_size=4)
+    assert time.time() - start < 4.0
+    assert len(fig.data) < 60                      # segments merged into one trace per colour
+    assert len(table)

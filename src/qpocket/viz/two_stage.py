@@ -8,8 +8,8 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from qpocket.core.clustering import (dendrogram_segments, linkage_matrix, percentile_height, symmetrise,
-                                     threshold_for_clusters, to_percentile)
+from qpocket.core.clustering import (dendrogram_segments, linkage_matrix, percentile_height, sorted_pairs,
+                                     symmetrise, threshold_for_clusters, to_percentile)
 from qpocket.pipelines.clustering import cluster_pockets
 from qpocket.viz.style import GREY, apply
 
@@ -464,18 +464,25 @@ def collapsed_figure(m: RunMatrices, preview_result, shape_cut: float, chem_cut:
     fig = go.Figure()
     link = linkage_matrix(symmetrise(m.shape), linkage) if n >= 2 else None
     groups = sorted(set(shape_labels.tolist()))
+    shape_pairs = sorted_pairs(m.shape)
+    lines: Dict[Tuple[str, float], Tuple[list, list]] = {}   # (colour, width) -> xs, ys with None breaks
+
+    def _line(xs, ys, colour, width):
+        bx, by = lines.setdefault((colour, width), ([], []))
+        bx.extend(list(xs) + [None])
+        by.extend(list(ys) + [None])
 
     if link is not None and len(groups) >= 2:
         tree = dendrogram(link, truncate_mode="lastp", p=len(groups), no_plot=True)
         for xs, ys in zip(tree["icoord"], tree["dcoord"]):
-            fig.add_trace(go.Scatter(x=xs, y=to_percentile(m.shape, ys), mode="lines", hoverinfo="skip",
-                                     showlegend=False, line=dict(color=GREY, width=1.1)))
+            _line(xs, to_percentile(None, ys, pairs=shape_pairs), GREY, 1.1)
         tops = [(np.mean(xs[1:3]), ys[1]) for xs, ys in zip(tree["icoord"], tree["dcoord"])]
+        top_pct = to_percentile(None, [h for _, h in tops], pairs=shape_pairs)
         fig.add_trace(go.Scatter(
-            x=[x for x, _ in tops], y=to_percentile(m.shape, [h for _, h in tops]), mode="markers",
+            x=[x for x, _ in tops], y=top_pct, mode="markers",
             marker=dict(size=6, color="rgba(0,0,0,0)"), showlegend=False, name="merges",
-            hovertext=[f"shape distance {h:.3g} · p{p:.0f}" for (_, h), p in
-                       zip(tops, to_percentile(m.shape, [h for _, h in tops]))], hoverinfo="text"))
+            hovertext=[f"shape distance {h:.3g} · p{p:.0f}" for (_, h), p in zip(tops, top_pct)],
+            hoverinfo="text"))
         leaf_ids = []
         for node in tree["leaves"]:
             members = _members(link, int(node), n)
@@ -487,8 +494,7 @@ def collapsed_figure(m: RunMatrices, preview_result, shape_cut: float, chem_cut:
     sizes = pd.Series(shape_labels).value_counts()
     leaf_colours = [_shape_colour(colours, frame, c) for c in leaf_ids]
     for x, colour in zip(leaf_x, leaf_colours):
-        fig.add_trace(go.Scatter(x=[x, x], y=[0, shape_cut], mode="lines", hoverinfo="skip", showlegend=False,
-                                 line=dict(color=colour, width=2.2)))
+        _line([x, x], [0, shape_cut], colour, 2.2)
     fig.add_trace(go.Scatter(
         x=leaf_x, y=[0.0] * len(leaf_x), mode="markers", name="clusters", customdata=leaf_ids,
         marker=dict(symbol="square", size=11, color=leaf_colours, line=dict(width=0)),
@@ -500,6 +506,7 @@ def collapsed_figure(m: RunMatrices, preview_result, shape_cut: float, chem_cut:
 
     if with_chem:
         chem_height = percentile_height(m.chem, chem_cut)
+        chem_pairs = sorted_pairs(m.chem)
         for x, c in zip(leaf_x, leaf_ids):
             members = np.flatnonzero(shape_labels == c)
             if len(members) < 3 or _shape_colour(colours, frame, c) == GREY:
@@ -508,9 +515,13 @@ def collapsed_figure(m: RunMatrices, preview_result, shape_cut: float, chem_cut:
             span = max(10.0 * (len(members) - 1), 1.0)
             for (xs, ys), sub in zip(data.segments, segment_clusters(data, chem_height, chem_labels[members])):
                 colour = GREY if sub is None else colours.get((c, sub), GREY)
-                fig.add_trace(go.Scatter(x=[x - 4 + (v - 5) / span * 8 for v in xs],
-                                         y=[-v for v in to_percentile(m.chem, ys)], mode="lines",
-                                         hoverinfo="skip", showlegend=False, line=dict(color=colour, width=1.1)))
+                _line([x - 4 + (v - 5) / span * 8 for v in xs],
+                      [-v for v in to_percentile(None, ys, pairs=chem_pairs)], colour, 1.1)
+
+    # every branch drawn as one trace per colour, so a large site stays a light figure
+    for (colour, width), (xs, ys) in lines.items():
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", hoverinfo="skip", showlegend=False,
+                                 line=dict(color=colour, width=width), connectgaps=False))
 
     fig.add_shape(type="line", xref="paper", x0=0, x1=1, y0=shape_cut, y1=shape_cut,
                   line=dict(color=SHAPE_CUT_COLOUR, width=1, dash="dash"))

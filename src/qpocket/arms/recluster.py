@@ -18,6 +18,8 @@ def _stage(payload: dict, default: StageClustering) -> StageClustering:
             and values.get("k") is None:
         # Saved before percentile cuts, when a kmedoids stage without k chose k itself.
         values["method"] = "hierarchical"
+    if payload and "percentile" not in payload and values.get("method", default.method) == "hierarchical":
+        values["k"] = None  # an old hierarchical count cut: percentile cuts replace it
     return StageClustering(**{**default.__dict__, **values})
 
 

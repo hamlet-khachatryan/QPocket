@@ -81,7 +81,7 @@ def test_every_legacy_key_says_something(legacy):
 def test_a_whole_renamed_block_moves_with_its_contents(tmp_path):
     """The parent rename must not drop settings a child rename already moved."""
     cfg, _ = migrate({"spectral_distance_matrix": {
-        "clustering": {"mode": "single", "shape": {"k": 3, "min_cluster_size": 7}}}})
+        "clustering": {"mode": "single", "shape": {"method": "kmedoids", "k": 3, "min_cluster_size": 7}}}})
     assert (OmegaConf.select(cfg, "distance.clustering.mode") == "single"
             and OmegaConf.select(cfg, "distance.clustering.shape.k") == 3
             and OmegaConf.select(cfg, "distance.clustering.min_cluster_size") == 7)
@@ -283,3 +283,10 @@ def test_old_criterion_migrates_to_percentile(tmp_path):
     notes = migrate_legacy(OmegaConf.create({"distance": {"clustering": {"shape": {
         "criterion": "relative", "threshold": 0.5}}}}))
     assert any("percentile" in note for note in notes)
+
+
+def test_an_old_hierarchical_k_is_dropped_with_a_note():
+    cfg = OmegaConf.create({"distance": {"clustering": {"shape": {"method": "hierarchical", "k": 6}}}})
+    notes = migrate_legacy(cfg)
+    assert OmegaConf.select(cfg, "distance.clustering.shape.k", default=None) is None
+    assert any("k=6" in note and "percentile" in note for note in notes)

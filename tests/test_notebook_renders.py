@@ -135,3 +135,32 @@ def _render(root):
     finally:
         server.terminate()
         server.wait(timeout=60)
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_a_two_stage_site_renders_the_chemistry_views(tmp_path, monkeypatch):
+    """Featurised and two-stage clustered: the mirrored chemistry tree, chemistry rows and cluster map."""
+    from qpocket.arms import sites
+    from tests.test_site_steps import _finished_run
+
+    from qpocket.pipelines import structure
+
+    def featurize(csv_path, pdb_path, features, charges, options=None, charge_params=None):
+        import numpy as np
+        import pandas as pd
+
+        table = pd.read_csv(csv_path)
+        rng = np.random.default_rng(len(table))
+        table.assign(apbs=rng.normal(size=len(table)), hbond=rng.normal(size=len(table))).to_csv(
+            csv_path.with_name("featurized.csv"), index=False)
+
+    monkeypatch.setattr(structure, "featurize", featurize)
+    root = _finished_run(tmp_path, monkeypatch)
+    sites.featurize_site(root, "S1-Y1", workers=1)
+    sites.two_stage_site(root, "S1-Y1")
+    errors, finished, shown = _render(root)
+    assert finished, "no cell ran at all"
+    assert not errors, "cells left showing errors: " + "; ".join(
+        str(e.get("msg") or e.get("type"))[:160] for e in errors[:5])
+    for text in ("Chemistry cut (percentile)", "Cluster distances", "Pockets shown"):
+        assert text in shown, f"{text!r} never rendered"

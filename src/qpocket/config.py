@@ -524,6 +524,8 @@ def migrate_legacy(cfg: DictConfig) -> List[str]:
         if old.get("criterion") == "count" and stage.get("k") is None and stage.get("method") != "affinity":
             # count with no k meant "choose k by silhouette", which no longer exists
             stage.method = "hierarchical"
+        if stage.get("k") is not None and stage.get("method", "hierarchical") == "hierarchical":
+            old["k"] = stage.pop("k")  # a hierarchical tree is cut by percentile; k is for kmedoids
         if old:
             warnings.append(
                 f"distance.clustering.{name}: {', '.join(f'{k}={v}' for k, v in old.items())} no longer "

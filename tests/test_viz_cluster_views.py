@@ -45,3 +45,33 @@ def test_landscape_has_no_text_labels():
     fig = landscape_figure(coords, "cluster", {(c, 0): "#1f5f8b" for c in range(3)})
     assert fig.data and all(t.mode == "markers" for t in fig.data)
     assert "P0" in fig.data[0].hovertext[0]
+
+
+def test_cluster_map_is_fast_on_a_large_site():
+    import time
+
+    rng = np.random.default_rng(0)
+    pts = rng.normal(size=(830, 3))
+    ids = [f"P{i}" for i in range(830)]
+    M = pd.DataFrame(np.linalg.norm(pts[:, None] - pts[None], axis=2), index=ids, columns=ids)
+    labels = pd.Series(rng.integers(0, 40, 830), index=ids)
+    start = time.time()
+    cmap = cluster_map(M, labels)
+    assert time.time() - start < 3.0 and cmap.shape == (40, 40)
+
+
+def test_display_ids_fall_back_to_cluster_id_in_single_mode():
+    from qpocket.viz.clusters import display_ids
+
+    frame = pd.DataFrame({"cluster_id": [0, 1, 2, 2], "shape_cluster_id": 0, "chem_cluster_id": 0})
+    shape, chem = display_ids(frame)
+    assert list(shape) == [0, 1, 2, 2] and list(chem) == [0, 0, 0, 0]
+    two = pd.DataFrame({"cluster_id": [0, 1, 2], "shape_cluster_id": [0, 0, 1], "chem_cluster_id": [0, 1, 0]})
+    assert list(display_ids(two)[0]) == [0, 0, 1]
+
+
+def test_cluster_names_follow_shape_and_chem():
+    from qpocket.viz.clusters import cluster_labels_of
+
+    frame = pd.DataFrame({"cluster_id": [0, 1, 2], "shape_cluster_id": [0, 0, 1], "chem_cluster_id": [0, 2, 0]})
+    assert cluster_labels_of(frame) == {0: "S1·c1", 1: "S1·c3", 2: "S2·c1"}

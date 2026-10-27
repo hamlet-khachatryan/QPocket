@@ -94,3 +94,11 @@ def test_cloud_selection_capped_with_note():
     kept, note = capped([f"P{i}" for i in range(55)], 40)
     assert len(kept) == 40 and "15" in note
     assert capped(["P1"], 40) == (["P1"], "")
+
+
+def test_representative_mode_offers_only_representatives():
+    from qpocket.viz.grid import picker_rows
+
+    info = _picker_info()
+    assert set(picker_rows(info, "every cluster's representative", None)["pdb_id"]) == {"P1", "P3", "P7"}
+    assert len(picker_rows(info, "one cluster", 2)) == 3

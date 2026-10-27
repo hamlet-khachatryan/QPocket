@@ -373,17 +373,24 @@ def percentile_height(distances: np.ndarray, percentile: float) -> float:
     return float(np.percentile(pairs, percentile)) if len(pairs) else 0.0
 
 
-def to_percentile(distances: np.ndarray, values: np.ndarray) -> np.ndarray:
+def sorted_pairs(distances: np.ndarray) -> np.ndarray:
+    """The matrix's pairwise distances, sorted: compute once, then place many values with :func:`to_percentile`."""
+    return np.sort(pair_distances(distances))
+
+
+def to_percentile(distances: Optional[np.ndarray], values: np.ndarray,
+                  pairs: Optional[np.ndarray] = None) -> np.ndarray:
     """Where values fall among the matrix's pairwise distances, as percentiles in [0, 100].
 
     Args:
-        distances: Square distance matrix of the whole site.
+        distances: Square distance matrix of the whole site (ignored when ``pairs`` is given).
         values: Distances to place, e.g. merge heights.
+        pairs: The site's :func:`sorted_pairs`, so a large matrix is sorted only once.
 
     Returns:
         The share of pairs at or below each value, times 100.
     """
-    pairs = np.sort(pair_distances(distances))
+    pairs = sorted_pairs(distances) if pairs is None else pairs
     values = np.asarray(values, dtype=float)
     if not len(pairs):
         return np.zeros_like(values)

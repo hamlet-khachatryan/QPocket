@@ -434,14 +434,6 @@ def grid_notes(panels: List[dict], *, across_clusters: bool, fallbacks: Sequence
     return _notes
 
 
-def _label(row) -> str:
-    from qpocket.viz.clusters import cluster_name
-
-    shape = row.get("shape_cluster_id", row.get("cluster_id", 0))
-    state = "holo" if row.get("protein_state") == "BOUND_STATE" else "apo"
-    return f"{row['pdb_id']} · {cluster_name(shape)} · {state}"
-
-
 def cloud_options(active_info: pd.DataFrame) -> Dict[str, str]:
     """Every pocket of the site for the cloud picker, labelled ``id · cluster · holo|apo``.
 
@@ -451,7 +443,15 @@ def cloud_options(active_info: pd.DataFrame) -> Dict[str, str]:
     Returns:
         Label to pdb_id, in master order.
     """
-    return {_label(row): str(row["pdb_id"]) for _, row in active_info.iterrows()}
+    from qpocket.viz.clusters import cluster_labels_of
+
+    names = cluster_labels_of(active_info) if "cluster_id" in active_info else {}
+    out = {}
+    for _, row in active_info.iterrows():
+        state = "holo" if row.get("protein_state") == "BOUND_STATE" else "apo"
+        cluster = names.get(int(row["cluster_id"]), "") if "cluster_id" in row and row["cluster_id"] == row["cluster_id"] else ""
+        out[f"{row['pdb_id']} · {cluster} · {state}"] = str(row["pdb_id"])
+    return out
 
 
 def default_cloud_selection(active_info: pd.DataFrame, selected_cluster, limit: int = 40) -> List[str]:
@@ -485,3 +485,19 @@ def capped(selection: Sequence[str], limit: int = 40) -> Tuple[List[str], str]:
     kept = list(selection)[:limit]
     dropped = len(selection) - len(kept)
     return kept, (f"Showing the first {limit}; {dropped} more selected are not drawn." if dropped else "")
+
+
+def picker_rows(active_info: pd.DataFrame, panel_mode: str, cluster) -> pd.DataFrame:
+    """The pockets the viewer can draw in a panel mode: one cluster's members, or the representatives.
+
+    Args:
+        active_info: The site table.
+        panel_mode: "one cluster" or the across-clusters mode.
+        cluster: The chosen cluster_id for "one cluster".
+
+    Returns:
+        Those rows, in master order.
+    """
+    if panel_mode != "one cluster":
+        return representative_rows(active_info)[0]
+    return active_info[active_info["cluster_id"].astype(str) == str(cluster)]

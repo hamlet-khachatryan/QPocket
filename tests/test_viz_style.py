@@ -51,3 +51,11 @@ def test_apply_sets_the_template():
 
     fig = apply(go.Figure())
     assert fig.layout.template.layout.xaxis.showgrid is False
+
+
+def test_a_big_shape_cluster_keeps_its_hue_when_every_subcluster_is_small():
+    shape = [0] * 9
+    chem = [0, 0, 0, 1, 1, 1, 2, 2, 2]                 # three subclusters of 3, min_size 4
+    colours = cluster_colours(shape, chem, min_size=4)
+    assert colours[(0, 0)] == HUES[0]                  # the largest (first) subcluster carries the hue
+    assert colours[(0, 1)] == GREY and colours[(0, 2)] == GREY

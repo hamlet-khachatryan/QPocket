@@ -383,7 +383,7 @@ def _(cluster_settings, mo):
     # Every cut is a site percentile: the cut sits at that quantile of the site's pairwise distances.
     def _slider(value, label):
         return mo.ui.slider(start=0.5, stop=99.5, step=0.5, value=min(max(float(value), 0.5), 99.5),
-                            label=label, show_value=True)
+                            label=label, show_value=True, debounce=True)
 
     damping = mo.ui.slider(start=0.5, stop=0.98, step=0.01, value=0.9,
                            label="Damping", show_value=True)
@@ -444,15 +444,16 @@ def _(
 
 
 @app.cell
-def _(Path, chem_cut, cluster_matrices, cluster_method, cluster_settings, combined_cut, info, lru_cache,
-      mo, pd, pending, qviz, shape_cut, site_dir):
+def _(chem_cut, cluster_matrices, cluster_method, cluster_settings, combined_cut, info, load_pocket,
+      mo, pending, qviz, shape_cut, site_dir):
     # The tree is drawn only down to its cut, one leaf per cluster; the table beside it reads the same
     # preview, and both share the colours every view below uses.
-    @lru_cache(maxsize=2048)
-    def _cloud(path: str):
-        return pd.read_csv(path)[["x", "y", "z"]].to_numpy(float) if Path(path).exists() else None
+    def _cloud(pdb_id):
+        _path = site_dir / "pockets" / str(pdb_id) / "binding_site.csv"
+        return load_pocket(str(_path))[["x", "y", "z"]].to_numpy(float) if _path.exists() else None
 
     cluster_table, tree_view, preview_colours, tree_matrices, tree_preview = None, mo.md(""), {}, None, None
+    name_colours = {}
     if cluster_matrices is not None and pending is not None and cluster_method.value != "affinity":
         _single = cluster_method.value == "hierarchical" and cluster_matrices.chem is not None
         tree_matrices = (cluster_matrices._replace(shape=cluster_matrices.combined, chem=None) if _single
@@ -468,21 +469,31 @@ def _(Path, chem_cut, cluster_matrices, cluster_method, cluster_settings, combin
                                                     cluster_settings.shape.linkage, preview_colours)
         _info = tree_preview.frame.merge(info[["pdb_id", "protein_state"]].astype({"pdb_id": str}),
                                          on="pdb_id", how="left")
-        _clouds = {pid: c for pid in tree_preview.frame["pdb_id"]
-                   if (c := _cloud(str(site_dir / "pockets" / str(pid) / "binding_site.csv"))) is not None}
+        _clouds = {pid: c for pid in tree_preview.frame["pdb_id"] if (c := _cloud(pid)) is not None}
         cluster_table = qviz.clusters.cluster_table(_info, tree_matrices, _clouds, _min)
+        _f = tree_preview.frame
+        for (_s, _c), _colour in preview_colours.items():
+            name_colours.setdefault(qviz.clusters.cluster_name(_s), qviz.two_stage._shape_colour(
+                preview_colours, _f, _s))
+            name_colours[qviz.clusters.cluster_name(_s, _c)] = _colour
+        _hued = sum(1 for _s in set(_f["shape_cluster_id"])
+                    if qviz.two_stage._shape_colour(preview_colours, _f, _s) != qviz.style.GREY)
+        if _hued > len(qviz.style.HUES):
+            tree_view = mo.vstack([tree_view, mo.md(
+                f"_{_hued} coloured clusters share {len(qviz.style.HUES)} hues: colours repeat every "
+                f"{len(qviz.style.HUES)} clusters (names are unique)._")])
     elif cluster_method.value == "affinity" and pending is not None:
         tree_view = mo.md("_Affinity propagation builds no tree; see Cluster distances below._")
     tree_view
-    return cluster_table, preview_colours, tree_matrices, tree_preview
+    return cluster_table, name_colours, preview_colours, tree_matrices, tree_preview
 
 
 @app.cell
-def _(cluster_table, mo):
+def _(cluster_table, mo, name_colours):
     def _fmt(v, pct=False):
         if v != v:  # NaN
             return "—"
-        return f"{v * 100:.0f}%" if pct else f"p{v:.0f}"
+        return f"{v * 100:.0f}%" if pct else f"{'▇' * max(1, round(v / 10))} p{v:.0f}"
 
     cluster_pick = None
     if cluster_table is not None and len(cluster_table):
@@ -493,8 +504,17 @@ def _(cluster_table, mo):
             shared_volume=cluster_table["shared_volume"].map(lambda v: _fmt(v, True)),
         ).rename(columns={"shape_within": "shape within", "chem_within": "chem within",
                           "shared_volume": "shared volume"})
+        _shown["cluster"] = [("    ↳ " if lvl == "chem" else "■ ") + c
+                             for c, lvl in zip(_shown["cluster"], _shown["level"])]
+
+        def _style(_row, column, value):  # each cluster in its own colour, as in the tree
+            _name = str(value).replace("■ ", "").replace("    ↳ ", "")
+            return ({"color": name_colours.get(_name, "#6b737c"), "fontWeight": 600}
+                    if column == "cluster" else {})
+
         cluster_pick = mo.ui.table(_shown.drop(columns=["level", "parent"]), selection="single",
-                                   pagination=True, page_size=12, label="Clusters (select one)")
+                                   pagination=True, page_size=12, label="Clusters (select one)",
+                                   style_cell=_style)
     cluster_pick if cluster_pick is not None else mo.md("")
     return (cluster_pick,)
 
@@ -504,7 +524,7 @@ def _(cluster_pick, cluster_settings, mo, qviz, tree_matrices, tree_preview):
     # The selected cluster's own tree, members on hover only.
     _view = mo.md("")
     if cluster_pick is not None and tree_preview is not None and len(cluster_pick.value):
-        _name = str(cluster_pick.value.iloc[0]["cluster"])
+        _name = str(cluster_pick.value.iloc[0]["cluster"]).replace("■ ", "").replace("    ↳ ", "")
         _frame = tree_preview.frame
         if _name != "small":
             _shape = int(_name.split("·")[0][1:]) - 1
@@ -710,11 +730,10 @@ def _(
 def _(active_info, cluster_settings, color_by, dist_kind, emb_df, layout, mo, qviz):
     # Small points, no printed labels: the pocket, its cluster and holo/apo show on hover.
     _cb = color_by.value
-    _coords = emb_df.rename(columns={"X": "x", "Y": "y"}).assign(
-        shape_cluster_id=lambda d: (d["shape_cluster_id"] if "shape_cluster_id" in d
-                                    else d["cluster_id"]).fillna(-1).astype(int),
-        chem_cluster_id=lambda d: (d["chem_cluster_id"] if "chem_cluster_id" in d else 0).fillna(0).astype(int),
-        protein_state=lambda d: d["protein_state"] if "protein_state" in d else "")
+    _coords = emb_df.rename(columns={"X": "x", "Y": "y"})
+    _shape_ids, _chem_ids = qviz.clusters.display_ids(_coords)
+    _coords = _coords.assign(shape_cluster_id=_shape_ids, chem_cluster_id=_chem_ids,
+                             protein_state=_coords["protein_state"] if "protein_state" in _coords else "")
     _colours = qviz.style.cluster_colours(_coords["shape_cluster_id"], _coords["chem_cluster_id"],
                                           int(cluster_settings.min_cluster_size))
     _fig = qviz.clusters.landscape_figure(_coords, "cluster" if _cb == "cluster_id" else _cb, _colours)
@@ -909,8 +928,7 @@ def _(FEATURE_COLS, active_info, mo, panel_mode, qcontrols, umap_selection):
 @app.cell
 def _(active_info, cluster_sel, mo, panel_mode, qviz):
     # Which pockets are drawn: searchable, at most 40 at once; representatives first.
-    _rows = active_info if panel_mode.value != "one cluster" else active_info[
-        active_info["cluster_id"].astype(str) == str(cluster_sel.value)]
+    _rows = qviz.grid.picker_rows(active_info, panel_mode.value, cluster_sel.value)
     _options = qviz.grid.cloud_options(_rows)
     _label_of = {v: k for k, v in _options.items()}
     _default = qviz.grid.default_cloud_selection(
@@ -1167,38 +1185,47 @@ def _(mo):
 
 
 @app.cell
-def _(active_info, cluster_matrices, mo):
+def _(active_info, cluster_matrices, mo, qviz):
     _kinds = ["shape"] + (["chemistry", "combined"] if cluster_matrices is not None
                           and cluster_matrices.chem is not None else [])
     dist_kind_pick = mo.ui.dropdown(options=_kinds, value="shape", label="Distance")
-    _clusters = [str(c) for c in sorted(active_info["cluster_id"].dropna().unique())]
-    pair_a = mo.ui.dropdown(options=_clusters, value=_clusters[0] if _clusters else None, label="Cluster")
-    pair_b = mo.ui.dropdown(options=_clusters, value=_clusters[min(1, len(_clusters) - 1)] if _clusters else None,
+    cluster_names = qviz.clusters.cluster_labels_of(active_info)
+    _options = {name: str(c) for c, name in sorted(cluster_names.items()) if c >= 0}
+    _first = list(_options)
+    pair_a = mo.ui.dropdown(options=_options, value=_first[0] if _first else None, label="Cluster")
+    pair_b = mo.ui.dropdown(options=_options, value=_first[min(1, len(_first) - 1)] if _first else None,
                             label="against")
-    mo.hstack([dist_kind_pick, pair_a, pair_b], justify="start", gap=2)
-    return dist_kind_pick, pair_a, pair_b
+    dist_kind_pick
+    return cluster_names, dist_kind_pick, pair_a, pair_b
 
 
 @app.cell
-def _(active_info, cluster_matrices, cluster_settings, dist_kind_pick, mo, pair_a, pair_b, pd, qviz):
+def _(active_info, cluster_matrices, cluster_names, cluster_settings, dist_kind_pick, mo, pd, qviz):
+    # The k × k map follows the distance kind only, so picking a pair below does not recompute it.
     mo.stop(cluster_matrices is None, mo.md("No distance matrix."))
     _full = {"shape": cluster_matrices.shape, "chemistry": cluster_matrices.chem,
              "combined": cluster_matrices.combined}[dist_kind_pick.value]
-    _M = pd.DataFrame(_full, index=cluster_matrices.ids, columns=cluster_matrices.ids)
-    _labels = active_info.assign(pdb_id=active_info["pdb_id"].astype(str)).set_index("pdb_id")["cluster_id"]
-    _labels = _labels.reindex(_M.index).dropna().astype(int)
-    _M = _M.loc[_labels.index, _labels.index]
-    _shape = active_info.get("shape_cluster_id", active_info["cluster_id"]).fillna(-1).astype(int)
-    _chem = active_info.get("chem_cluster_id", 0)
-    _chem = _chem.fillna(0).astype(int) if hasattr(_chem, "fillna") else [0] * len(active_info)
+    site_M = pd.DataFrame(_full, index=cluster_matrices.ids, columns=cluster_matrices.ids)
+    site_labels = active_info.assign(pdb_id=active_info["pdb_id"].astype(str)).set_index("pdb_id")["cluster_id"]
+    site_labels = site_labels.reindex(site_M.index).dropna().astype(int)
+    site_M = site_M.loc[site_labels.index, site_labels.index]
+    _shape, _chem = qviz.clusters.display_ids(active_info)
     _by_pair = qviz.style.cluster_colours(_shape, _chem, int(cluster_settings.min_cluster_size))
     _colours = {int(c): _by_pair.get((int(sh), int(ch)), qviz.style.GREY)
                 for c, sh, ch in zip(active_info["cluster_id"], _shape, _chem) if c == c}
-    _views = [qviz.matrix.cluster_map_figure(qviz.matrix.cluster_map(_M, _labels), _colours)]
+    _cmap = qviz.matrix.cluster_map(site_M, site_labels)
+    qviz.matrix.cluster_map_figure(_cmap, _colours, names={c: cluster_names.get(int(c), str(c))
+                                                          for c in _cmap.index})
+    return site_M, site_labels
+
+
+@app.cell
+def _(mo, pair_a, pair_b, qviz, site_M, site_labels):
+    _view = mo.md("")
     if pair_a.value is not None and pair_b.value is not None:
-        _block = qviz.matrix.member_block(_M, _labels, int(pair_a.value), int(pair_b.value))
-        _views.append(qviz.matrix.heatmap(_block, list(_block.index), [], "as loaded"))
-    mo.vstack(_views)
+        _block = qviz.matrix.member_block(site_M, site_labels, int(pair_a.value), int(pair_b.value))
+        _view = qviz.style.apply(qviz.matrix.heatmap(_block, list(_block.index), [], "as loaded"))
+    mo.vstack([mo.hstack([pair_a, pair_b], justify="start", gap=2), _view])
     return
 
 @app.cell

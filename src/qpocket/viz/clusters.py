@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-from qpocket.core.clustering import pair_distances, to_percentile
+from qpocket.core.clustering import pair_distances, sorted_pairs, to_percentile
 from qpocket.core.sites import grid_spacing
 
 TABLE_COLUMNS = ["cluster", "level", "parent", "n", "holo", "shape_within", "chem_within",
@@ -31,11 +31,11 @@ def shared_volume(a: np.ndarray, b: np.ndarray, spacing: float) -> float:
     return len(cells_a & cells_b) / len(union) if union else 0.0
 
 
-def _within(full: Optional[np.ndarray], index: List[int]) -> float:
-    """Median within-cluster distance, as a percentile of the site's pairs."""
+def _within(full: Optional[np.ndarray], index: List[int], pairs: Optional[np.ndarray] = None) -> float:
+    """Median within-cluster distance, as a percentile of the site's pairs (``pairs``: sorted, if precomputed)."""
     if full is None or len(index) < 2:
         return float("nan")
-    return float(to_percentile(full, [np.median(pair_distances(full[np.ix_(index, index)]))])[0])
+    return float(to_percentile(full, [np.median(pair_distances(full[np.ix_(index, index)]))], pairs=pairs)[0])
 
 
 def _overlap(ids: List[str], clouds: Dict[str, np.ndarray], spacing: float, max_pairs: int,
@@ -58,10 +58,12 @@ def _representative(rows: pd.DataFrame, shape: np.ndarray, index: List[int]) -> 
 
 
 def _row(name: str, level: str, parent: str, rows: pd.DataFrame, index: List[int], m,
-         clouds: Dict[str, np.ndarray], spacing: float, max_pairs: int, rng: np.random.Generator) -> dict:
+         clouds: Dict[str, np.ndarray], spacing: float, max_pairs: int, rng: np.random.Generator,
+         pairs: Dict[str, Optional[np.ndarray]]) -> dict:
     return {"cluster": name, "level": level, "parent": parent, "n": len(rows),
             "holo": float((rows["protein_state"] == "BOUND_STATE").mean()),
-            "shape_within": _within(m.shape, index), "chem_within": _within(m.chem, index),
+            "shape_within": _within(m.shape, index, pairs["shape"]),
+            "chem_within": _within(m.chem, index, pairs["chem"]),
             "shared_volume": _overlap(list(rows["pdb_id"]), clouds, spacing, max_pairs, rng),
             "representative": _representative(rows, m.shape, index)}
 
@@ -87,6 +89,7 @@ def cluster_table(info: pd.DataFrame, m, clouds: Dict[str, np.ndarray], min_size
     if "chem_cluster_id" not in info:
         info["chem_cluster_id"] = 0
     spacing = grid_spacing(list(clouds.values())) or 0.7
+    pairs = {"shape": sorted_pairs(m.shape), "chem": None if m.chem is None else sorted_pairs(m.chem)}
     rows, small = [], []
     sizes = info["shape_cluster_id"].value_counts()
     for shape in sorted(sizes.index, key=lambda s: (-sizes[s], s)):
@@ -96,14 +99,14 @@ def cluster_table(info: pd.DataFrame, m, clouds: Dict[str, np.ndarray], min_size
             continue
         name = f"S{int(shape) + 1}"
         rows.append(_row(name, "shape", "", members, [position[p] for p in members["pdb_id"]], m, clouds,
-                         spacing, max_pairs, rng))
+                         spacing, max_pairs, rng, pairs))
         subs = members["chem_cluster_id"].value_counts()
         if m.chem is None or len(subs) < 2:
             continue
         for chem in sorted(subs.index, key=lambda c: (-subs[c], c)):
             part = members[members["chem_cluster_id"] == chem]
             rows.append(_row(f"{name}·c{int(chem) + 1}", "chem", name, part, [position[p] for p in part["pdb_id"]],
-                             m, clouds, spacing, max_pairs, rng))
+                             m, clouds, spacing, max_pairs, rng, pairs))
     if small:
         pooled = pd.concat(small)
         rows.append({"cluster": "small", "level": "shape", "parent": "", "n": len(pooled),
@@ -111,6 +114,31 @@ def cluster_table(info: pd.DataFrame, m, clouds: Dict[str, np.ndarray], min_size
                      "shape_within": float("nan"), "chem_within": float("nan"), "shared_volume": float("nan"),
                      "representative": f"{len(small)} clusters < {min_size}"})
     return pd.DataFrame(rows, columns=TABLE_COLUMNS)
+
+
+def display_ids(frame: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+    """The (shape, chem) ids a view colours and names by; a single-stage run (all shape ids 0) uses cluster_id.
+
+    Args:
+        frame: cluster_id, and shape_cluster_id / chem_cluster_id where the run has them.
+
+    Returns:
+        (shape ids, chem ids), integers aligned with ``frame``.
+    """
+    cluster = frame["cluster_id"].fillna(-1).astype(int)
+    shape = frame["shape_cluster_id"].fillna(-1).astype(int) if "shape_cluster_id" in frame else cluster
+    chem = frame["chem_cluster_id"].fillna(0).astype(int) if "chem_cluster_id" in frame else cluster * 0
+    if shape.nunique() <= 1 < cluster.nunique():
+        return cluster, cluster * 0
+    return shape, chem
+
+
+def cluster_labels_of(frame: pd.DataFrame) -> Dict[int, str]:
+    """Name each cluster_id the way the tree and table do: S1, or S1·c2 within a shape cluster."""
+    shape, chem = display_ids(frame)
+    subdivided = (chem != 0).any()
+    return {int(c): cluster_name(s, ch if subdivided else None)
+            for c, s, ch in zip(frame["cluster_id"].fillna(-1).astype(int), shape, chem)}
 
 
 def cluster_name(shape: int, chem: Optional[int] = None) -> str:

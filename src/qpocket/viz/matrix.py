@@ -1,7 +1,7 @@
 """The pairwise distance heatmap: symmetrised, ordered so similar pockets sit together."""
 from __future__ import annotations
 
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -116,30 +116,31 @@ def cluster_map(M: pd.DataFrame, labels: pd.Series) -> pd.DataFrame:
     Returns:
         k × k table indexed by cluster; the diagonal is the median within-cluster distance.
     """
-    from qpocket.core.clustering import to_percentile
+    from qpocket.core.clustering import sorted_pairs, to_percentile
 
     full = M.to_numpy(dtype=float)
     labels = labels.reindex(M.index)
     clusters = sorted(labels.dropna().unique())
-    out = pd.DataFrame(index=clusters, columns=clusters, dtype=float)
-    for a in clusters:
-        rows = (labels == a).to_numpy()
-        for b in clusters:
-            cols = (labels == b).to_numpy()
-            block = full[np.ix_(rows, cols)]
-            values = block[np.triu_indices(len(block), k=1)] if a == b else block.ravel()
-            median = float(np.median(values)) if len(values) else 0.0
-            out.loc[a, b] = float(to_percentile(full, [median])[0])
-    return out
+    masks = [(labels == c).to_numpy() for c in clusters]
+    medians = np.zeros((len(clusters), len(clusters)))
+    for i, rows in enumerate(masks):
+        for j in range(i, len(clusters)):
+            block = full[np.ix_(rows, masks[j])]
+            values = block[np.triu_indices(len(block), k=1)] if i == j else block.ravel()
+            medians[i, j] = medians[j, i] = float(np.median(values)) if len(values) else 0.0
+    # one sort of the site's pairs, then every cell placed against it
+    pct = to_percentile(None, medians.ravel(), pairs=sorted_pairs(full)).reshape(medians.shape)
+    return pd.DataFrame(pct, index=clusters, columns=clusters)
 
 
-def cluster_map_figure(cmap: pd.DataFrame, colours: Dict, height: int = 380):
+def cluster_map_figure(cmap: pd.DataFrame, colours: Dict, height: int = 380, names: Optional[Dict] = None):
     """The k × k cluster map as a styled heatmap, cluster swatches along both axes.
 
     Args:
         cmap: From :func:`cluster_map`.
         colours: Colour per cluster label in ``cmap.index`` (missing ones are drawn grey).
         height: Figure height (px).
+        names: Display name per cluster label, e.g. S1·c2; default "S<label + 1>".
 
     Returns:
         A plotly Figure; hover shows both clusters and the percentile.
@@ -148,7 +149,8 @@ def cluster_map_figure(cmap: pd.DataFrame, colours: Dict, height: int = 380):
 
     from qpocket.viz.style import GREY, apply
 
-    names = [f"S{int(c) + 1}" if isinstance(c, (int, np.integer)) else str(c) for c in cmap.index]
+    names = [(names or {}).get(c) or (f"S{int(c) + 1}" if isinstance(c, (int, np.integer)) else str(c))
+             for c in cmap.index]
     fig = go.Figure(go.Heatmap(
         z=cmap.to_numpy(dtype=float), x=names, y=names, zmin=0, zmax=100,
         colorscale=[[0, "#123a5a"], [0.5, "#9cc0da"], [1, "#f4f8fb"]],
