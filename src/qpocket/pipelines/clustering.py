@@ -56,16 +56,32 @@ class ClusterAssignment(NamedTuple):
     params: Dict[str, object]
 
 
-def _stage_params(stage) -> Dict[str, object]:
+def stage_cut(stage, site_distances: np.ndarray) -> Tuple[str, Optional[float]]:
+    """How a stage is cut: a hierarchical stage at its percentile of the whole site's distances.
+
+    Args:
+        stage: Stage settings (StageClustering).
+        site_distances: The site's full matrix for this stage, so a chemistry percentile means the same in every shape cluster.
+
+    Returns:
+        (criterion, threshold) for :func:`stage_labels`: a height for a hierarchical stage, a count otherwise.
+    """
+    if stage.method == "hierarchical":
+        height = cl.percentile_height(site_distances, float(stage.percentile))
+        return "threshold", height * (1 + 1e-9) + 1e-12   # merges at the cut carry float noise
+    return "count", None
+
+
+def _stage_params(stage, cut_height: Optional[float] = None) -> Dict[str, object]:
     """A stage's settings as plain types, for the params JSON."""
     return {
         "method": stage.method,
         "linkage": stage.linkage,
+        "percentile": float(stage.percentile),
+        "cut_height": None if cut_height is None else float(cut_height),
         "k": None if stage.k is None else int(stage.k),
         "damping": float(stage.damping),
         "max_iter": int(stage.max_iter),
-        "criterion": stage.criterion,
-        "threshold": None if stage.threshold is None else float(stage.threshold),
     }
 
 
@@ -95,9 +111,9 @@ def cluster_shape_only(stage, d_shape: np.ndarray) -> ClusterAssignment:
     Returns:
         The assignment; representatives are the medoids on d_shape.
     """
+    criterion, height = stage_cut(stage, d_shape)
     result = stage_labels(d_shape, stage.method, stage.linkage, stage.k,
-                          stage.criterion, stage.threshold,
-                          stage.damping, stage.max_iter)
+                          criterion, height, stage.damping, stage.max_iter)
     zeros = np.zeros(len(result.labels), dtype=int)
     exemplar_map = cl.exemplars(d_shape, result.labels)
     log_message(message_type="clustering_result", mode="shape_only", algorithm=result.method,
@@ -109,7 +125,7 @@ def cluster_shape_only(stage, d_shape: np.ndarray) -> ClusterAssignment:
         exemplar_positions=tuple(exemplar_map[c] for c in sorted(exemplar_map)),
         params={
             "mode": "shape_only",
-            "shape": {**_stage_params(stage), "n_clusters": result.n_clusters},
+            "shape": {**_stage_params(stage, height), "n_clusters": result.n_clusters},
             "n_clusters": result.n_clusters,
         },
     )
@@ -140,8 +156,9 @@ def cluster_pockets(
 
     if settings.mode == "single":
         stage = settings.single
+        criterion, height = stage_cut(stage, combined)
         result = stage_labels(combined, stage.method, stage.linkage, stage.k,
-                              stage.criterion, stage.threshold, stage.damping, stage.max_iter)
+                              criterion, height, stage.damping, stage.max_iter)
 
         zeros = np.zeros(len(result.labels), dtype=int)
         exemplar_map = cl.exemplars(combined, result.labels)
@@ -158,12 +175,14 @@ def cluster_pockets(
             exemplar_positions=tuple(exemplar_map[c] for c in sorted(exemplar_map)),
             params={
                 "mode": "single",
-                "single": _stage_params(stage),
+                "single": _stage_params(stage, height),
                 "n_clusters": result.n_clusters,
             },
         )
 
     shape_cfg, chem_cfg = settings.shape, settings.chem
+    shape_criterion, shape_height = stage_cut(shape_cfg, d_shape)
+    chem_criterion, chem_height = stage_cut(chem_cfg, d_chem)   # the whole site's scale
     result = cl.two_stage_labels(
         d_shape,
         d_chem,
@@ -175,12 +194,12 @@ def cluster_pockets(
         chem_k=None if chem_cfg.k is None else int(chem_cfg.k),
         min_cluster_size=int(settings.min_cluster_size),
         combined_distances=combined,
-        shape_criterion=shape_cfg.criterion,
-        shape_threshold=shape_cfg.threshold,
+        shape_criterion=shape_criterion,
+        shape_threshold=shape_height,
         shape_damping=float(shape_cfg.damping),
         shape_max_iter=int(shape_cfg.max_iter),
-        chem_criterion=chem_cfg.criterion,
-        chem_threshold=chem_cfg.threshold,
+        chem_criterion=chem_criterion,
+        chem_threshold=chem_height,
         chem_damping=float(chem_cfg.damping),
         chem_max_iter=int(chem_cfg.max_iter),
         stage_labels=stage_labels,
@@ -201,11 +220,11 @@ def cluster_pockets(
         params={
             "mode": "two_stage",
             "shape": {
-                **_stage_params(shape_cfg),
+                **_stage_params(shape_cfg, shape_height),
                 "n_clusters": result.shape_clustering.n_clusters,
             },
             "chem": {
-                **_stage_params(chem_cfg),
+                **_stage_params(chem_cfg, chem_height),
                 "n_subclusters": {
                     str(k): (None if v is None else v.n_clusters)
                     for k, v in result.chem_clusterings.items()

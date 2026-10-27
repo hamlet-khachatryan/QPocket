@@ -44,3 +44,15 @@ def test_percentile_cut_on_constant_matrix():
 def test_percentile_cut_two_structures():
     d = np.array([[0.0, 1.0], [1.0, 0.0]])
     assert cluster_labels(d, method="average", criterion="percentile", threshold=50).n_clusters in (1, 2)
+
+
+def test_merges_at_the_cut_height_are_kept_together():
+    """Average linkage can put a merge at 0.1 + 1 ulp; a p30 cut at 0.1 must still join it."""
+    n, a, b = 15, list(range(10)), list(range(10, 15))
+    d = np.full((n, n), 10.0)
+    for group in (a, b):
+        for i in group:
+            for j in group:
+                d[i, j] = 0.1
+    np.fill_diagonal(d, 0.0)
+    assert cluster_labels(d, method="average", criterion="percentile", threshold=30).n_clusters == 2

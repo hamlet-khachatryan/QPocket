@@ -14,9 +14,10 @@ from qpocket.pipelines.clustering import archive_clustering, cluster_pockets, wr
 def _stage(payload: dict, default: StageClustering) -> StageClustering:
     known = {f.name for f in fields(StageClustering)}
     values = {k: v for k, v in payload.items() if k in known}
-    if payload and "criterion" not in values:
-        # Saved before criteria existed: those runs counted, so keep counting.
-        values["criterion"] = "count"
+    if payload and "percentile" not in payload and values.get("method", default.method) == "kmedoids" \
+            and values.get("k") is None:
+        # Saved before percentile cuts, when a kmedoids stage without k chose k itself.
+        values["method"] = "hierarchical"
     return StageClustering(**{**default.__dict__, **values})
 
 

@@ -451,7 +451,8 @@ def cluster_labels(
         raw = fcluster(link, t=cut, criterion="distance")
     elif criterion == PERCENTILE:
         cut = percentile_height(d, float(threshold))
-        raw = fcluster(link, t=cut, criterion="distance")
+        # the cut is one of the distances; merges at it carry float noise
+        raw = fcluster(link, t=cut * (1 + 1e-9) + 1e-12, criterion="distance")
     else:
         raise ValueError(f"unknown criterion {criterion!r}; expected one of {CRITERIA}")
 

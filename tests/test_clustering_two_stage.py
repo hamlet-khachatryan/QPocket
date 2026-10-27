@@ -249,12 +249,12 @@ def test_no_silhouette_anywhere():
     assert "silhouette" not in cl.Clustering._fields
 
 
-def test_defaults_are_relative_hierarchical():
+def test_defaults_are_percentile_hierarchical():
     from qpocket.config import QPocketConfig
 
     c = QPocketConfig().distance.clustering
-    assert (c.shape.method, c.shape.criterion, c.shape.threshold) == ("hierarchical", "relative", 0.5)
-    assert (c.chem.method, c.chem.criterion, c.chem.threshold) == ("hierarchical", "relative", 0.5)
+    assert (c.shape.method, c.shape.percentile) == ("hierarchical", 15.0)
+    assert (c.chem.method, c.chem.percentile) == ("hierarchical", 20.0)
     assert c.single.method == "affinity"
 
 
@@ -277,9 +277,9 @@ def test_clustering_files_carry_no_silhouette(tmp_path, two_axes):
         assert "silhouette" not in path.read_text().lower(), path.name
     import json
     params = json.loads((tmp_path / "clustering_params.json").read_text())
-    for stage in ("shape", "chem"):
-        assert (params[stage]["criterion"], params[stage]["threshold"]) == ("relative", 0.5)
-        assert "k_range" not in params[stage]
+    for stage, default in (("shape", 15.0), ("chem", 20.0)):
+        assert params[stage]["percentile"] == default and params[stage]["cut_height"] is not None
+        assert "k_range" not in params[stage] and "criterion" not in params[stage]
 
 
 def _old_run(tmp_path, two_axes):
@@ -301,35 +301,36 @@ def _old_run(tmp_path, two_axes):
     return tmp_path
 
 
-def test_an_old_run_without_k_names_the_fix(tmp_path, two_axes):
+def test_an_old_run_reclusters_at_the_default_percentiles(tmp_path, two_axes):
     from qpocket.arms import recluster
 
     run = _old_run(tmp_path, two_axes)
-    with pytest.raises(ValueError, match="set k or use criterion 'threshold' or 'relative'"):
-        recluster.run(run, recluster.load_settings(run))
+    settings = recluster.load_settings(run)
+    assert (settings.shape.percentile, settings.chem.percentile) == (15.0, 20.0)
+    assert settings.chem.method == "hierarchical"          # its kmedoids had no k
+    recluster.run(run, settings)
 
 
-def test_cli_recluster_takes_a_relative_criterion(tmp_path, two_axes):
+def test_cli_recluster_takes_percentiles(tmp_path, two_axes):
     import json
     from click.testing import CliRunner
     from qpocket.cli import cli
 
     run = _old_run(tmp_path, two_axes)
-    res = CliRunner().invoke(cli, ["recluster", str(run), "--shape-criterion", "relative",
-                                   "--shape-threshold", "0.5", "--chem-criterion", "relative",
-                                   "--chem-threshold", "0.5"])
+    res = CliRunner().invoke(cli, ["recluster", str(run), "--shape-percentile", "30",
+                                   "--chem-percentile", "20"])
     assert res.exit_code == 0, res.output
     params = json.loads((run / "metadata/clustering_params.json").read_text())
-    assert params["shape"]["criterion"] == params["chem"]["criterion"] == "relative"
-    assert params["chem"]["method"] == "hierarchical" and params["n_clusters"] == 6
+    assert (params["shape"]["percentile"], params["chem"]["percentile"]) == (30.0, 20.0)
+    assert params["chem"]["method"] == "hierarchical"
 
 
-def test_cli_recluster_on_an_old_run_says_what_to_set(tmp_path, two_axes):
+def test_cli_recluster_on_an_old_run_works_without_options(tmp_path, two_axes):
     from click.testing import CliRunner
     from qpocket.cli import cli
 
     res = CliRunner().invoke(cli, ["recluster", str(_old_run(tmp_path, two_axes))])
-    assert res.exit_code != 0 and "set k or use criterion" in res.output
+    assert res.exit_code == 0, res.output
 
 
 @pytest.mark.parametrize("criterion", ["relative", "threshold"])
@@ -340,33 +341,27 @@ def test_a_height_cut_without_a_threshold_says_so(criterion):
         _stage_labels(_two_blobs(), "hierarchical", "average", k=None, criterion=criterion)
 
 
-def test_cli_relative_without_a_threshold_takes_half_height(tmp_path, two_axes):
-    """The recovery the old-run error recommends must work without a threshold."""
+def test_cli_percentile_out_of_range_is_refused(tmp_path, two_axes):
+    from click.testing import CliRunner
+    from qpocket.cli import cli
+
+    res = CliRunner().invoke(cli, ["recluster", str(_old_run(tmp_path, two_axes)), "--shape-percentile", "150"])
+    assert res.exit_code != 0 and "--shape-percentile" in res.output and "Traceback" not in res.output
+
+
+def test_cli_k_pins_a_kmedoids_stage(tmp_path, two_axes):
     import json
     from click.testing import CliRunner
     from qpocket.cli import cli
 
     run = _old_run(tmp_path, two_axes)
-    res = CliRunner().invoke(cli, ["recluster", str(run), "--shape-criterion", "relative",
-                                   "--chem-criterion", "relative"])
+    res = CliRunner().invoke(cli, ["recluster", str(run), "--shape-k", "2"])
     assert res.exit_code == 0, res.output
     params = json.loads((run / "metadata/clustering_params.json").read_text())
-    for stage in ("shape", "chem"):
-        assert (params[stage]["criterion"], params[stage]["threshold"]) == ("relative", 0.5)
+    assert (params["shape"]["method"], params["shape"]["k"]) == ("kmedoids", 2)
 
 
-def test_cli_threshold_without_a_height_asks_for_one(tmp_path, two_axes):
-    from click.testing import CliRunner
-    from qpocket.cli import cli
-
-    res = CliRunner().invoke(cli, ["recluster", str(_old_run(tmp_path, two_axes)),
-                                   "--shape-criterion", "threshold"])
-    assert res.exit_code != 0 and "--shape-threshold" in res.output
-    assert "Traceback" not in res.output
-
-
-def test_a_run_saved_before_criteria_existed_counts(tmp_path, two_axes):
-    """No criterion key means the old count behaviour, not the new relative default."""
+def test_a_run_saved_before_percentiles_takes_the_defaults(tmp_path, two_axes):
     import json
     from qpocket.arms import recluster
 
@@ -378,9 +373,7 @@ def test_a_run_saved_before_criteria_existed_counts(tmp_path, two_axes):
         params[stage].pop("threshold")
     path.write_text(json.dumps(params))
     settings = recluster.load_settings(run)
-    assert settings.shape.criterion == settings.chem.criterion == "count"
-    with pytest.raises(ValueError, match="set k or use criterion"):
-        recluster.run(run, settings)
+    assert (settings.shape.percentile, settings.chem.percentile) == (15.0, 20.0)
 
 
 @pytest.mark.parametrize("mode", ["two_stage", "single"])
@@ -392,3 +385,36 @@ def test_cluster_pockets_without_chem_raises(mode):
     d = distances([0, 1, 2, 10, 11, 12])
     with pytest.raises(ValueError, match="needs featurised pockets"):
         cluster_pockets(replace(ClusteringParams(), mode=mode), d, None, None)
+
+
+def test_chemistry_percentile_is_site_wide():
+    """Group B is chemically tight against the site: a site-wide p20 leaves it whole."""
+    from dataclasses import replace
+
+    from qpocket.config import ClusteringParams
+    from qpocket.pipelines.clustering import cluster_pockets
+
+    rng = np.random.default_rng(1)
+    a, b = list(range(10)), list(range(10, 15))
+    n = 15
+    d_shape = np.full((n, n), 10.0)
+    d_chem = np.full((n, n), 5.0)
+    for group in (a, b):
+        for i in group:
+            for j in group:
+                d_shape[i, j] = 0.1
+    for i in a:
+        for j in a:
+            if i < j:
+                d_chem[i, j] = d_chem[j, i] = rng.uniform(1.0, 10.0)
+    for k, (i, j) in enumerate((i, j) for i in b for j in b if i < j):
+        d_chem[i, j] = d_chem[j, i] = 0.10 + 0.01 * k
+    np.fill_diagonal(d_shape, 0.0)
+    np.fill_diagonal(d_chem, 0.0)
+    base = ClusteringParams()
+    settings = replace(base, mode="two_stage", shape=replace(base.shape, percentile=30.0),
+                       chem=replace(base.chem, percentile=20.0))
+    out = cluster_pockets(settings, d_shape, d_chem, (d_shape + d_chem) / 2)
+    assert len(set(out.shape_labels[a])) == 1 and len(set(out.shape_labels[b])) == 1
+    assert len(set(out.chem_labels[b])) == 1          # tight on the site's scale: not split
+    assert len(set(out.chem_labels[a])) > 1
