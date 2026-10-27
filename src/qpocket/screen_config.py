@@ -96,6 +96,16 @@ class CrossdockConfig:
 
 
 @dataclass
+class RemoteConfig:
+    """A machine reached over SSH that runs a cross-docking; Q-Pocket never starts or stops it."""
+    host: Optional[str] = None          # an ssh alias or user@host
+    directory: str = "~/qpocket_crossdock"   # task folders go to <directory>/<site>
+    setup: List[str] = field(default_factory=list)  # shell lines run first, e.g. activating the env
+    azure_vm: Optional[str] = None      # only to show the VM's power state
+    azure_resource_group: Optional[str] = None
+
+
+@dataclass
 class ScreenConfig:
     """Full screening configuration."""
     run_mode: str = "cross_docking"  # cross_docking | virtual_screening
@@ -108,6 +118,7 @@ class ScreenConfig:
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     receptor: ReceptorConfig = field(default_factory=ReceptorConfig)
     crossdock: CrossdockConfig = field(default_factory=CrossdockConfig)
+    remote: RemoteConfig = field(default_factory=RemoteConfig)
 
 
 def load_screen_config(path: Optional[str] = None, **overrides) -> ScreenConfig:
