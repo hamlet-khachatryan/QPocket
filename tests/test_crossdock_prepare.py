@@ -24,7 +24,7 @@ def run(tmp_path, monkeypatch):
                  ).to_csv(ws.metadata / "master.csv", index=False)
     pd.DataFrame({"pdb_id": ["R1", "R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
     (ws.screening / "actives.smi").write_text("SMILES\tPDB_ID\tLigand_Name\nCCO\tR1\tETH\nCCO\tR2\tETH\n")
-    def fake_receptor(pdb, pocket, out, rid, cfg, sequences=None):
+    def fake_receptor(pdb, pocket, out, rid, cfg, sequences=None, failures=None):
         out.mkdir(parents=True, exist_ok=True)
         (out / f"{rid}.pdbqt").write_text("x")
         return out / f"{rid}.pdbqt"
@@ -82,7 +82,7 @@ def site(tmp_path, monkeypatch):
         "SMILES\tPDB_ID\tLigand_Name\tLigand_File\nCCO\tR1\tETH\tl1.pdb\nCCO\tR2\tETH\tl2.pdb\n")
     seen = {}
 
-    def fake_receptor(pdb, pocket, out, rid, cfg, sequences=None):
+    def fake_receptor(pdb, pocket, out, rid, cfg, sequences=None, failures=None):
         seen[rid] = sequences
         out.mkdir(parents=True, exist_ok=True)
         (out / f"{rid}.pdbqt").write_text("x")
@@ -153,5 +153,81 @@ def test_a_failed_prepare_leaves_the_previous_snapshot(site, monkeypatch):
 
     monkeypatch.setattr(crossdock, "prepare_ligands", broken)
     with pytest.raises(RuntimeError):
+        crossdock.prepare(ws.root)
+    assert pd.read_csv(used / "selected_representatives.csv")["pdb_id"].tolist() == ["R1", "R2"]
+
+
+def _failing(reasons):
+    """A prepare_receptor that fails with ``reasons[rid]`` and succeeds for the others."""
+    def fake(pdb, pocket, out, rid, cfg, sequences=None, failures=None):
+        if rid in reasons:
+            failures[rid] = reasons[rid]
+            return None
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"{rid}.pdbqt").write_text("x")
+        return out / f"{rid}.pdbqt"
+    return fake
+
+
+def test_every_receptor_failing_names_each_reason(run, monkeypatch):
+    from qpocket.arms.screen import crossdock
+    from qpocket.arms.screen.receptors import ReceptorPreparationError
+
+    monkeypatch.setattr(crossdock, "prepare_receptor", _failing(
+        {"R1": "ImportError: No module named 'openmm'", "R2": "RuntimeError: pdb2pqr exploded"}))
+    with pytest.raises(ReceptorPreparationError) as e:
+        crossdock.prepare(run.root)
+    msg = str(e.value)
+    assert "No module named 'openmm'" in msg and "uv sync --extra screen" in msg
+    assert "pdb2pqr exploded" in msg and "no coordinates" not in msg
+
+
+def test_some_receptors_failing_still_prepares_the_rest(run, monkeypatch):
+    from qpocket.arms.screen import crossdock
+
+    logged = []
+    monkeypatch.setattr(crossdock, "prepare_receptor", _failing({"R1": "RuntimeError: boom"}))
+    monkeypatch.setattr(crossdock, "log_message", lambda **fields: logged.append(fields))
+    crossdock.prepare(run.root)
+    folder = run.screening / "crossdock"
+    assert (folder / "box.json").exists()
+    assert set(pd.read_csv(folder / "docking_jobs.csv")["representative"]) == {"R2"}
+    warnings = [f for f in logged if f.get("stage") == "prepare_receptor"]
+    assert warnings and "R1" in warnings[0]["failed"] and "boom" in warnings[0]["failed"]
+
+
+def test_identical_reasons_are_grouped():
+    from qpocket.arms.screen.receptors import describe_failures
+
+    assert describe_failures({"A": "X", "B": "X"}) == "X (2 representatives: A, B)"
+    many = describe_failures({f"R{i}": "X" for i in range(7)})
+    assert many == "X (7 representatives: R0, R1, R2, R3, R4, …)"
+
+
+def test_a_receptor_conversion_failure_is_reported(tmp_path, monkeypatch):
+    from qpocket.arms.screen import receptors
+    from qpocket.screen_config import ScreenConfig
+
+    cfg = ScreenConfig()
+    cfg.receptor.repair = False
+    monkeypatch.setattr(receptors, "_protonate", lambda pdb, pqr, cfg: None)
+    monkeypatch.setattr(receptors, "receptor_from_pqr", lambda pqr, pdbqt: False)
+    cleaned = tmp_path / "R1_clean.pdb"
+    cleaned.write_text("ATOM\n")
+    failures = {}
+    assert receptors.prepare_receptor(cleaned, None, tmp_path / "out", "R1", cfg, failures=failures) is None
+    assert failures == {"R1": "PDBQT conversion failed"}
+
+
+def test_no_receptors_leaves_the_previous_snapshot(site, monkeypatch):
+    from qpocket.arms.screen import crossdock
+    from qpocket.arms.screen.receptors import ReceptorPreparationError
+
+    ws, _ = site
+    crossdock.prepare(ws.root)
+    used = ws.screening / "crossdock" / "representatives_used"
+    pd.DataFrame({"pdb_id": ["R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
+    monkeypatch.setattr(crossdock, "prepare_receptor", _failing({"R2": "RuntimeError: boom"}))
+    with pytest.raises(ReceptorPreparationError):
         crossdock.prepare(ws.root)
     assert pd.read_csv(used / "selected_representatives.csv")["pdb_id"].tolist() == ["R1", "R2"]

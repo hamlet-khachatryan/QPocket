@@ -14,7 +14,7 @@ from eliot import log_message, start_action
 
 from qpocket.arms.screen.campaign import ScreeningPlan
 from qpocket.arms.screen.ligands import distinct_actives, prepare_ligands
-from qpocket.arms.screen.receptors import prepare_receptor
+from qpocket.arms.screen.receptors import ReceptorPreparationError, describe_failures, prepare_receptor
 from qpocket.core.crossdock import crossdock_jobs
 from qpocket.core.screening import calculate_box
 from qpocket.io import layout
@@ -183,12 +183,17 @@ def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], 
 
     rep_ids = _representatives(staged)
     cleaned = pd.read_csv(ws.metadata / "master.csv").set_index("pdb_id")["cleaned_file"].to_dict()
-    receptors = {}
+    receptors, failures = {}, {}
     for rep in rep_ids:
         path = prepare_receptor(Path(cleaned[rep]), _pocket(ws, rep), folder / "receptors", rep, cfg,
-                                sequences=_sequences(ws, rep) if cfg.receptor.repair else None)
+                                sequences=_sequences(ws, rep) if cfg.receptor.repair else None,
+                                failures=failures)
         if path is not None:
             receptors[rep] = path.relative_to(folder).as_posix()
+    if not receptors:
+        raise ReceptorPreparationError(f"no receptor could be prepared: {describe_failures(failures)}")
+    if failures:
+        log_message(message_type="warning", stage="prepare_receptor", failed=describe_failures(failures))
     actives = distinct_actives(ws.screening / "actives.smi", ws.metadata / "master.csv")
     actives.to_csv(folder / "ligands.csv", index=False)
     ligands = {a: p.relative_to(folder).as_posix()

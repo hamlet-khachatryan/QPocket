@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -156,8 +156,40 @@ def _protonate(pdb: Path, pqr: Path, cfg: ScreenConfig) -> Path:
     return plugin.fn(pdb, pqr, plugin_params(RECEPTORS, cfg.receptor.use, cfg.receptor.options))
 
 
+class ReceptorPreparationError(RuntimeError):
+    """No representative could be made into a docking receptor."""
+
+
+#: Modules of the ``screen`` extra; a reason naming one gets the install hint.
+_SCREEN_EXTRA = ("openmm", "pdbfixer")
+
+
+def describe_failures(failures: Dict[str, str], shown: int = 5) -> str:
+    """Why receptors failed, one entry per distinct reason with the representatives it hit.
+
+    Args:
+        failures: Reason per representative id.
+        shown: Ids listed per reason before the rest are elided.
+
+    Returns:
+        Reasons joined by "; ", most frequent first.
+    """
+    grouped: Dict[str, list] = {}
+    for rep, reason in failures.items():
+        grouped.setdefault(reason, []).append(rep)
+    parts = []
+    for reason, reps in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
+        ids = ", ".join(reps[:shown]) + (", …" if len(reps) > shown else "")
+        noun = "representative" if len(reps) == 1 else "representatives"
+        hint = (" — install the screen extra: uv sync --extra screen"
+                if any(f"No module named '{m}" in reason for m in _SCREEN_EXTRA) else "")
+        parts.append(f"{reason}{hint} ({len(reps)} {noun}: {ids})")
+    return "; ".join(parts)
+
+
 def prepare_receptor(cleaned_pdb: Path, pocket: np.ndarray, out_dir: Path, rep_id: str,
-                     cfg: ScreenConfig, sequences: Optional[dict] = None) -> Optional[Path]:
+                     cfg: ScreenConfig, sequences: Optional[dict] = None, *,
+                     failures: Optional[Dict[str, str]] = None) -> Optional[Path]:
     """Repair, protonate and write one docking receptor.
 
     Args:
@@ -167,6 +199,7 @@ def prepare_receptor(cleaned_pdb: Path, pocket: np.ndarray, out_dir: Path, rep_i
         rep_id: Representative id.
         cfg: Screening configuration.
         sequences: Chain to full sequence, so missing loops can be seen (from chain_sequences).
+        failures: When given, why this representative failed is written into it under ``rep_id``.
 
     Returns:
         The receptor PDBQT, or None when a step failed.
@@ -182,5 +215,11 @@ def prepare_receptor(cleaned_pdb: Path, pocket: np.ndarray, out_dir: Path, rep_i
         _protonate(pdb, pqr, cfg)
     except Exception as e:
         log_message(message_type="error", stage="prepare_receptor", pdb_id=rep_id, error=str(e))
+        if failures is not None:
+            failures[rep_id] = f"{type(e).__name__}: {e}"
         return None
-    return pdbqt if receptor_from_pqr(pqr, pdbqt) else None
+    if receptor_from_pqr(pqr, pdbqt):
+        return pdbqt
+    if failures is not None:
+        failures[rep_id] = "PDBQT conversion failed"
+    return None
