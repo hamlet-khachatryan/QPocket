@@ -1,7 +1,7 @@
 """Binding-site discovery: ligands a structure holds, and sites built from cavity boxes (pure)."""
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
@@ -212,3 +212,87 @@ def ligand_sites(coords: Sequence[np.ndarray], site_boxes: np.ndarray, fraction:
 def site_name(rank: int, residue: str) -> str:
     """Short site name: ``S<rank>-<residue>``, e.g. S1-H21, or ``S<rank>`` without a residue."""
     return f"S{rank}-{residue}" if residue else f"S{rank}"
+
+
+def match_site(recorded: Set[Tuple[str, int]], member_sets: Sequence[Set[Tuple[str, int]]],
+               min_jaccard: float = 0.5) -> Optional[int]:
+    """The site whose member cavities best overlap a recorded set, if they overlap enough.
+
+    Args:
+        recorded: ``(pdb_id, cavity)`` pairs an override was made on.
+        member_sets: Each current site's ``(pdb_id, cavity)`` pairs.
+        min_jaccard: Smallest |A ∩ B| / |A ∪ B| that still counts as the same site.
+
+    Returns:
+        Index into ``member_sets``, or None when no site overlaps enough.
+    """
+    best, best_score = None, 0.0
+    for k, members in enumerate(member_sets):
+        union = len(recorded | members)
+        score = len(recorded & members) / union if union else 0.0
+        if score > best_score:
+            best, best_score = k, score
+    return best if best_score >= min_jaccard else None
+
+
+def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: List[List[int]],
+                    keys: Sequence[Tuple[str, int]],
+                    overrides: Sequence[Mapping]) -> Tuple[List[List[int]], List[List[int]], List[Dict]]:
+    """Re-apply manual merges, drops and splits, in order, to the automatic site groups.
+
+    Args:
+        groups: Site groups (candidate indices) after :func:`merge_sites`.
+        cores: Strict groups from :func:`cavity_cores`; a split returns the ones inside its group.
+        members: Per group, every candidate belonging to it (:func:`site_members`); overrides match on these.
+        keys: ``(pdb_id, cavity)`` of each candidate.
+        overrides: ``{"op": "merge", "sites": [[[pdb, cav], ...], ...]}``, or
+            ``{"op": "drop" | "split", "cavities": [[pdb, cav], ...]}``.
+
+    Returns:
+        The new groups, the dropped groups, and per override ``{"op", "status": "applied" | "unmatched"}``,
+        with ``"parts"`` for a merge or split.
+    """
+    own = [sorted(g) for g in groups]
+    mem = [set(m) for m in members]
+    dropped: List[List[int]] = []
+    report: List[Dict] = []
+
+    def keyed(k: int) -> Set[Tuple[str, int]]:
+        return {tuple(keys[i]) for i in mem[k]}
+
+    def recorded(cavities) -> Set[Tuple[str, int]]:
+        return {(str(p), int(c)) for p, c in cavities}
+
+    for override in overrides:
+        op = override["op"]
+        sets = [keyed(k) for k in range(len(own))]
+        entry: Dict = {"op": op, "status": "unmatched"}
+        if op == "merge":
+            hits = sorted({k for part in override["sites"]
+                           for k in [match_site(recorded(part), sets)] if k is not None})
+            if len(hits) >= 2:
+                merged, merged_mem = sorted(i for k in hits for i in own[k]), set().union(*(mem[k] for k in hits))
+                own = [g for k, g in enumerate(own) if k not in hits] + [merged]
+                mem = [m for k, m in enumerate(mem) if k not in hits] + [merged_mem]
+                entry = {"op": op, "status": "applied", "parts": len(hits)}
+            else:
+                entry["parts"] = len(hits)
+        elif op in ("drop", "split"):
+            k = match_site(recorded(override["cavities"]), sets)
+            if k is not None and op == "drop":
+                dropped.append(own.pop(k))
+                mem.pop(k)
+                entry["status"] = "applied"
+            elif k is not None:
+                inside = set(own[k])
+                parts = [sorted(c) for c in cores if c and set(c) <= inside]
+                if len(parts) >= 2:
+                    own = own[:k] + own[k + 1:] + parts
+                    mem = mem[:k] + mem[k + 1:] + [set(p) for p in parts]
+                    entry = {"op": op, "status": "applied", "parts": len(parts)}
+                else:
+                    entry = {"op": op, "status": "unmatched", "parts": len(parts)}
+        else:
+            raise ValueError(f"unknown site override {op!r}; known: merge, drop, split")
+        report.append(entry)
+    return own, dropped, report

@@ -234,3 +234,56 @@ def test_a_cavity_always_belongs_to_its_own_site():
     site_boxes = np.array([median_box(boxes[g]) for g in groups])
     assert box_iou(site_boxes, boxes[[4]])[0, 0] < 0.5
     assert site_members(site_boxes, boxes, 0.5, groups=groups) == [[0, 1, 2, 3, 4]]
+
+
+# --- manual overrides re-applied to the automatic grouping --------------------
+
+# candidates 0-3 form site A (cores {0,1} and {2,3}), 4-5 site B, 6 site C
+_KEYS = [("P1", 0), ("P2", 0), ("P3", 0), ("P4", 0), ("P1", 1), ("P2", 1), ("P5", 0)]
+_CORES = [[0, 1], [2, 3], [4, 5], [6]]
+_GROUPS = [[0, 1, 2, 3], [4, 5], [6]]
+
+
+def _cavs(*idx):
+    return [list(_KEYS[i]) for i in idx]
+
+
+def _apply(overrides, groups=_GROUPS):
+    from qpocket.core.sites import apply_overrides
+
+    return apply_overrides([list(g) for g in groups], _CORES, [list(g) for g in groups], _KEYS, overrides)
+
+
+def test_merge_override_joins_two_groups():
+    groups, dropped, report = _apply([{"op": "merge", "sites": [_cavs(0, 1, 2, 3), _cavs(4, 5)]}])
+    assert sorted(map(sorted, groups)) == [[0, 1, 2, 3, 4, 5], [6]]
+    assert dropped == [] and report == [{"op": "merge", "status": "applied", "parts": 2}]
+
+
+def test_drop_override_removes_a_group():
+    groups, dropped, report = _apply([{"op": "drop", "cavities": _cavs(4, 5)}])
+    assert sorted(map(sorted, groups)) == [[0, 1, 2, 3], [6]] and dropped == [[4, 5]]
+    assert report[0]["status"] == "applied"
+
+
+def test_split_override_returns_its_cores():
+    groups, _, report = _apply([{"op": "split", "cavities": _cavs(0, 1, 2, 3)}])
+    assert sorted(map(sorted, groups)) == [[0, 1], [2, 3], [4, 5], [6]]
+    assert report[0] == {"op": "split", "status": "applied", "parts": 2}
+
+
+def test_override_follows_a_slightly_changed_site():
+    groups, dropped, _ = _apply([{"op": "drop", "cavities": _cavs(0, 1, 2)}])  # 3 of the site's 4
+    assert dropped == [[0, 1, 2, 3]]
+
+
+def test_unmatched_override_is_reported_not_applied():
+    groups, dropped, report = _apply([{"op": "drop", "cavities": [["P9", 0], ["P9", 1]]}])
+    assert sorted(map(sorted, groups)) == sorted(map(sorted, _GROUPS)) and dropped == []
+    assert report[0]["status"] == "unmatched"
+
+
+def test_later_overrides_see_earlier_ones():
+    groups, dropped, _ = _apply([{"op": "merge", "sites": [_cavs(4, 5), _cavs(6)]},
+                                 {"op": "drop", "cavities": _cavs(4, 5, 6)}])
+    assert sorted(map(sorted, groups)) == [[0, 1, 2, 3]] and dropped == [[4, 5, 6]]
