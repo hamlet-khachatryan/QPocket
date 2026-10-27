@@ -116,7 +116,7 @@ def doctor(config: Optional[str], smoke: bool):
             ok(f"import {module}", "screen extra")
         else:
             line("warn", f"import {module}",
-                 f"{error} — uv sync --extra screen (only needed for `qpocket screen`)")
+                 f"{error} — uv sync --extra screen, plus --extra viz for the explorer (only needed for `qpocket screen`)")
 
     # --- APBS actually running -------------------------------------------
     if smoke:

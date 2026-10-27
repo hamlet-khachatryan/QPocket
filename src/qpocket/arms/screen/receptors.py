@@ -181,7 +181,7 @@ def describe_failures(failures: Dict[str, str], shown: int = 5) -> str:
     for reason, reps in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
         ids = ", ".join(reps[:shown]) + (", …" if len(reps) > shown else "")
         noun = "representative" if len(reps) == 1 else "representatives"
-        hint = (" — install the screen extra: uv sync --extra screen"
+        hint = (" — install the screen extra: uv sync --extra screen (add --extra viz if you use the explorer)"
                 if any(f"No module named '{m}" in reason for m in _SCREEN_EXTRA) else "")
         parts.append(f"{reason}{hint} ({len(reps)} {noun}: {ids})")
     return "; ".join(parts)
