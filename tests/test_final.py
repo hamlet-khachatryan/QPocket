@@ -106,3 +106,14 @@ def test_a_failed_finalise_keeps_the_previous_final(run, monkeypatch):
     assert final.final_status(run, FAR) == "current"
     assert (folder / "clusters.csv").read_text() == before
     assert not (folder / "history").exists() and not list(folder.glob(".incoming*"))
+
+
+def test_io_final_reads_what_finalise_wrote(run):
+    from qpocket.io import final as io_final
+
+    final.finalise_site(run, FAR)
+    site = run / "sites" / FAR
+    assert io_final.read_final(site)["settings"]["site_id"] == FAR
+    assert io_final.final_status(site) == "current"
+    with pytest.raises(FileNotFoundError):
+        io_final.read_final(run / "sites" / NEAR)

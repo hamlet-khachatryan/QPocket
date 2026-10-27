@@ -13,10 +13,10 @@ from eliot import log_message
 
 from qpocket.arms.sites import SiteError, _site_ws
 from qpocket.core.types import Ligand
+from qpocket.io import final as _io
+from qpocket.io.final import FINAL_FILES
 from qpocket.io.tables import file_hash
 
-#: What final/ holds, besides history/.
-FINAL_FILES = ("clusters.csv", "settings.json", "residue_profile.csv", "ligands.csv")
 MATRICES = ("shape_distance_matrix.csv", "feature_distance_matrix.csv", "spectral_distance_matrix.csv")
 
 
@@ -126,12 +126,7 @@ def final_status(run_dir: Path, site_id: str) -> str:
     Returns:
         "missing", "stale" (the clustering changed since), or "current".
     """
-    folder = Path(run_dir) / "sites" / site_id / "final"
-    if not all((folder / name).exists() for name in FINAL_FILES):
-        return "missing"
-    applied = Path(run_dir) / "sites" / site_id / "metadata" / "clustering_metadata.csv"
-    saved = json.loads((folder / "settings.json").read_text(encoding="utf-8")).get("clustering_hash")
-    return "current" if applied.exists() and file_hash(applied) == saved else "stale"
+    return _io.final_status(Path(run_dir) / "sites" / site_id)
 
 
 def read_final(run_dir: Path, site_id: str) -> Dict[str, object]:
@@ -147,9 +142,7 @@ def read_final(run_dir: Path, site_id: str) -> Dict[str, object]:
     Raises:
         SiteError: If the site has not been finalised.
     """
-    folder = Path(run_dir) / "sites" / site_id / "final"
-    if final_status(run_dir, site_id) == "missing":
-        raise SiteError(f"finalise {site_id} first (no {folder})")
-    read = {name[:-4]: pd.read_csv(folder / name, keep_default_na=False, dtype={"pdb_id": str})
-            for name in FINAL_FILES if name.endswith(".csv")}
-    return {**read, "settings": json.loads((folder / "settings.json").read_text(encoding="utf-8"))}
+    try:
+        return _io.read_final(Path(run_dir) / "sites" / site_id)
+    except FileNotFoundError as e:
+        raise SiteError(f"finalise {site_id} first ({e})") from e
