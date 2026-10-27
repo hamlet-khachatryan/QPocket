@@ -189,6 +189,7 @@ from qpocket.viz import interactions  # noqa: E402,F401  (qviz.interactions in t
 from qpocket.viz import grid  # noqa: E402,F401  (qviz.grid in the notebook)
 from qpocket.viz import ligands, matrix  # noqa: E402,F401  (qviz.ligands, qviz.matrix in the notebook)
 from qpocket.viz import crossdock  # noqa: E402,F401  (qviz.crossdock in the notebook)
+from qpocket.viz import style  # noqa: E402,F401  (qviz.style in the notebook)
 
 def explorer_path() -> Path:
     """Where the explorer notebook is installed.
