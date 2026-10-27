@@ -234,6 +234,9 @@ def _session(root, actions, settle: float = 25.0):
                             data = output.get("data")
                             if isinstance(data, str):
                                 seen.append((message["data"].get("cell_id"), data))
+                            elif output.get("channel") == "marimo-error":
+                                seen.extend(("ERROR", json.dumps(item)) for item in (data or [])
+                                            if item.get("type") != "ancestor-stopped")
                 except (asyncio.TimeoutError, TimeoutError):
                     pass
                 return seen
@@ -314,3 +317,29 @@ def test_finalise_from_the_page_writes_final_and_clears_the_guard(tmp_path, monk
     assert final.final_status(root, "S1-Y1") == "current"
     shown = "\n".join(html for _, html in clicked)
     assert "Finalised into" in shown and "Screening S1-Y1 from its final metadata" in shown
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_a_finalised_site_renders_the_screening_page_and_saves_its_box(tmp_path, monkeypatch):
+    """Screening from a finalised site: box, docking counts, run options, analysis; Save box writes box.json."""
+    import json as _json
+
+    from qpocket.arms.sites import final
+
+    root = _site_run(tmp_path, monkeypatch, True)
+    final.finalise_site(root, "S1-Y1")
+
+    def save(outputs):
+        button = _element_id("\n".join(outputs), "button", "Save box")
+        assert button, "no Save box button"
+        return [button], [1]
+
+    first, saved = _session(root, [save])
+    errors = [html for cell, html in first + saved if cell == "ERROR"]
+    assert not errors, "cells left showing errors: " + "; ".join(e[:200] for e in errors[:5])
+    shown = "\n".join(html for _, html in first)
+    for text in ("Active/decoy benchmark — not implemented yet", "Save box", "dockings", "Run here",
+                 "SLURM (writes scripts only)", "VM over SSH", "Analyse", "Poses"):
+        assert text in shown, f"{text!r} never rendered"
+    box = _json.loads((root / "sites" / "S1-Y1" / "screening" / "box.json").read_text())
+    assert box["mode"] in ("interacting_residues", "representative_pockets") and box["site_id"] == "S1-Y1"

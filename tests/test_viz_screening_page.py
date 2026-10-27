@@ -111,3 +111,11 @@ def test_pose_scene_colours_by_rmsd(tmp_path, monkeypatch):
     assert table["rmsd"].tolist() == [1.0, 3.0, 9.0]
     colours = [m["style"]["stick"]["color"] for m in _payload(html)["models"] if m.get("role") == "pose"]
     assert colours == [page.GOOD, page.CLOSE, page.FAR]
+
+
+def test_ligand_files_follow_their_keys(tmp_path):
+    (tmp_path / "structures").mkdir()
+    pd.DataFrame({"pdb_id": ["P1", "P2"], "chain": "A", "resname": ["AAA", "BBB"], "resseq": ["1", "2"], "icode": " ",
+                  "n_heavy": "6", "file": ["/x/a.pdb", "/x/b.pdb"], "smiles": "", "site_ids": "S1"}).to_csv(
+        tmp_path / "structures" / "ligands.csv", index=False)
+    assert page.ligand_files(tmp_path, ["P2:A:BBB:2", "nope"]) == ["/x/b.pdb"]

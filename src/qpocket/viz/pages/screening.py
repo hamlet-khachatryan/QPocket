@@ -220,3 +220,15 @@ def pose_scene(folder: Path, job: pd.Series, top_n: int, threshold: float, resid
     message = (f"{job['active_id']} in {job['representative']} · crystal pose purple · poses green ≤ {threshold:g} Å,"
                f" amber ≤ {2 * threshold:g} Å, red beyond")
     return scene_html(models, [], [], offline=offline, message=message), pd.DataFrame(rows, columns=empty.columns)
+
+
+def ligand_files(run_dir: Path, keys: Sequence[str]) -> List[str]:
+    """The extracted-ligand files of these ligand keys (``pdb:chain:resname:resseq``), in the keys' order."""
+    from qpocket.core.types import Ligand
+
+    path = Path(run_dir) / "structures" / "ligands.csv"
+    if not path.is_file():
+        return []
+    table = pd.read_csv(path, dtype=str, keep_default_na=False)
+    by_key = {Ligand(*[getattr(r, f) for f in Ligand._fields]).key: r.file for r in table.itertuples(index=False)}
+    return [by_key[k] for k in keys if k in by_key]
