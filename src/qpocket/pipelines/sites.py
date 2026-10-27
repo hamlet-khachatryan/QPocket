@@ -150,6 +150,13 @@ class Grouping(NamedTuple):
     ref_id: Optional[str]
     names: Dict[int, str]
     member_ids: Dict[int, Dict[str, List[int]]]
+    candidates: Optional[list] = None  # set by group_sites, for site_cores without the caller's list
+
+    def site_cores(self, candidates: Optional[list] = None) -> Dict[str, List[List[List[Any]]]]:
+        """Per site id, the strict cavity groups inside it, each as ``[[pdb_id, cavity], ...]``."""
+        candidates = self.candidates if candidates is None else candidates
+        return {self.names[k]: [[list(candidates[i][:2]) for i in core] for core in self.cores
+                                if set(core) <= set(self.groups[k])] for k in self.kept}
 
     @property
     def site_keys(self) -> Dict[str, FrozenSet[str]]:
@@ -215,7 +222,8 @@ def group_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structure])
         The grouping; ``site_keys`` gives each site's member cavities.
     """
     _, candidates, ligands, _ = _inputs(cfg.sites, records)
-    return _group(cfg, ws, records, candidates, ligands)
+    grouping = _group(cfg, ws, records, candidates, ligands)
+    return grouping._replace(candidates=candidates)
 
 
 def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structure]) -> pd.DataFrame:
@@ -241,8 +249,9 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
             log_message(message_type="sites_skipped")
             return read_sites(ws)
 
+        grouped = _group(cfg, ws, records, candidates, ligands)
         (half, boxes, cores, groups, site_boxes, members, dropped, applied, lig_sites, kept, centres,
-         ref_id, names, member_ids) = _group(cfg, ws, records, candidates, ligands)
+         ref_id, names, member_ids) = grouped[:14]
 
         rows, miss_rows, lig_rows = [], [], []
         holo_at: Dict[int, Set[str]] = {k: set() for k in kept}
@@ -311,8 +320,7 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
         report = [{**{f: v for f, v in entry.items() if f != "groups"},
                    "site_ids": [names[group_of[tuple(g)]] for g in entry.get("groups", ())
                                 if group_of.get(tuple(g)) in names]} for entry in applied]
-        site_cores = {names[k]: [[list(candidates[i][:2]) for i in core] for core in cores if set(core) <= set(groups[k])]
-                      for k in kept}
+        site_cores = grouped.site_cores(candidates)
         grouping.write_text(json.dumps({**stamp, "applied": report, "cores": site_cores}, indent=2) + "\n",
                             encoding="utf-8")
         action.add_success_fields(n_sites=len(table), n_candidates=len(candidates), n_misses=len(miss_rows))

@@ -334,3 +334,15 @@ def test_site_results_counts_featurised_pockets(tmp_path, monkeypatch, fake_feat
     assert steps.site_results(root, NEAR) == []
     steps.featurize_site(root, NEAR, workers=1)
     assert steps.site_results(root, NEAR) == [f"featurised pockets ({len(list((root / 'sites' / NEAR / 'pockets').glob('*/featurized.csv')))})"]
+
+
+def test_split_works_on_a_grouping_made_before_cores_were_recorded(tmp_path, monkeypatch):
+    import json
+
+    root = _finished_run(tmp_path, monkeypatch)
+    path = root / "sites" / "grouping.json"
+    saved = json.loads(path.read_text())
+    path.write_text(json.dumps({"sites": saved["sites"], "inputs": saved["inputs"]}))
+    assert steps.split_override(root, FAR)["op"] == "split"
+    with pytest.raises(steps.SiteError, match="one strict cavity group"):
+        steps.split_override(root, NEAR)

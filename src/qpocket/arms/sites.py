@@ -377,8 +377,11 @@ def split_override(run_dir: Path, site_id: str) -> Dict[str, Any]:
     """
     cavities = _cavities_of(run_dir, site_id)
     grouping = Path(run_dir) / "sites" / "grouping.json"
-    cores = json.loads(grouping.read_text(encoding="utf-8")).get("cores", {}) if grouping.is_file() else {}
-    if len(cores.get(site_id, [])) < 2:
+    saved = json.loads(grouping.read_text(encoding="utf-8")) if grouping.is_file() else {}
+    if "cores" not in saved:  # grouped before strict groups were recorded: work them out again
+        ws = layout.workspace(run_dir)
+        saved["cores"] = group_sites(load_run_config(run_dir), ws, _records(ws)).site_cores()
+    if len(saved["cores"].get(site_id, [])) < 2:
         raise SiteError(f"{site_id} has one strict cavity group; nothing to split")
     return {"op": "split", "cavities": cavities, "label": site_id}
 
