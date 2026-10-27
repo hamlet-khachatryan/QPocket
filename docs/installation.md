@@ -44,6 +44,7 @@ building. Install uv once (`python3 -m pip install --user uv`, or
 ```bash
 uv sync                 # .venv with the exact versions in uv.lock, plus test tools
 uv sync --extra viz     # also the marimo explorer notebook
+uv sync --extra viz --extra screen  # also cross-docking (pdbfixer, openmm); uv sync drops extras it is not given
 uv run qpocket --help   # run without activating; or: . .venv/bin/activate
 uv run pytest           # the test suite
 uv build                # sdist and wheel in dist/

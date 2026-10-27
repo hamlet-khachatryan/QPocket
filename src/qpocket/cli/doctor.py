@@ -110,6 +110,14 @@ def doctor(config: Optional[str], smoke: bool):
         except Exception as e:
             line("warn", f"docking {name}", str(e).split(":")[0] + " (only needed for `qpocket screen`)")
 
+    # --- the screen extra (only `qpocket screen` needs it) ----------------
+    for module, error in checks.screen_extra():
+        if error is None:
+            ok(f"import {module}", "screen extra")
+        else:
+            line("warn", f"import {module}",
+                 f"{error} — uv sync --extra screen (only needed for `qpocket screen`)")
+
     # --- APBS actually running -------------------------------------------
     if smoke:
         for label, probe in (

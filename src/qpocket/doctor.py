@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
 #: A three-atom PQR: enough for a valid Poisson-Boltzmann calculation.
 SMOKE_PQR = """\
@@ -151,3 +152,23 @@ def required_tools(cfg) -> Dict[str, Tuple[str, ...]]:
         for tool in plugin.tools:
             needs[tool] = needs.get(tool, ()) + (plugin.name,)
     return needs
+
+
+#: Modules of the ``screen`` extra (receptor repair and protonation for cross-docking).
+SCREEN_EXTRA = ("pdbfixer", "openmm")
+
+
+def screen_extra() -> List[Tuple[str, Optional[str]]]:
+    """Whether each module of the ``screen`` extra imports.
+
+    Returns:
+        (module, None) when it imports, else (module, "<Type>: <message>").
+    """
+    rows: List[Tuple[str, Optional[str]]] = []
+    for module in SCREEN_EXTRA:
+        try:
+            importlib.import_module(module)
+            rows.append((module, None))
+        except Exception as e:
+            rows.append((module, f"{type(e).__name__}: {e}"))
+    return rows

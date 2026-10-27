@@ -218,3 +218,34 @@ def test_doctor_reports_a_missing_plugin_tool(monkeypatch):
     monkeypatch.setattr(checks, "required_tools", lambda cfg: {"xtb-missing-tool": ("template",)})
     result = CliRunner().invoke(cli, ["doctor", "--no-smoke"])
     assert "xtb-missing-tool" in result.output and "template" in result.output
+
+
+# --- the installed doctor: the optional screen extra -------------------------
+
+
+def test_screen_extra_reports_a_missing_module(monkeypatch):
+    from qpocket import doctor
+
+    def fake(name):
+        if name == "openmm":
+            raise ImportError("No module named 'openmm'")
+        return object()
+
+    monkeypatch.setattr(doctor.importlib, "import_module", fake)
+    assert dict(doctor.screen_extra()) == {"pdbfixer": None,
+                                           "openmm": "ImportError: No module named 'openmm'"}
+
+
+def test_doctor_warns_but_passes_without_the_screen_extra(monkeypatch):
+    from click.testing import CliRunner
+
+    from qpocket import doctor
+    from qpocket.cli.doctor import doctor as command
+
+    monkeypatch.setattr(doctor, "screen_extra",
+                        lambda: [("pdbfixer", None), ("openmm", "ImportError: No module named 'openmm'")])
+    monkeypatch.setattr(doctor, "required_tools", lambda cfg: {})
+    monkeypatch.setattr("qpocket.io.tools.apbs_command", lambda: ("test", "apbs"))
+    result = CliRunner().invoke(command, ["--no-smoke"])
+    assert "uv sync --extra screen" in result.output
+    assert "This node can run the pipeline." in result.output, result.output
