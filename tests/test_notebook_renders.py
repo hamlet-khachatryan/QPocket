@@ -86,7 +86,8 @@ def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered
     assert finished, "no cell ran at all"
     assert not errors, "cells left showing errors: " + "; ".join(
         str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
-    for text in ("Binding sites", "Steps for S1-Y1", "S1-Y1 · ", "Ligands shown"):
+    for text in ("Binding sites", "Steps for S1-Y1", "S1-Y1 · ", "Ligands shown",
+                 "Exploration", "Screening", "Merge…", "Split…", "Overrides", "Site overview", "qp-on-Site"):
         assert text in shown, f"{text!r} never rendered"
     assert ("No distance matrix for this site yet" in shown) is not shape_clustered
     if shape_clustered:  # the clustering views need the site's distance matrices
@@ -164,3 +165,17 @@ def test_a_two_stage_site_renders_the_chemistry_views(tmp_path, monkeypatch):
         str(e.get("msg") or e.get("type"))[:160] for e in errors[:5])
     for text in ("Chemistry cut (percentile)", "Cluster distances", "Pockets shown"):
         assert text in shown, f"{text!r} never rendered"
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_tabs_guard_without_a_site(tmp_path, monkeypatch):
+    """A run with no sites: the Site page still renders; Exploration and Screening say what to do first."""
+    import pandas as pd
+
+    root = _site_run(tmp_path, monkeypatch, False)
+    table = pd.read_csv(root / "sites" / "sites.csv")
+    table.iloc[:0].to_csv(root / "sites" / "sites.csv", index=False)
+    errors, finished, shown = _render(root)
+    assert finished and not errors, "; ".join(str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
+    assert "Pick a site on the Site page." in shown and "qp-on-Exploration qp-on-Screening" in shown
+    assert "No sites to draw." in shown
