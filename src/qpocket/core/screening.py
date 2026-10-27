@@ -4,7 +4,7 @@ from __future__ import annotations
 import shlex
 import string
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence
+from typing import Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -470,3 +470,20 @@ def receptor_pdbqt(atoms) -> str:
             f"{x:8.3f}{y:8.3f}{z:8.3f}{1.0:6.2f}{0.0:6.2f}    {charges[i]:6.3f} {ad_type:<2}"
         )
     return "\n".join(lines) + "\n"
+
+
+EXTREMUM_LABELS = ["-x", "+x", "-y", "+y", "-z", "+z"]
+
+
+def extremum_points(points: np.ndarray) -> Tuple[np.ndarray, List[str]]:
+    """The points that set each face of the points' bounding box.
+
+    Args:
+        points: ``(n, 3)`` coordinates.
+
+    Returns:
+        ``(6, 3)`` points (lowest then highest x, y, z) and their labels ``-x, +x, -y, +y, -z, +z``.
+    """
+    pts = np.asarray(points, dtype=float).reshape(-1, 3)
+    rows = [pts[f(pts[:, axis])] for axis in range(3) for f in (np.argmin, np.argmax)]
+    return np.array(rows), list(EXTREMUM_LABELS)
