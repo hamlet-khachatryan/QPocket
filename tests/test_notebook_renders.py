@@ -89,6 +89,9 @@ def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered
     for text in ("Binding sites", "Steps for S1-Y1", "S1-Y1 · ", "Ligands shown"):
         assert text in shown, f"{text!r} never rendered"
     assert ("No distance matrix for this site yet" in shown) is not shape_clustered
+    if shape_clustered:  # the clustering views need the site's distance matrices
+        for text in ("percentile", "Pockets shown", "shared volume"):
+            assert text in shown, f"{text!r} never rendered"
     assert "Two-stage clustering (0/3 featurised)" in shown
     assert "silhouette" not in shown.lower()
     assert "exclusiv" not in shown.lower()

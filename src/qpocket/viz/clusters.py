@@ -147,8 +147,9 @@ def landscape_figure(coords: pd.DataFrame, colour_by: str, colours: Dict, height
         marker = dict(size=6, opacity=0.8, line=dict(width=0), color=values, colorscale="RdBu_r",
                       cmin=-bound, cmax=bound, colorbar=dict(title=dict(text=colour_by, font=dict(size=9)),
                                                              thickness=8))
-    fig = go.Figure(go.Scattergl(x=coords["x"], y=coords["y"], mode="markers", marker=marker,
-                                 hovertext=hover, hoverinfo="text", customdata=coords["pdb_id"]))
+    # customdata holds [pdb_id] per point, which is what a lasso selection reads back
+    fig = go.Figure(go.Scatter(x=coords["x"], y=coords["y"], mode="markers", marker=marker,
+                               hovertext=hover, hoverinfo="text", customdata=[[p] for p in coords["pdb_id"]]))
     fig = apply(fig)
     fig.update_layout(height=height, dragmode="lasso", xaxis=dict(title="1"), yaxis=dict(title="2"))
     return fig
