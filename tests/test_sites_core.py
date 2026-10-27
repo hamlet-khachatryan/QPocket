@@ -257,7 +257,8 @@ def _apply(overrides, groups=_GROUPS):
 def test_merge_override_joins_two_groups():
     groups, dropped, report = _apply([{"op": "merge", "sites": [_cavs(0, 1, 2, 3), _cavs(4, 5)]}])
     assert sorted(map(sorted, groups)) == [[0, 1, 2, 3, 4, 5], [6]]
-    assert dropped == [] and report == [{"op": "merge", "status": "applied", "parts": 2}]
+    assert dropped == [] and report == [{"op": "merge", "status": "applied", "parts": 2,
+                                         "groups": [[0, 1, 2, 3, 4, 5]]}]
 
 
 def test_drop_override_removes_a_group():
@@ -269,7 +270,7 @@ def test_drop_override_removes_a_group():
 def test_split_override_returns_its_cores():
     groups, _, report = _apply([{"op": "split", "cavities": _cavs(0, 1, 2, 3)}])
     assert sorted(map(sorted, groups)) == [[0, 1], [2, 3], [4, 5], [6]]
-    assert report[0] == {"op": "split", "status": "applied", "parts": 2}
+    assert report[0] == {"op": "split", "status": "applied", "parts": 2, "groups": [[0, 1], [2, 3]]}
 
 
 def test_override_follows_a_slightly_changed_site():

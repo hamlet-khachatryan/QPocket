@@ -14,10 +14,10 @@ from biopandas.pdb import PandasPdb
 from eliot import log_message, start_action
 from scipy.spatial.distance import cdist
 
-from qpocket.config import QPocketConfig
+from qpocket.config import QPocketConfig, _plain
 from qpocket.constants import THREE_TO_ONE_MAPPING
 from qpocket.core.result import Failure, guarded
-from qpocket.core.sites import (box_iou, cavity_cores, element_symbol, grid_spacing, ligand_sites, median_box,
+from qpocket.core.sites import (apply_overrides, box_iou, cavity_cores, element_symbol, grid_spacing, ligand_sites, median_box,
                                 merge_sites, site_members, site_name, voxel_box)
 from qpocket.core.types import Ligand, Structure
 from qpocket.io import layout
@@ -135,22 +135,36 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
                 if len(pts) >= p.min_cavity_points:
                     candidates.append((rec.pdb_id, int(cavity), pts))
         ligands = [lig for rec in records for lig in rec.ligands]
+        overrides = _plain(list(p.overrides or []))
         stamp = {"sites": {k: getattr(p, k) for k in ("min_cavity_points", "cavity_overlap", "min_structure_fraction",
                                                        "ligand_fraction", "box_padding")},
                  "inputs": hashlib.sha256(json.dumps(
                      [[c[0], c[1], len(c[2]), float(c[2].sum())] for c in all_cavities]
-                     + [lig.key for lig in ligands]).encode()).hexdigest()}
+                     + [lig.key for lig in ligands]).encode()).hexdigest(),
+                 "overrides": overrides}
         grouping, sites_csv = ws.sites / "grouping.json", ws.sites / "sites.csv"
-        if sites_csv.is_file() and grouping.is_file() and json.loads(grouping.read_text(encoding="utf-8")) == stamp:
+        saved = json.loads(grouping.read_text(encoding="utf-8")) if grouping.is_file() else None
+        # Only the stamp's keys count; a grouping.json from before overrides has none, which means [].
+        if sites_csv.is_file() and saved is not None \
+                and {k: saved.get(k, [] if k == "overrides" else None) for k in stamp} == stamp:
             log_message(message_type="sites_skipped")
             return read_sites(ws)
 
         half = grid_spacing([c[2] for c in candidates]) / 2
         boxes = np.array([voxel_box(c[2], half) for c in candidates]).reshape(-1, 6)
-        groups = merge_sites(cavity_cores(boxes, p.cavity_overlap), boxes, p.cavity_overlap)
+        cores = cavity_cores(boxes, p.cavity_overlap)
+        groups = merge_sites(cores, boxes, p.cavity_overlap)
         site_boxes = np.array([median_box(boxes[g]) for g in groups]).reshape(-1, 6)
         members = site_members(site_boxes, boxes, p.cavity_overlap, groups=groups)
-        lig_sites = ligand_sites([_heavy_coords(lig.file) for lig in ligands], site_boxes,
+        dropped, applied = [], []
+        if overrides:
+            keys = [(c[0], c[1]) for c in candidates]
+            groups, dropped, applied = apply_overrides(groups, cores, members, keys, overrides)
+            site_boxes = np.array([median_box(boxes[g]) for g in groups]).reshape(-1, 6)
+            members = site_members(site_boxes, boxes, p.cavity_overlap, groups=groups)
+        # Dropped sites' boxes still catch their ligands, so those are reported as dropped, not as in no site.
+        dropped_boxes = np.array([median_box(boxes[g]) for g in dropped]).reshape(-1, 6)
+        lig_sites = ligand_sites([_heavy_coords(lig.file) for lig in ligands], np.vstack([site_boxes, dropped_boxes]),
                                  p.ligand_fraction, p.box_padding)
 
         n_struct = [len({candidates[i][0] for i in m}) for m in members]
@@ -182,8 +196,9 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
             for k in holo:
                 holo_at[k].add(lig.pdb_id)
             if not mine:
+                reason = "site_dropped" if any(k >= len(groups) for k in sites) else "no_site"
                 miss_rows.append({"pdb_id": lig.pdb_id, "ligand_key": lig.key, "resname": lig.resname,
-                                  "sites": "", "reason": "no_site"})
+                                  "sites": "", "reason": reason})
             elif not holo:
                 for k in mine:
                     miss_at[k].add(lig.pdb_id)
@@ -234,7 +249,14 @@ def discover_sites(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structur
         pd.DataFrame(lig_rows, columns=LIGAND_COLUMNS).to_csv(ws.structures / "ligands.csv", index=False)
         pd.DataFrame(miss_rows, columns=MISS_COLUMNS).to_csv(ws.sites / "cavfind_misses.csv", index=False)
         table.to_csv(sites_csv, index=False)
-        grouping.write_text(json.dumps(stamp, indent=2) + "\n", encoding="utf-8")
+        group_of = {tuple(g): k for k, g in enumerate(groups)}
+        report = [{**{f: v for f, v in entry.items() if f != "groups"},
+                   "site_ids": [names[group_of[tuple(g)]] for g in entry.get("groups", ())
+                                if group_of.get(tuple(g)) in names]} for entry in applied]
+        site_cores = {names[k]: [[list(candidates[i][:2]) for i in core] for core in cores if set(core) <= set(groups[k])]
+                      for k in kept}
+        grouping.write_text(json.dumps({**stamp, "applied": report, "cores": site_cores}, indent=2) + "\n",
+                            encoding="utf-8")
         action.add_success_fields(n_sites=len(table), n_candidates=len(candidates), n_misses=len(miss_rows))
         return table
 

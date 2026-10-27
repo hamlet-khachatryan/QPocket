@@ -204,3 +204,80 @@ def test_repoint_skips_empty_tables(tmp_path):
     _repoint(site)
     moved = pd.read_csv(site / "metadata" / "clustering_metadata.csv")["pocket_file"].iloc[0]
     assert moved == str(site / "pockets" / "P1" / "binding_site.csv")
+
+
+# --- manual overrides ---------------------------------------------------------
+
+def _two_sites(tmp_path):
+    """S1-Y1 (three structures, P1's ligand) and S2-G3 (two structures, no ligand)."""
+    far_pts = [(float(x), 30.0, 30.0) for x in range(30, 40)]
+    near = _structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])
+    twice = [_structure(tmp_path, f"F{i}", points=INSIDE + far_pts, state="UNBOUND_STATE") for i in range(2)]
+    return [near] + twice
+
+
+def _cavities_of(ws, site_id):
+    table = pd.read_csv(ws.sites / "cavities.csv", keep_default_na=False)
+    return [[r.pdb_id, int(r.cavity)] for r in table.itertuples() if site_id in r.site_ids.split(";")]
+
+
+def _redo(tmp_path, ws, records, overrides):
+    cfg = _cfg(overrides=overrides)
+    table = discover_sites(cfg, ws, records)
+    extract_all_sites(cfg, ws, table, records)
+    return table
+
+
+def test_a_drop_override_removes_the_site_and_misses_its_ligands(tmp_path):
+    records = _two_sites(tmp_path)
+    ws, _ = _run(tmp_path, records)
+    table = _redo(tmp_path, ws, records, [{"op": "drop", "cavities": _cavities_of(ws, "S1-Y1")}])
+    assert table.site_id.tolist() == ["S1-G3"]
+    assert _misses(ws).set_index("pdb_id").loc["P1", "reason"] == "site_dropped"
+
+
+def test_a_merge_override_makes_one_site(tmp_path):
+    records = _two_sites(tmp_path)
+    ws, _ = _run(tmp_path, records)
+    table = _redo(tmp_path, ws, records, [{"op": "merge", "sites": [_cavities_of(ws, "S1-Y1"),
+                                                                    _cavities_of(ws, "S2-G3")]}])
+    assert len(table) == 1 and table.n_structures.iloc[0] == 3
+    import json
+    applied = json.loads((ws.sites / "grouping.json").read_text())["applied"]
+    assert applied[0]["site_ids"] == table.site_id.tolist() and "groups" not in applied[0]
+
+
+def test_grouping_json_records_applied_overrides_and_cores(tmp_path):
+    import json
+
+    records = _two_sites(tmp_path)
+    ws, _ = _run(tmp_path, records)
+    overrides = [{"op": "drop", "cavities": _cavities_of(ws, "S2-G3")}, {"op": "drop", "cavities": [["X", 9]]}]
+    _redo(tmp_path, ws, records, overrides)
+    saved = json.loads((ws.sites / "grouping.json").read_text())
+    assert saved["overrides"] == overrides
+    assert [a["status"] for a in saved["applied"]] == ["applied", "unmatched"]
+    assert saved["applied"][0]["site_ids"] == [] and saved["applied"][1]["site_ids"] == []  # a drop makes none
+    assert list(saved["cores"]) == ["S1-Y1"] and all(isinstance(g, list) for g in saved["cores"]["S1-Y1"])
+
+
+def test_changing_overrides_regroups(tmp_path):
+    records = _two_sites(tmp_path)
+    ws, _ = _run(tmp_path, records)
+    table = _redo(tmp_path, ws, records, [{"op": "drop", "cavities": _cavities_of(ws, "S2-G3")}])
+    assert len(table) == 1
+
+
+def test_old_grouping_json_is_still_skipped(tmp_path):
+    import json
+
+    cfg = _cfg()
+    ws = layout.create(str(tmp_path / "work"), "run")
+    recs = [_structure(tmp_path, "P1", [_ligand(tmp_path, "P1")])]
+    discover_sites(cfg, ws, recs)
+    path = ws.sites / "grouping.json"
+    saved = json.loads(path.read_text())
+    path.write_text(json.dumps({"sites": saved["sites"], "inputs": saved["inputs"]}))  # as written before overrides
+    stamp = (ws.sites / "sites.csv").stat().st_mtime_ns
+    discover_sites(cfg, ws, recs)
+    assert (ws.sites / "sites.csv").stat().st_mtime_ns == stamp

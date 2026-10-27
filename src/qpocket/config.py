@@ -6,7 +6,7 @@ import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pathlib import Path
 
@@ -320,6 +320,7 @@ class SitesConfig:
         min_structure_fraction: Share of structures a site without ligands needs to be kept.
         ligand_fraction: Share of a ligand's heavy atoms inside a site box for the ligand to belong to it.
         box_padding: Padding (A) on every face of a site box when assigning ligands.
+        overrides: Manual merges, drops and splits by member cavities, re-applied after every grouping.
     """
 
     min_heavy_atoms: int = 6
@@ -329,6 +330,7 @@ class SitesConfig:
     min_structure_fraction: float = 0.05
     ligand_fraction: float = 0.5
     box_padding: float = 0.0
+    overrides: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

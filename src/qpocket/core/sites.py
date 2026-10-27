@@ -245,12 +245,10 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
         cores: Strict groups from :func:`cavity_cores`; a split returns the ones inside its group.
         members: Per group, every candidate belonging to it (:func:`site_members`); overrides match on these.
         keys: ``(pdb_id, cavity)`` of each candidate.
-        overrides: ``{"op": "merge", "sites": [[[pdb, cav], ...], ...]}``, or
-            ``{"op": "drop" | "split", "cavities": [[pdb, cav], ...]}``.
+        overrides: ``{"op": "merge", "sites": [cavities, ...]}`` or ``{"op": "drop"|"split", "cavities": [[pdb, cav], ...]}``.
 
     Returns:
-        The new groups, the dropped groups, and per override ``{"op", "status": "applied" | "unmatched"}``,
-        with ``"parts"`` for a merge or split.
+        New groups, dropped groups, and per override ``{op, status, parts, groups}`` (status applied|unmatched).
     """
     own = [sorted(g) for g in groups]
     mem = [set(m) for m in members]
@@ -274,7 +272,7 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
                 merged, merged_mem = sorted(i for k in hits for i in own[k]), set().union(*(mem[k] for k in hits))
                 own = [g for k, g in enumerate(own) if k not in hits] + [merged]
                 mem = [m for k, m in enumerate(mem) if k not in hits] + [merged_mem]
-                entry = {"op": op, "status": "applied", "parts": len(hits)}
+                entry = {"op": op, "status": "applied", "parts": len(hits), "groups": [merged]}
             else:
                 entry["parts"] = len(hits)
         elif op in ("drop", "split"):
@@ -289,7 +287,7 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
                 if len(parts) >= 2:
                     own = own[:k] + own[k + 1:] + parts
                     mem = mem[:k] + mem[k + 1:] + [set(p) for p in parts]
-                    entry = {"op": op, "status": "applied", "parts": len(parts)}
+                    entry = {"op": op, "status": "applied", "parts": len(parts), "groups": parts}
                 else:
                     entry = {"op": op, "status": "unmatched", "parts": len(parts)}
         else:
