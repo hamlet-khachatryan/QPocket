@@ -158,8 +158,10 @@ def test_unknown_criterion_is_reported(three_groups):
         cluster_labels(d, "average", "elbow", n_clusters=2)
 
 
-def test_criteria_names_are_the_three_offered():
-    assert CRITERIA == (COUNT, THRESHOLD, RELATIVE)
+def test_criteria_names_are_the_four_offered():
+    from qpocket.core.clustering import PERCENTILE
+
+    assert CRITERIA == (COUNT, THRESHOLD, RELATIVE, PERCENTILE)
 
 
 def test_reclustering_is_reproducible(three_groups):

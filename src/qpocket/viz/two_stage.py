@@ -8,8 +8,10 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from qpocket.core.clustering import dendrogram_segments, linkage_matrix, symmetrise, threshold_for_clusters
+from qpocket.core.clustering import (dendrogram_segments, linkage_matrix, percentile_height, symmetrise,
+                                     threshold_for_clusters, to_percentile)
 from qpocket.pipelines.clustering import cluster_pockets
+from qpocket.viz.style import GREY, apply
 
 
 class RunMatrices(NamedTuple):
@@ -102,39 +104,38 @@ def chem_height_range(m: RunMatrices, shape_labels: np.ndarray, linkage: str = "
     return (min(lows), max(highs)) if lows else (0.0, 1.0)
 
 
-def threshold_settings(settings, shape_threshold: float, chem_threshold: Optional[float],
-                       min_cluster_size: Optional[int] = None):
-    """Clustering settings with hierarchical threshold cuts on both stages.
+def percentile_settings(settings, shape_cut: float, chem_cut: Optional[float],
+                        min_cluster_size: Optional[int] = None):
+    """Clustering settings with hierarchical percentile cuts on both stages.
 
     Args:
         settings: Starting ClusteringParams (usually the run's own).
-        shape_threshold: Shape tree cut height.
-        chem_threshold: Chemistry tree cut height, or None to keep the run's chemistry stage.
+        shape_cut: Shape cut, a percentile of the site's shape distances.
+        chem_cut: Chemistry cut, a percentile of the site's chemistry distances, or None to keep the run's chemistry stage.
         min_cluster_size: Override for the smallest shape cluster that is split.
 
     Returns:
         New ClusteringParams in two-stage mode.
     """
-    shape = replace(settings.shape, method="hierarchical", criterion="threshold", threshold=float(shape_threshold))
-    chem = settings.chem if chem_threshold is None else replace(
-        settings.chem, method="hierarchical", criterion="threshold", threshold=float(chem_threshold))
+    shape = replace(settings.shape, method="hierarchical", percentile=float(shape_cut))
+    chem = settings.chem if chem_cut is None else replace(settings.chem, method="hierarchical",
+                                                          percentile=float(chem_cut))
     return replace(settings, mode="two_stage", shape=shape, chem=chem,
                    min_cluster_size=min_cluster_size or settings.min_cluster_size)
 
 
-def shape_only_settings(settings, shape_threshold: float, criterion: str = "threshold"):
-    """Clustering settings that cut the shape tree and stop there.
+def shape_only_settings(settings, shape_cut: float):
+    """Clustering settings that cut the shape tree at a percentile and stop there.
 
     Args:
         settings: Starting ClusteringParams (usually the run's own).
-        shape_threshold: Shape tree cut height, or the fraction of its tallest merge when criterion is "relative".
-        criterion: "threshold" or "relative".
+        shape_cut: Shape cut, a percentile of the site's shape distances.
 
     Returns:
         New ClusteringParams in shape-only mode.
     """
-    shape = replace(settings.shape, method="hierarchical", criterion=criterion, threshold=float(shape_threshold))
-    return replace(settings, mode="shape_only", shape=shape)
+    return replace(settings, mode="shape_only",
+                   shape=replace(settings.shape, method="hierarchical", percentile=float(shape_cut)))
 
 
 def regroup(m: RunMatrices, settings) -> pd.DataFrame:
@@ -189,20 +190,20 @@ def dendrogram_figure(distances: np.ndarray, ids: List[str], threshold: Optional
     return fig
 
 
-def shape_groups(m: RunMatrices, threshold: float, linkage: str = "average") -> np.ndarray:
-    """Stage-one labels for a shape cut height.
+def shape_groups(m: RunMatrices, percentile: float, linkage: str = "average") -> np.ndarray:
+    """Stage-one labels for a shape cut.
 
     Args:
         m: The run's matrices.
-        threshold: Cut height.
+        percentile: Cut, a percentile of the site's shape distances.
         linkage: Linkage method.
 
     Returns:
         Label per pocket.
     """
-    from qpocket.core.clustering import THRESHOLD, cluster_labels
+    from qpocket.core.clustering import PERCENTILE, cluster_labels
 
-    return cluster_labels(m.shape, method=linkage, criterion=THRESHOLD, threshold=threshold).labels
+    return cluster_labels(m.shape, method=linkage, criterion=PERCENTILE, threshold=percentile).labels
 
 
 #: Method key to the label shown in the picker.
@@ -215,19 +216,17 @@ METHODS: Dict[str, str] = {
 
 def settings_for(base, method: str, combined_cut: Optional[float] = None,
                  shape_cut: Optional[float] = None, chem_cut: Optional[float] = None,
-                 damping: float = 0.9, min_cluster_size: Optional[int] = None,
-                 criterion: str = "threshold"):
-    """Clustering settings for one of the offered methods.
+                 damping: float = 0.9, min_cluster_size: Optional[int] = None):
+    """Clustering settings for one of the offered methods; every cut is a site percentile.
 
     Args:
         base: The run's own settings, used for linkage and anything not set here.
         method: One of METHODS.
-        combined_cut: Cut height for the single hierarchical method.
-        shape_cut: Stage-one cut height.
-        chem_cut: Stage-two cut height.
+        combined_cut: Percentile cut for the single hierarchical method.
+        shape_cut: Stage-one percentile cut.
+        chem_cut: Stage-two percentile cut, measured on the whole site's chemistry distances.
         damping: Affinity propagation damping.
         min_cluster_size: Smallest shape group that is still subdivided.
-        criterion: "threshold" reads the cuts as heights; "relative" as fractions of each tree's tallest merge.
 
     Returns:
         ClusteringParams the pipeline can run and recluster can save.
@@ -243,17 +242,14 @@ def settings_for(base, method: str, combined_cut: Optional[float] = None,
                        single=replace(base.single, method="affinity", damping=float(damping)))
     if method == "hierarchical":
         return replace(base, mode="single",
-                       single=replace(base.single, method="hierarchical",
-                                      criterion=criterion, threshold=float(combined_cut)))
+                       single=replace(base.single, method="hierarchical", percentile=float(combined_cut)))
     return replace(
         base,
         mode="two_stage",
         min_cluster_size=int(min_cluster_size if min_cluster_size is not None
                              else base.min_cluster_size),
-        shape=replace(base.shape, method="hierarchical", criterion=criterion,
-                      threshold=float(shape_cut)),
-        chem=replace(base.chem, method="hierarchical", criterion=criterion,
-                     threshold=float(chem_cut)),
+        shape=replace(base.shape, method="hierarchical", percentile=float(shape_cut)),
+        chem=replace(base.chem, method="hierarchical", percentile=float(chem_cut)),
     )
 
 
@@ -414,3 +410,150 @@ def mirrored_figure(m: RunMatrices, preview_result, shape_cut: float,
     figure.update_layout(height=height, plot_bgcolor="white",
                          margin=dict(l=90, r=20, t=40, b=40))
     return figure
+
+
+# ── collapsed views for large sites ─────────────────────────────────────────
+
+SHAPE_CUT_COLOUR = "#d1495b"
+CHEM_CUT_COLOUR = "#1f5f8b"
+
+
+def _members(link: np.ndarray, node: int, n: int) -> List[int]:
+    """Leaves under a node of a linkage tree."""
+    out, stack = [], [node]
+    while stack:
+        current = stack.pop()
+        if current < n:
+            out.append(current)
+        else:
+            stack.extend(int(c) for c in link[current - n, :2])
+    return out
+
+
+def _shape_colour(colours: Dict, frame: pd.DataFrame, shape: int) -> str:
+    """A shape cluster's own hue: that of its largest chemistry subcluster."""
+    rows = frame[frame["shape_cluster_id"] == shape]
+    top = int(rows["chem_cluster_id"].value_counts().idxmax()) if len(rows) else 0
+    return colours.get((shape, top), GREY)
+
+
+def collapsed_figure(m: RunMatrices, preview_result, shape_cut: float, chem_cut: Optional[float],
+                     linkage: str, colours: Dict, height: int = 440):
+    """The shape tree drawn only down to its cut, one leaf per cluster, with each cluster's chemistry tree below.
+
+    Args:
+        m: The run's matrices.
+        preview_result: What preview() returned for the current settings.
+        shape_cut: Shape cut, a site percentile.
+        chem_cut: Chemistry cut, a site percentile, or None for shape only.
+        linkage: Linkage method.
+        colours: ``(shape, chem)`` colours from :func:`qpocket.viz.style.cluster_colours`.
+        height: Figure height (px).
+
+    Returns:
+        A styled plotly Figure; axes read in percentiles, the leaf markers (trace "clusters") carry the cluster ids.
+    """
+    import plotly.graph_objects as go
+    from scipy.cluster.hierarchy import dendrogram
+
+    frame = preview_result.frame
+    shape_labels = np.asarray(preview_result.shape_labels, dtype=int)
+    chem_labels = frame["chem_cluster_id"].to_numpy(dtype=int)
+    n = len(m.ids)
+    with_chem = chem_cut is not None and m.chem is not None
+    fig = go.Figure()
+    link = linkage_matrix(symmetrise(m.shape), linkage) if n >= 2 else None
+    groups = sorted(set(shape_labels.tolist()))
+
+    if link is not None and len(groups) >= 2:
+        tree = dendrogram(link, truncate_mode="lastp", p=len(groups), no_plot=True)
+        for xs, ys in zip(tree["icoord"], tree["dcoord"]):
+            fig.add_trace(go.Scatter(x=xs, y=to_percentile(m.shape, ys), mode="lines", hoverinfo="skip",
+                                     showlegend=False, line=dict(color=GREY, width=1.1)))
+        tops = [(np.mean(xs[1:3]), ys[1]) for xs, ys in zip(tree["icoord"], tree["dcoord"])]
+        fig.add_trace(go.Scatter(
+            x=[x for x, _ in tops], y=to_percentile(m.shape, [h for _, h in tops]), mode="markers",
+            marker=dict(size=6, color="rgba(0,0,0,0)"), showlegend=False, name="merges",
+            hovertext=[f"shape distance {h:.3g} · p{p:.0f}" for (_, h), p in
+                       zip(tops, to_percentile(m.shape, [h for _, h in tops]))], hoverinfo="text"))
+        leaf_ids = []
+        for node in tree["leaves"]:
+            members = _members(link, int(node), n)
+            leaf_ids.append(int(pd.Series(shape_labels[members]).mode().iloc[0]))
+        leaf_x = [5.0 + 10.0 * i for i in range(len(leaf_ids))]
+    else:
+        leaf_ids, leaf_x = groups, [5.0]
+
+    sizes = pd.Series(shape_labels).value_counts()
+    leaf_colours = [_shape_colour(colours, frame, c) for c in leaf_ids]
+    for x, colour in zip(leaf_x, leaf_colours):
+        fig.add_trace(go.Scatter(x=[x, x], y=[0, shape_cut], mode="lines", hoverinfo="skip", showlegend=False,
+                                 line=dict(color=colour, width=2.2)))
+    fig.add_trace(go.Scatter(
+        x=leaf_x, y=[0.0] * len(leaf_x), mode="markers", name="clusters", customdata=leaf_ids,
+        marker=dict(symbol="square", size=11, color=leaf_colours, line=dict(width=0)),
+        hovertext=[f"S{c + 1} · {int(sizes[c])} pockets" for c in leaf_ids], hoverinfo="text", showlegend=False))
+    for x, c, colour in zip(leaf_x, leaf_ids, leaf_colours):
+        if colour != GREY:
+            fig.add_annotation(x=x, y=0, yshift=-14 if not with_chem else 14, showarrow=False,
+                               text=f"<b>S{c + 1}</b> {int(sizes[c])}", font=dict(size=9, color=colour))
+
+    if with_chem:
+        chem_height = percentile_height(m.chem, chem_cut)
+        for x, c in zip(leaf_x, leaf_ids):
+            members = np.flatnonzero(shape_labels == c)
+            if len(members) < 3 or _shape_colour(colours, frame, c) == GREY:
+                continue
+            data = dendrogram_segments(linkage_matrix(symmetrise(m.chem[np.ix_(members, members)]), linkage))
+            span = max(10.0 * (len(members) - 1), 1.0)
+            for (xs, ys), sub in zip(data.segments, segment_clusters(data, chem_height, chem_labels[members])):
+                colour = GREY if sub is None else colours.get((c, sub), GREY)
+                fig.add_trace(go.Scatter(x=[x - 4 + (v - 5) / span * 8 for v in xs],
+                                         y=[-v for v in to_percentile(m.chem, ys)], mode="lines",
+                                         hoverinfo="skip", showlegend=False, line=dict(color=colour, width=1.1)))
+
+    fig.add_shape(type="line", xref="paper", x0=0, x1=1, y0=shape_cut, y1=shape_cut,
+                  line=dict(color=SHAPE_CUT_COLOUR, width=1, dash="dash"))
+    if with_chem:
+        fig.add_shape(type="line", xref="paper", x0=0, x1=1, y0=-chem_cut, y1=-chem_cut,
+                      line=dict(color=CHEM_CUT_COLOUR, width=1, dash="dash"))
+    ticks = [-100, -50, 0, 50, 100] if with_chem else [0, 25, 50, 75, 100]
+    title = ("Shape (up) · physicochemistry (down), distance percentile" if with_chem
+             else "Shape distance (percentile)")
+    fig.update_layout(height=height, showlegend=False,
+                      xaxis=dict(showticklabels=False, showline=False, ticks="", range=[0, 10.0 * len(leaf_x)]),
+                      yaxis=dict(title=title, tickvals=ticks, ticktext=[str(abs(t)) for t in ticks],
+                                 range=[-102 if with_chem else -4, 102]))
+    return apply(fig)
+
+
+def subtree_figure(m: RunMatrices, member_ids, kind: str, linkage: str, height: int = 300):
+    """One cluster's member-level tree, on the site's percentile scale; pocket IDs on hover only.
+
+    Args:
+        m: The run's matrices.
+        member_ids: The cluster's pocket IDs.
+        kind: "shape" or "chem".
+        linkage: Linkage method.
+        height: Figure height (px).
+
+    Returns:
+        A styled plotly Figure.
+    """
+    import plotly.graph_objects as go
+
+    full = m.shape if kind == "shape" or m.chem is None else m.chem
+    index = [m.ids.index(i) for i in member_ids]
+    fig = go.Figure()
+    if len(index) >= 2:
+        data = dendrogram_segments(linkage_matrix(symmetrise(full[np.ix_(index, index)]), linkage))
+        for xs, ys in data.segments:
+            fig.add_trace(go.Scatter(x=xs, y=to_percentile(full, ys), mode="lines", hoverinfo="skip",
+                                     showlegend=False, line=dict(color="#555", width=1)))
+        fig.add_trace(go.Scatter(x=list(data.leaf_positions), y=[0.0] * len(index), mode="markers",
+                                 marker=dict(size=4, color="#555"), showlegend=False,
+                                 hovertext=[member_ids[i] for i in data.leaf_order], hoverinfo="text"))
+    fig.update_layout(height=height, xaxis=dict(showticklabels=False, ticks="", showline=False),
+                      yaxis=dict(title=f"{'Shape' if full is m.shape else 'Physicochemical'} distance (percentile)",
+                                 range=[-3, 102]))
+    return apply(fig)

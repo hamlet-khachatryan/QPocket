@@ -72,8 +72,8 @@ def test_all_three_methods_produce_settings_the_pipeline_accepts():
     base = _settings()
     m = _matrices()
     for method, kw in (("affinity", {}),
-                       ("hierarchical", {"combined_cut": 4.0}),
-                       ("two_stage", {"shape_cut": 4.0, "chem_cut": 0.6})):
+                       ("hierarchical", {"combined_cut": 40.0}),
+                       ("two_stage", {"shape_cut": 40.0, "chem_cut": 20.0})):
         result = ts.preview(m, ts.settings_for(base, method, **kw))
         assert result.n_clusters >= 1
         assert list(result.frame.columns) == [
@@ -89,11 +89,11 @@ def test_the_settings_are_what_recluster_would_save():
     """Preview and Apply must run the same clustering, so they share the type."""
     from qpocket.config import ClusteringParams
 
-    settings = ts.settings_for(_settings(), "two_stage", shape_cut=4.0, chem_cut=0.6)
+    settings = ts.settings_for(_settings(), "two_stage", shape_cut=40.0, chem_cut=20.0)
     assert isinstance(settings, ClusteringParams)
     assert settings.mode == "two_stage"
-    assert settings.shape.criterion == "threshold" and settings.shape.threshold == 4.0
-    assert settings.chem.criterion == "threshold" and settings.chem.threshold == 0.6
+    assert (settings.shape.method, settings.shape.percentile) == ("hierarchical", 40.0)
+    assert (settings.chem.method, settings.chem.percentile) == ("hierarchical", 20.0)
 
 
 def test_affinity_settings_use_the_single_stage_path():
@@ -103,47 +103,23 @@ def test_affinity_settings_use_the_single_stage_path():
     assert settings.single.damping == 0.77
 
 
-def test_the_mirrored_figure_has_two_panels_and_two_cuts():
-    m = _matrices()
-    base = _settings()
-    result = ts.preview(m, ts.settings_for(base, "two_stage", shape_cut=4.0, chem_cut=0.6))
-    figure = ts.mirrored_figure(m, result, 4.0, 0.6)
-    assert len(figure.data) > 0
-    assert len(figure.layout.shapes) == 2, "expected a cut line in each panel"
-    assert [a.text for a in figure.layout.annotations] == [
-        "shape", "chemistry, within each group"]
-
-
-def test_the_chemistry_panel_grows_inward():
-    """Mirrored means its height axis runs the other way."""
-    m = _matrices()
-    result = ts.preview(m, ts.settings_for(_settings(), "two_stage",
-                                           shape_cut=4.0, chem_cut=0.6))
-    figure = ts.mirrored_figure(m, result, 4.0, 0.6)
-    assert figure.layout.xaxis2.autorange == "reversed"
-
-
 def test_a_group_of_one_contributes_no_chemistry_tree():
     m = _matrices()
     singles = np.arange(len(m.ids))          # every pocket its own shape group
     assert all(data is None for _g, _members, data in ts.chem_subtrees(m, singles))
 
 
-def test_relative_cuts_write_relative_settings():
-    settings = ts.settings_for(_settings(), "two_stage", shape_cut=0.5, chem_cut=0.3,
-                               criterion="relative")
-    assert (settings.shape.criterion, settings.shape.threshold) == ("relative", 0.5)
-    assert (settings.chem.criterion, settings.chem.threshold) == ("relative", 0.3)
-    single = ts.settings_for(_settings(), "hierarchical", combined_cut=0.4, criterion="relative")
-    assert (single.single.criterion, single.single.threshold) == ("relative", 0.4)
-    whole = ts.settings_for(_settings(), "two_stage", shape_cut=0.5, chem_cut=1.0, criterion="relative")
-    assert ts.preview(_matrices(), whole).n_clusters == 2   # a full-height chemistry cut never splits
+def test_percentile_cuts_write_percentile_settings():
+    single = ts.settings_for(_settings(), "hierarchical", combined_cut=35.0)
+    assert (single.single.method, single.single.percentile) == ("hierarchical", 35.0)
+    whole = ts.settings_for(_settings(), "two_stage", shape_cut=50.0, chem_cut=99.5)
+    assert ts.preview(_matrices(), whole).n_clusters == ts.preview(
+        _matrices(), ts.shape_only_settings(_settings(), 50.0)).n_clusters   # a top chemistry cut never splits
 
 
-def test_a_relative_shape_only_cut():
-    settings = ts.shape_only_settings(_settings(), 0.5, criterion="relative")
-    assert (settings.mode, settings.shape.criterion, settings.shape.threshold) == (
-        "shape_only", "relative", 0.5)
+def test_a_shape_only_percentile_cut():
+    settings = ts.shape_only_settings(_settings(), 30.0)
+    assert (settings.mode, settings.shape.method, settings.shape.percentile) == ("shape_only", "hierarchical", 30.0)
 
 
 def test_the_preview_carries_no_silhouette():

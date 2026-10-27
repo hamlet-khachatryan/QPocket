@@ -38,7 +38,7 @@ def run(tmp_path):
 def test_apply_writes_the_clustering_the_preview_showed(run):
     matrices = ts.load_matrices(run)
     settings = ts.settings_for(recluster.load_settings(run), "two_stage",
-                               shape_cut=4.0, chem_cut=0.6)
+                               shape_cut=40.0, chem_cut=20.0)
     previewed = ts.preview(matrices, settings)
 
     recluster.run(run, settings)
@@ -59,7 +59,7 @@ def test_apply_archives_the_previous_clustering_once(run):
 
 def test_the_settings_that_were_applied_are_recorded(run):
     settings = ts.settings_for(recluster.load_settings(run), "two_stage",
-                               shape_cut=4.0, chem_cut=0.6)
+                               shape_cut=40.0, chem_cut=20.0)
     recluster.run(run, settings)
     recorded = json.loads((run / "metadata/clustering_params.json").read_text(encoding="utf-8"))
     assert recorded, "nothing was recorded"
@@ -68,11 +68,11 @@ def test_the_settings_that_were_applied_are_recorded(run):
 def test_a_reopened_run_starts_from_what_was_applied(run):
     """load_settings feeds the sliders, so reopening resumes the last decision."""
     applied = ts.settings_for(recluster.load_settings(run), "two_stage",
-                              shape_cut=4.0, chem_cut=0.6)
+                              shape_cut=40.0, chem_cut=20.0)
     recluster.run(run, applied)
     reloaded = recluster.load_settings(run)
     assert reloaded.mode == "two_stage"
-    assert reloaded.shape.threshold == pytest.approx(4.0)
+    assert reloaded.shape.percentile == pytest.approx(40.0)
 
 
 def test_load_matrices_shape_only(run):

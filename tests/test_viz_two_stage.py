@@ -24,16 +24,9 @@ def test_slider_range_covers_every_merge():
 
 def test_regroup_follows_both_cuts():
     m = _toy()
-    table = ts.regroup(m, ts.threshold_settings(ClusteringParams(), 4.0, 0.8))
+    table = ts.regroup(m, ts.percentile_settings(ClusteringParams(), 60.0, 25.0))
     assert table["shape_cluster_id"].nunique() == 2 and table["cluster_id"].nunique() == 4
     assert table.groupby("cluster_id")["is_representative"].sum().eq(1).all()
-
-
-def test_height_for_count_reproduces_that_count():
-    m = _toy()
-    h = ts.height_for_count(m.shape, 2)
-    table = ts.regroup(m, ts.threshold_settings(ClusteringParams(), h, None))
-    assert table["shape_cluster_id"].nunique() == 2
 
 
 def test_dendrogram_figure_draws_the_cut():
