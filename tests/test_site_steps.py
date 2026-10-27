@@ -394,3 +394,58 @@ def test_a_failed_apply_keeps_the_config_in_step(tmp_path, monkeypatch):
         steps.add_override(root, drop)
     listed = steps.list_overrides(root)
     assert len(listed) == 1 and listed[0]["status"] == "applied"
+
+
+# --- representative override ----------------------------------------------------
+
+def _clustered(root, site_id):
+    steps.shape_cluster_site(root, site_id)
+    return pd.read_csv(root / "sites" / site_id / "metadata" / "clustering_metadata.csv")
+
+
+def _a_swap(table):
+    """A (cluster_id, pdb_id) whose pdb_id is not yet its cluster's representative, or None."""
+    for cluster, members in table.groupby("cluster_id"):
+        others = members[~members["is_representative"].astype(bool)]
+        if len(others):
+            return int(cluster), str(others["pdb_id"].iloc[0])
+    return None
+
+
+def test_set_representative_swaps_it_everywhere(tmp_path, monkeypatch):
+    import json
+
+    root = _finished_run(tmp_path, monkeypatch)
+    table = _clustered(root, NEAR)
+    swap = _a_swap(table)
+    if swap is None:  # every cluster a singleton: put all in one cluster so a swap exists
+        table["cluster_id"] = 0
+        table["is_representative"] = [True] + [False] * (len(table) - 1)
+        table.to_csv(root / "sites" / NEAR / "metadata" / "clustering_metadata.csv", index=False)
+        swap = _a_swap(table)
+    cluster, pdb_id = swap
+    steps.set_representative(root, NEAR, cluster, pdb_id)
+    meta = root / "sites" / NEAR / "metadata"
+    after = pd.read_csv(meta / "clustering_metadata.csv")
+    reps = after[(after["cluster_id"] == cluster) & after["is_representative"].astype(bool)]
+    assert reps["pdb_id"].tolist() == [pdb_id] and reps["dist_to_exemplar"].iloc[0] == 0
+    selected = pd.read_csv(meta / "selected_representatives.csv")
+    assert pdb_id in selected["pdb_id"].astype(str).tolist()
+    assert selected["cluster_id"].tolist().count(cluster) == 1
+    params = json.loads((meta / "clustering_params.json").read_text())
+    assert params["representative_overrides"] == {str(cluster): pdb_id}
+
+
+def test_a_representative_from_another_cluster_is_refused(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    table = _clustered(root, NEAR)
+    table["cluster_id"] = [0] + [1] * (len(table) - 1)
+    table.to_csv(root / "sites" / NEAR / "metadata" / "clustering_metadata.csv", index=False)
+    with pytest.raises(steps.SiteError, match="not in cluster"):
+        steps.set_representative(root, NEAR, 0, str(table["pdb_id"].iloc[1]))
+
+
+def test_set_representative_before_clustering_is_a_site_error(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    with pytest.raises(steps.SiteError, match="cluster this site first"):
+        steps.set_representative(root, NEAR, 0, "P1")

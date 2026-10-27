@@ -305,3 +305,42 @@ def write_clustering(meta_dir: Path, ids: List[str], assignment: ClusterAssignme
         params_path=str(out_params),
     )
     return out_meta
+
+
+def set_representative(meta_dir: Path, cluster_id: int, pdb_id: str) -> Path:
+    """Make ``pdb_id`` its cluster's representative in the applied clustering, and record the choice.
+
+    Args:
+        meta_dir: The site's metadata directory, holding the applied clustering.
+        cluster_id: The cluster.
+        pdb_id: A member of that cluster.
+
+    Returns:
+        Path of clustering_metadata.csv.
+
+    Raises:
+        FileNotFoundError: If the site holds no clustering.
+        ValueError: If ``pdb_id`` is not in the cluster.
+    """
+    meta_dir = Path(meta_dir)
+    meta_csv, params_json = meta_dir / "clustering_metadata.csv", meta_dir / "clustering_params.json"
+    table = pd.read_csv(meta_csv)
+    table["pdb_id"] = table["pdb_id"].astype(str)
+    members = table["cluster_id"] == int(cluster_id)
+    if not (members & (table["pdb_id"] == str(pdb_id))).any():
+        raise ValueError(f"{pdb_id} is not in cluster {cluster_id}")
+    params = json.loads(params_json.read_text(encoding="utf-8")) if params_json.exists() else {}
+    # dist_to_exemplar is measured on the matrix the clustering used.
+    spectral = meta_dir / "spectral_distance_matrix.csv"
+    use = spectral if spectral.exists() and params.get("mode") != "shape_only" else meta_dir / "shape_distance_matrix.csv"
+    matrix = pd.read_csv(use, index_col=0)
+    matrix.index, matrix.columns = matrix.index.astype(str), matrix.columns.astype(str)
+    table.loc[members, "is_representative"] = table.loc[members, "pdb_id"] == str(pdb_id)
+    table.loc[members, "dist_to_exemplar"] = [float(matrix.loc[p, str(pdb_id)]) if p in matrix.index else float("nan")
+                                              for p in table.loc[members, "pdb_id"]]
+    table.to_csv(meta_csv, index=False)
+    table[table["is_representative"].astype(bool)].to_csv(meta_dir / "selected_representatives.csv", index=False)
+    params.setdefault("representative_overrides", {})[str(int(cluster_id))] = str(pdb_id)
+    params_json.write_text(json.dumps(params, indent=2) + "\n", encoding="utf-8")
+    log_message(message_type="representative_set", cluster_id=int(cluster_id), pdb_id=str(pdb_id))
+    return meta_csv

@@ -18,6 +18,7 @@ from qpocket.io.tables import file_hash
 from qpocket.pipelines import parallel, structure
 from qpocket.pipelines.collect import write_feature_record
 from qpocket.pipelines.clustering import archive_clustering, cluster_shape_only, write_clustering
+from qpocket.pipelines.clustering import set_representative as _set_representative
 from qpocket.pipelines.distance import compute_shape_matrix, compute_spectral_distance_matrix, pocket_manifest
 from qpocket.pipelines.sites import (_membership, _site_keys, extract_all_sites, group_sites, read_sites,
                                      sync_sites)
@@ -499,3 +500,27 @@ def site_status(run_dir: Path, site_id: str) -> Dict[str, Union[bool, int]]:
         "n_featurised": n_featurised,
         "n_clouds": len(clouds),
     }
+
+
+def set_representative(run_dir: Path, site_id: str, cluster_id: int, pdb_id: str) -> Path:
+    """Swap a cluster's representative in the site's applied clustering; a new clustering starts from medoids.
+
+    Args:
+        run_dir: The run directory.
+        site_id: The site.
+        cluster_id: The cluster.
+        pdb_id: The member to make its representative.
+
+    Returns:
+        Path of the site's clustering_metadata.csv.
+
+    Raises:
+        SiteError: If the site is unknown or not clustered, or ``pdb_id`` is not in the cluster.
+    """
+    meta = _site_ws(run_dir, site_id).metadata
+    if not (meta / "clustering_metadata.csv").exists():
+        raise SiteError(f"cluster this site first: {site_id} has no clustering")
+    try:
+        return _set_representative(meta, cluster_id, pdb_id)
+    except ValueError as e:
+        raise SiteError(str(e)) from e
