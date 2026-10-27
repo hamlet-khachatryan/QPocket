@@ -108,7 +108,15 @@ def prepare(
         overrides.setdefault("box", {})["padding"] = box_padding
 
     workdir = _target(workdir, site)
-    plan = prepare_campaign(workdir, config_path, submit=submit or ("slurm" if use_slurm else None), **overrides)
+    from qpocket.arms.screen.receptors import ReceptorPreparationError
+
+    try:
+        plan = prepare_campaign(workdir, config_path, submit=submit or ("slurm" if use_slurm else None),
+                                **overrides)
+    except ReceptorPreparationError as exc:
+        raise click.ClickException(str(exc))
+    for warning in plan.warnings:
+        click.echo(f"Warning: {warning}", err=True)
     import pandas as pd
 
     click.echo(f"\nTask list: {plan.jobs_csv}  ({len(pd.read_csv(plan.jobs_csv))} jobs)")

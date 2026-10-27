@@ -5,7 +5,7 @@ import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Literal, NamedTuple, Optional
+from typing import List, Literal, NamedTuple, Optional, Tuple
 
 import pandas as pd
 from eliot import log_message, start_action
@@ -27,11 +27,13 @@ class ScreeningPlan(NamedTuple):
         jobs_csv: The task list.
         scripts: SLURM scripts (one per array chunk), or the local shell script.
         command: What to run next.
+        warnings: What the user should know before running it, such as receptors that failed.
     """
 
     jobs_csv: Path
     scripts: List[Path]
     command: str
+    warnings: Tuple[str, ...] = ()
 
 
 def write_submission(jobs_csv: Path, n_jobs: int, cfg: ScreenConfig,

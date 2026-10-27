@@ -192,6 +192,8 @@ def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], 
             receptors[rep] = path.relative_to(folder).as_posix()
     if not receptors:
         raise ReceptorPreparationError(f"no receptor could be prepared: {describe_failures(failures)}")
+    warnings = (f"{len(failures)} of {len(rep_ids)} receptors failed and are left out: "
+                f"{describe_failures(failures)}",) if failures else ()
     if failures:
         log_message(message_type="warning", stage="prepare_receptor", failed=describe_failures(failures))
     actives = distinct_actives(ws.screening / "actives.smi", ws.metadata / "master.csv")
@@ -216,7 +218,7 @@ def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], 
     command = _write_runners(folder, len(jobs), cfg)
     log_message(message_type="crossdock_prepared", receptors=len(receptors), actives=len(ligands),
                 jobs=len(jobs))
-    return ScreeningPlan(jobs_csv, [folder / "run_docking.sbatch"], command)
+    return ScreeningPlan(jobs_csv, [folder / "run_docking.sbatch"], command, warnings)
 
 
 class CrossdockResult(NamedTuple):

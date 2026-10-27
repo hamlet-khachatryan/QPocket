@@ -231,3 +231,28 @@ def test_no_receptors_leaves_the_previous_snapshot(site, monkeypatch):
     with pytest.raises(ReceptorPreparationError):
         crossdock.prepare(ws.root)
     assert pd.read_csv(used / "selected_representatives.csv")["pdb_id"].tolist() == ["R1", "R2"]
+
+
+def test_a_partial_failure_is_on_the_plan_for_the_cli_to_print(run, monkeypatch):
+    from qpocket.arms.screen import crossdock
+
+    monkeypatch.setattr(crossdock, "prepare_receptor", _failing({"R1": "RuntimeError: boom"}))
+    plan = crossdock.prepare(run.root)
+    assert len(plan.warnings) == 1 and "R1" in plan.warnings[0] and "boom" in plan.warnings[0]
+
+
+def test_the_cli_prints_the_failures_without_a_traceback(run, monkeypatch):
+    from click.testing import CliRunner
+
+    from qpocket.arms.screen import crossdock
+    from qpocket.cli.screen import screen_cli
+
+    monkeypatch.setattr(crossdock, "prepare_receptor", _failing({"R1": "RuntimeError: boom"}))
+    partial = CliRunner().invoke(screen_cli, ["prepare", "--workdir", str(run.root)])
+    assert partial.exit_code == 0 and "boom" in partial.output, partial.output
+
+    monkeypatch.setattr(crossdock, "prepare_receptor", _failing(
+        {"R1": "ImportError: No module named 'openmm'", "R2": "ImportError: No module named 'openmm'"}))
+    failed = CliRunner().invoke(screen_cli, ["prepare", "--workdir", str(run.root)])
+    assert failed.exit_code != 0 and "uv sync --extra screen" in failed.output
+    assert "Traceback" not in failed.output and not isinstance(failed.exception, crossdock.ReceptorPreparationError)
