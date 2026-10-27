@@ -328,3 +328,31 @@ def test_prepare_without_final_warns(site):
     plan = crossdock.prepare(ws.root)
     assert any("no final metadata" in w for w in plan.warnings)
     assert any("no saved box" in w for w in plan.warnings)
+
+
+def test_reprepare_with_a_different_job_list_archives_old_poses(site):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    crossdock.prepare(ws.root)
+    folder = ws.screening / "crossdock"
+    (folder / "poses" / "job_00000.pdbqt").write_text("MODEL 1\n")
+    crossdock.prepare(ws.root)                          # same jobs: the poses still belong to them
+    assert (folder / "poses" / "job_00000.pdbqt").exists()
+    pd.DataFrame({"pdb_id": ["R2"]}).to_csv(ws.metadata / "selected_representatives.csv", index=False)
+    crossdock.prepare(ws.root)                          # different jobs: old poses moved aside
+    assert not list((folder / "poses").glob("*.pdbqt"))
+    assert len(list((folder / "poses_previous").glob("*/job_00000.pdbqt"))) == 1
+
+
+def test_prepare_refuses_while_a_local_run_is_alive(site):
+    import os
+
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    crossdock.prepare(ws.root)
+    folder = ws.screening / "crossdock"
+    (folder / "local_run.json").write_text(json.dumps({"pid": os.getpid(), "started_at": "t", "n_jobs": 2}))
+    with pytest.raises(RuntimeError, match="still running"):
+        crossdock.prepare(ws.root)

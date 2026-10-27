@@ -1548,13 +1548,15 @@ def _(mo):
 
 
 @app.cell
-def _(active_info, get_final_version, mo, qfinal, qpages, run_dir, site_dir):
+def _(active_info, get_final_version, mo, qfinal, qpages, qsubmit, run_dir, site_dir):
     _ = (active_info, get_final_version())
     # Everything below works from the site's final metadata; the guard above says what to do first.
     mo.stop(qfinal.final_status(run_dir, site_dir.name) != "current")
     from qpocket.screen_config import load_screen_config
 
-    screen_cfg = load_screen_config()
+    # The site's screen_config.yaml, else the run's, else the defaults: the page, Prepare and Analyse share it.
+    screen_cfg_path = qsubmit.screen_config_path(run_dir, site_dir.name)
+    screen_cfg = load_screen_config(str(screen_cfg_path) if screen_cfg_path else None)
     screen_final = qfinal.read_final(run_dir, site_dir.name)
     crossdock_folder = site_dir / "screening" / "crossdock"
     run_type = mo.ui.radio(options=["Cross-docking"], value="Cross-docking", label="**Run type**")
@@ -1562,8 +1564,11 @@ def _(active_info, get_final_version, mo, qfinal, qpages, run_dir, site_dir):
         mo.md("## Screening"),
         run_type,
         mo.md("<span style='color:#9aa3ad'>Active/decoy benchmark — not implemented yet</span>"),
+        mo.md(f"_Settings from `{screen_cfg_path}`._" if screen_cfg_path else
+              f"_Default settings; put a `screen_config.yaml` in `{site_dir / 'screening'}` or `{run_dir}` "
+              "to change them (engines, analysis, `remote:` for a VM)._"),
     ]))
-    return crossdock_folder, screen_cfg, screen_final
+    return crossdock_folder, screen_cfg, screen_cfg_path, screen_final
 
 
 @app.cell
@@ -1661,7 +1666,7 @@ def _(dock_cpus, dock_engine, dock_exhaustiveness, dock_modes, dock_pairs, get_s
 
 @app.cell
 def _(dock_cpus, dock_engine, dock_exhaustiveness, dock_installed, dock_modes, get_screen_messages, mo,
-      prepare_button, qcrossdock, set_screen_messages, set_screen_version, site_dir):
+      prepare_button, qcrossdock, screen_cfg_path, set_screen_messages, set_screen_version, site_dir):
     mo.stop(not prepare_button.value)
 
     if dock_engine.value is None or not dock_installed.get(dock_engine.value):
@@ -1669,7 +1674,7 @@ def _(dock_cpus, dock_engine, dock_exhaustiveness, dock_installed, dock_modes, g
     else:
         with mo.status.spinner(title="Preparing receptors, ligands and the task list…"):
             try:
-                _plan = qcrossdock.prepare(site_dir, docking={
+                _plan = qcrossdock.prepare(site_dir, str(screen_cfg_path) if screen_cfg_path else None, docking={
                     "engine": dock_engine.value, "exhaustiveness": int(dock_exhaustiveness.value),
                     "num_modes": int(dock_modes.value), "cpus": int(dock_cpus.value)})
                 _warn = "".join(f"\n- {w}" for w in _plan.warnings)
@@ -1715,10 +1720,9 @@ def _(crossdock_folder, dock_cpus, get_screen_messages, mo, qpages, qsubmit, run
         _vm = mo.md("_No `remote:` block in screen_config.yaml (host, directory, setup). Q-Pocket never starts "
                     "or stops a VM._")
     else:
-        _power = qsubmit.vm_power_state(_remote)
         _vm = mo.vstack([
-            mo.md(f"Host `{_remote.host}`, folder `{_remote.directory}/{site_dir.name}`"
-                  + (f" · VM: **{_power}**" if _power else "")),
+            mo.md(f"Host `{_remote.host}`, folder `{_remote.directory}/{site_dir.name}` · Poll also asks Azure "
+                  "for the VM's power state when `azure_vm` is set."),
             mo.hstack([vm_push, vm_poll, vm_pull], justify="start"),
         ])
     qpages.on("Screening", mo.vstack([
@@ -1751,9 +1755,11 @@ def _(crossdock_folder, dock_cpus, get_screen_messages, mo, qsubmit, run_start, 
                 _outs.append(_r.stdout)
             if vm_poll.value:
                 _st = qsubmit.remote_status(_outs[0], site_dir.name)
+                _power = qsubmit.vm_power_state(screen_cfg.remote)
                 _others = f" · **other jobs on the VM:** {', '.join(_st['other_jobs'])}" if _st["other_jobs"] else ""
                 _msg = (f"_{_st['poses']} pose files there · our session "
-                        f"{'running' if _st['own_session'] else 'not running'}_{_others}")
+                        f"{'running' if _st['own_session'] else 'not running'}"
+                        + (f" · VM {_power}" if _power else "") + f"_{_others}")
             else:
                 _msg = "_Pushed and started._" if vm_push.value else "_Pulled the poses._"
     except Exception as _e:
@@ -1772,13 +1778,14 @@ def _(mo, screen_cfg):
 
 
 @app.cell
-def _(analyse_button, analyse_threshold, get_screen_messages, mo, qcrossdock, set_screen_messages,
-      set_screen_result, site_dir):
+def _(analyse_button, analyse_threshold, get_screen_messages, mo, qcrossdock, screen_cfg_path,
+      set_screen_messages, set_screen_result, site_dir):
     mo.stop(not analyse_button.value)
 
     try:
         with mo.status.spinner(title="Scoring poses against the crystal ligands…"):
-            set_screen_result(qcrossdock.analyze(site_dir, analysis={"rmsd_threshold": float(analyse_threshold.value)}))
+            set_screen_result(qcrossdock.analyze(site_dir, str(screen_cfg_path) if screen_cfg_path else None,
+                                                 analysis={"rmsd_threshold": float(analyse_threshold.value)}))
         _msg = ""
     except FileNotFoundError as _e:
         _msg = f"_Nothing to analyse yet: {_e}_"

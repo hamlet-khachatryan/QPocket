@@ -133,6 +133,27 @@ def _session(site_id: str) -> str:
     return "qpocket_" + re.sub(r"[^A-Za-z0-9_-]", "_", site_id)
 
 
+_SAFE = re.compile(r"^[A-Za-z0-9._/@+=,-]+$")
+SSH_OPTIONS = ["-o", "BatchMode=yes"]   # never wait on a password or host-key prompt
+
+
+def _remote_dir(remote: RemoteConfig, site_id: str) -> Tuple[str, str]:
+    """(path for the remote shell, path for rsync) of the site's remote task folder.
+
+    rsync takes a home-relative path for ``~/…`` (it starts in the remote home); the shell gets ``~/`` unquoted
+    so it expands it. Only characters that need no quoting are accepted, so both read the same folder.
+    """
+    directory = remote.directory.rstrip("/") or "."
+    home = directory == "~" or directory.startswith("~/")
+    rest = directory[2:] if directory.startswith("~/") else ("" if directory == "~" else directory)
+    path = f"{rest}/{site_id}" if rest else site_id
+    for part in (path, site_id):
+        if not _SAFE.match(part):
+            raise ValueError(f"remote folder {path!r}: use letters, digits and . _ / @ + = , - only "
+                             "(rsync and the remote shell must read it the same way)")
+    return (f"~/{path}" if home else path), path
+
+
 def remote_commands(folder: Path, site_id: str, remote: RemoteConfig, workers: int,
                     cpus: int) -> Dict[str, List[str]]:
     """The commands that run a task folder on a remote machine: push, start, poll, pull.
@@ -140,24 +161,49 @@ def remote_commands(folder: Path, site_id: str, remote: RemoteConfig, workers: i
     Args:
         folder: The local task folder.
         site_id: The site, naming the remote folder and the tmux session.
-        remote: Where to run it.
+        remote: Where to run it; ``directory`` may start with ``~/``.
         workers: Jobs in parallel there; 0 uses half its cores.
         cpus: Threads per job.
 
     Returns:
-        Key to an argv list for subprocess.run; remote paths are shell-quoted.
+        Key to an argv list for subprocess.run. Push replaces the remote task (and its old poses); a failed
+        setup line stops the run; the run's output goes to run_local.log there.
+
+    Raises:
+        ValueError: If the remote folder or site id holds characters rsync and the shell would read differently.
     """
-    q = shlex.quote
-    remote_dir = f"{remote.directory.rstrip('/')}/{site_id}"
-    inner = "; ".join([*remote.setup, f"cd {q(remote_dir)}",
-                       f"qpocket screen run-local docking_jobs.csv --workers {int(workers)} --cpus {int(cpus)}"])
+    shell_dir, rsync_dir = _remote_dir(remote, site_id)
+    inner = " && ".join([*remote.setup, f"cd {shell_dir}",
+                         f"qpocket screen run-local docking_jobs.csv --workers {int(workers)} --cpus {int(cpus)}"
+                         " > run_local.log 2>&1"])
+    rsync = ["rsync", "-az", "-e", "ssh " + " ".join(SSH_OPTIONS)]
+    host = str(remote.host)
     return {
-        "push": ["rsync", "-az", "--exclude", "poses/", f"--rsync-path=mkdir -p {q(remote_dir)} && rsync",
-                 f"{folder}/", f"{remote.host}:{q(remote_dir)}/"],
-        "start": ["ssh", str(remote.host), f"tmux new -d -s {_session(site_id)} {q(inner)}"],
-        "poll": ["ssh", str(remote.host), f"ls {q(remote_dir)}/poses 2>/dev/null | wc -l; tmux ls 2>/dev/null || true"],
-        "pull": ["rsync", "-az", f"{remote.host}:{q(remote_dir)}/poses/", f"{folder}/poses/"],
+        "push": [*rsync, "--delete", "--delete-excluded", "--exclude", "poses/", "--exclude", "poses_previous/",
+                 "--exclude", LOCAL_RUN, "--exclude", "local_run.log",
+                 f"--rsync-path=mkdir -p {rsync_dir} && rsync", f"{folder}/", f"{host}:{rsync_dir}/"],
+        "start": ["ssh", *SSH_OPTIONS, host, f"tmux new -d -s {_session(site_id)} {shlex.quote(inner)}"],
+        "poll": ["ssh", *SSH_OPTIONS, host,
+                 f"ls {shell_dir}/poses 2>/dev/null | wc -l; tmux ls 2>/dev/null || true"],
+        "pull": [*rsync, f"{host}:{rsync_dir}/poses/", f"{folder}/poses/"],
     }
+
+
+def screen_config_path(run_dir: Path, site_id: str) -> Optional[Path]:
+    """The screening config the page and preparation use: the site's, else the run's, else None (defaults).
+
+    Args:
+        run_dir: The run directory.
+        site_id: The site.
+
+    Returns:
+        ``sites/<id>/screening/screen_config.yaml``, else ``<run>/screen_config.yaml``, when present.
+    """
+    for path in (Path(run_dir) / "sites" / site_id / "screening" / "screen_config.yaml",
+                 Path(run_dir) / "screen_config.yaml"):
+        if path.is_file():
+            return path
+    return None
 
 
 def remote_status(poll_output: str, site_id: str) -> Dict[str, object]:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import shlex
 import shutil
 import tempfile
@@ -168,6 +169,10 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
     validate_screen_config(cfg)
     ws = layout.workspace(Path(run_dir).resolve())
     folder = ws.screening / CROSSDOCK_DIR
+    from qpocket.arms.screen.submit import local_progress
+
+    if (folder / "docking_jobs.csv").exists() and local_progress(folder)["running"]:
+        raise RuntimeError(f"a docking run is still running in {folder}; let it finish before preparing again")
     with start_action(action_type="crossdock_prepare", run=str(ws.root)):
         staged, clustering_mode, warnings = _snapshot_representatives(ws, folder)
         try:
@@ -177,6 +182,21 @@ def prepare(run_dir, config_path: Optional[str] = None, **overrides) -> Screenin
             raise
         _commit_snapshot(staged, folder)
         return plan
+
+
+def _retire_poses(folder: Path, jobs_csv: Path, jobs: pd.DataFrame) -> None:
+    """Move the poses aside when the new task list differs: job ids are positions, so old poses would be misread."""
+    poses = folder / "poses"
+    if not jobs_csv.exists() or not poses.is_dir() or not any(poses.iterdir()):
+        return
+    old = pd.read_csv(jobs_csv, dtype=str, keep_default_na=False)
+    new = jobs.astype(str)
+    if list(old.columns) == list(new.columns) and old.reset_index(drop=True).equals(new.reset_index(drop=True)):
+        return
+    target = folder / "poses_previous" / datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    target.parent.mkdir(exist_ok=True)
+    poses.rename(target if not target.exists() else target.with_name(target.name + "-2"))
+    log_message(message_type="crossdock_poses_retired", moved_to=str(target))
 
 
 def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], cfg: ScreenConfig,
@@ -234,8 +254,9 @@ def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], 
     jobs = crossdock_jobs(receptors, ligands, box, cfg.docking.engine, engine.output_ext,
                           cfg.docking.exhaustiveness, cfg.docking.num_modes, cfg.docking.energy_range,
                           seed=cfg.docking.seed)
-    (folder / "poses").mkdir(parents=True, exist_ok=True)
     jobs_csv = folder / "docking_jobs.csv"
+    _retire_poses(folder, jobs_csv, jobs)
+    (folder / "poses").mkdir(parents=True, exist_ok=True)
     jobs.to_csv(jobs_csv, index=False)
     command = _write_runners(folder, len(jobs), cfg)
     log_message(message_type="crossdock_prepared", receptors=len(receptors), actives=len(ligands),

@@ -328,6 +328,9 @@ def test_a_finalised_site_renders_the_screening_page_and_saves_its_box(tmp_path,
 
     root = _site_run(tmp_path, monkeypatch, True)
     final.finalise_site(root, "S1-Y1")
+    config = root / "sites" / "S1-Y1" / "screening" / "screen_config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("remote:\n  host: example-vm\n  directory: ~/qpocket_crossdock\n")
 
     def save(outputs):
         button = _element_id("\n".join(outputs), "button", "Save box")
@@ -339,7 +342,8 @@ def test_a_finalised_site_renders_the_screening_page_and_saves_its_box(tmp_path,
     assert not errors, "cells left showing errors: " + "; ".join(e[:200] for e in errors[:5])
     shown = "\n".join(html for _, html in first)
     for text in ("Active/decoy benchmark — not implemented yet", "Save box", "dockings", "Run here",
-                 "SLURM (writes scripts only)", "VM over SSH", "Analyse", "Poses"):
+                 "SLURM (writes scripts only)", "VM over SSH", "Analyse", "Poses", "Settings from",
+                 "example-vm"):
         assert text in shown, f"{text!r} never rendered"
     box = _json.loads((root / "sites" / "S1-Y1" / "screening" / "box.json").read_text())
     assert box["mode"] in ("interacting_residues", "representative_pockets") and box["site_id"] == "S1-Y1"

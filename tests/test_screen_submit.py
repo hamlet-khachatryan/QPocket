@@ -81,22 +81,42 @@ def test_progress_of_a_dead_run(tmp_path):
     assert progress["running"] is False and progress["done"] == 1 and progress["started_at"] == "t"
 
 
-def test_remote_commands_quote_paths(tmp_path):
+def test_remote_commands_expand_home_and_quote_paths(tmp_path):
     import shlex
 
-    remote = RemoteConfig(host="comp-bio-2", directory="/data/my runs", setup=["source ~/qp/.venv/bin/activate"])
-    commands = submit.remote_commands(tmp_path / "crossdock", "S1-G'127", remote, workers=8, cpus=2)
+    remote = RemoteConfig(host="comp-bio-2", directory="~/qpocket_crossdock",
+                          setup=["source ~/qp/.venv/bin/activate"])
+    commands = submit.remote_commands(tmp_path / "crossdock", "S1-G127", remote, workers=8, cpus=2)
     assert set(commands) == {"push", "start", "poll", "pull"}
-    quoted = shlex.quote("/data/my runs/S1-G'127")
     start = commands["start"]
-    assert start[:2] == ["ssh", "comp-bio-2"]
-    tmux = shlex.split(start[2])
-    assert tmux[:5] == ["tmux", "new", "-d", "-s", "qpocket_S1-G_127"]
+    assert start[:4] == ["ssh", "-o", "BatchMode=yes", "comp-bio-2"]
+    tmux = shlex.split(start[4])
+    assert tmux[:5] == ["tmux", "new", "-d", "-s", "qpocket_S1-G127"]
     inner = tmux[5]
-    assert "/data/my runs/S1-G'127" in shlex.split(inner.replace(";", " ; "))
-    assert "qpocket screen run-local docking_jobs.csv --workers 8 --cpus 2" in inner
-    assert any(quoted in part for part in commands["push"]) and any(quoted in part for part in commands["pull"])
-    assert commands["push"][0] == "rsync" and "--exclude" in commands["push"]
+    assert "cd ~/qpocket_crossdock/S1-G127" in inner and "'~" not in inner     # ~ left for the remote shell
+    assert "source ~/qp/.venv/bin/activate && cd" in inner                       # a failed setup stops the run
+    assert "run-local docking_jobs.csv --workers 8 --cpus 2" in inner and "> run_local.log 2>&1" in inner
+    push, pull = commands["push"], commands["pull"]
+    assert push[-1] == "comp-bio-2:qpocket_crossdock/S1-G127/"                  # relative to the remote home
+    assert pull[-2] == "comp-bio-2:qpocket_crossdock/S1-G127/poses/"
+    assert "--delete" in push and "BatchMode=yes" in " ".join(push)
+
+
+def test_remote_commands_refuse_paths_rsync_cannot_carry(tmp_path):
+    with pytest.raises(ValueError, match="letters, digits"):
+        submit.remote_commands(tmp_path, "S1", RemoteConfig(host="h", directory="/data/my runs"), 1, 1)
+    with pytest.raises(ValueError, match="letters, digits"):
+        submit.remote_commands(tmp_path, "S1-G'127", RemoteConfig(host="h", directory="/data"), 1, 1)
+
+
+def test_screen_config_path_prefers_the_site(tmp_path):
+    site = tmp_path / "sites" / "S1"
+    (site / "screening").mkdir(parents=True)
+    assert submit.screen_config_path(tmp_path, "S1") is None
+    (tmp_path / "screen_config.yaml").write_text("remote:\n  host: h\n")
+    assert submit.screen_config_path(tmp_path, "S1") == tmp_path / "screen_config.yaml"
+    (site / "screening" / "screen_config.yaml").write_text("remote:\n  host: s\n")
+    assert submit.screen_config_path(tmp_path, "S1") == site / "screening" / "screen_config.yaml"
 
 
 def test_remote_status_sees_other_jobs():
