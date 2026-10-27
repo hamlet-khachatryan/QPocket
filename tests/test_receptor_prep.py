@@ -126,6 +126,7 @@ def _single_chain_a(tmp_path):
     return path, st
 
 
+@pytest.mark.skipif(not PARG.exists(), reason="needs the bundled PARG structures")
 def test_a_missing_loop_near_the_pocket_is_built_and_nothing_moves(tmp_path):
     pytest.importorskip("pdbfixer")
     from biopandas.pdb import PandasPdb
