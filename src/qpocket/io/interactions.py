@@ -9,7 +9,7 @@ from eliot import log_message
 from rdkit import Chem
 
 from qpocket.core import detect
-from qpocket.core.perception import component_ids, parse_pdb_atoms, perceive
+from qpocket.core.perception import component_ids, element_from, parse_pdb_atoms, perceive
 from qpocket.core.protonation import assign_protonation
 from qpocket.io.components import MissingComponentError, component_bonds
 
@@ -247,7 +247,8 @@ def write_complex(path: Path, protein_pqr: Path,
         if not res_seq:              # a chain column is present, shifting the fields
             res_seq = "".join(c for c in parts[5] if c.isdigit() or c == "-")
         x, y, z = parts[-5], parts[-4], parts[-3]
-        element = name.lstrip("0123456789")[:1]
+        # two-letter metals (ZN, MG, FE …) are read as such; "ZN"[:1] would be the non-element Z
+        element = element_from(name, "").upper()
         lines.append(pdb_line("ATOM", serial, name, res_name, "A", int(res_seq),
                               float(x), float(y), float(z), element))
         serial += 1

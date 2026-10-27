@@ -92,3 +92,22 @@ def test_two_same_name_ligands_keep_separate_contacts(tmp_path):
     assert a != b
     assert {e.split("|")[0].rsplit("_", 1)[0] for e in a} >= {"ASN_23", "ASP_128"}  # hydroxyls unoptimised here
     assert b == ["no_ligand_found"]
+
+
+def test_a_two_letter_metal_survives_the_protonated_complex(tmp_path):
+    """pdb2pqr writes zinc as 'ZN ION'; its element must be Zn, not Z."""
+    from qpocket.io.interactions import load_molecule, write_complex
+
+    pqr = tmp_path / "protein.pqr"
+    pqr.write_text(
+        "ATOM      1  N   GLY A   1       0.000   0.000   0.000 -0.3000 1.8240\n"
+        "ATOM      2  CA  GLY A   1       1.458   0.000   0.000  0.0000 1.9080\n"
+        "ATOM      3  C   GLY A   1       2.009   1.420   0.000  0.5000 1.9080\n"
+        "ATOM      4  O   GLY A   1       1.251   2.390   0.000 -0.5000 1.6612\n"
+        "HETATM 9999 ZN ION     1      10.256   -3.894    5.661  2.0000  1.1000\n")
+    out = tmp_path / "complex.pdb"
+    write_complex(out, pqr, [])
+    zinc = [l for l in out.read_text().splitlines() if "ZN" in l]
+    assert zinc and zinc[0][76:78].strip() == "ZN"
+    mol = load_molecule(out)
+    assert "Zn" in {a.GetSymbol() for a in mol.GetAtoms()}
