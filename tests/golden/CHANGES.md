@@ -218,3 +218,11 @@ Interactions crop), site ids are `S<rank>-<residue>`, and CavFind misses go to
 `sites/cavfind_misses.csv`. Every site table, cloud and downstream matrix of the
 golden run changes. The PARG data is not available at the time of writing, so
 the golden test skips; re-capture the baseline when it returns.
+
+## Clustering cuts are site percentiles
+
+Every hierarchical cut is now a percentile of the site's own pairwise distances
+(`distance.clustering.<stage>.percentile`: shape 15, chemistry 20, measured on the
+whole site's chemistry distances). The old relative 0.5 cuts no longer apply, so
+the golden clusterings change. The PARG data is not available at the time of
+writing; re-capture the baseline when it returns.

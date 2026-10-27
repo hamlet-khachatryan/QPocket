@@ -176,10 +176,10 @@ uv run qpocket explore ./runs --edit
 ```
 
 To reconsider a site's clustering without recomputing anything, adjust the two-stage
-thresholds in the notebook and save, or from the command line:
+percentile cuts in the notebook and apply, or from the command line:
 
 ```bash
-uv run qpocket recluster ./runs/parg-minimal/7KG6/sites/S1-H21 --shape-threshold 0.25
+uv run qpocket recluster ./runs/parg-minimal/7KG6/sites/S1-H21 --shape-percentile 15 --chem-percentile 20
 ```
 
 The previous clustering is archived under `sites/site_NN/metadata/clustering_history/` rather

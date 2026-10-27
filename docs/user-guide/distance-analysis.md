@@ -84,11 +84,29 @@ $$
 ## Clustering
 
 The default two-stage mode cuts a hierarchical (average-linkage) tree on shape,
-then another within each shape cluster on chemistry. Each cut is by default
-`relative` at 0.5: half the height of that tree's highest merge. `threshold` (an
-absolute height) and `count` (a fixed `k >= 2`) are the alternatives; see
-[Configuration](../configuration.md#distanceclustering). The cluster count is
-never chosen by silhouette.
+then another within each shape cluster on chemistry. Every cut is a **site
+percentile**: shape at p15 cuts where 15 % of the site's pairwise shape distances
+lie below, so pockets in one cluster are about as similar as the closest 15 % of
+pairs. The chemistry cut (p20) is measured on the whole site's chemistry
+distances, so it means the same in every shape cluster and a chemically uniform
+shape cluster is not split. `kmedoids` stages take a fixed `k` instead; see
+[Configuration](../configuration.md#distanceclustering).
+
+### In the explorer
+
+- **Clusters**: the cut sliders move a percentile and the preview follows. The
+  shape tree is drawn only down to the cut, one leaf per cluster, with each
+  cluster's chemistry tree mirrored below; clusters smaller than
+  `min_cluster_size` are grey. The cluster table gives size, holo share, how
+  tight each cluster is (median within distance, as a percentile), how much
+  cavity volume its pockets share, and its representative; select a row to see
+  that cluster's own tree. **Apply to this run** saves the clustering.
+- **Cluster distances**: the median distance between every pair of clusters, as
+  a percentile, and the member-level block for any two clusters.
+- **Landscape**: one small point per pocket, labels on hover.
+- **Pocket clouds**: at most 40 at once, picked in a searchable list
+  (representatives first); consensus and difference colouring use the whole
+  cluster.
 
 ## Clustering — Affinity Propagation
 
