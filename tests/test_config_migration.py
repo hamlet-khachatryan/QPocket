@@ -238,23 +238,19 @@ def test_a_run_saved_with_the_silhouette_defaults_still_loads(tmp_path):
     with contextlib.redirect_stderr(err):
         cfg = load_run_config(tmp_path)
     c = cfg.distance.clustering
-    for name in ("shape", "chem"):
+    for name, default in (("shape", 15.0), ("chem", 20.0)):
         stage = getattr(c, name)
-        assert (stage.method, stage.criterion, stage.threshold) == ("hierarchical", "relative", 0.5)
-        assert f"distance.clustering.{name} chose k by silhouette" in err.getvalue()
+        assert (stage.method, stage.percentile) == ("hierarchical", default)
+        assert f"distance.clustering.{name}: criterion=count" in err.getvalue()
     assert c.single.method == "affinity"
 
 
-def test_an_explicit_k_means_count(tmp_path):
+def test_an_explicit_k_is_kept_for_kmedoids(tmp_path):
     path = tmp_path / "k.yaml"
     path.write_text("reference:\n  pdb_id: 1ABC\ndistance:\n  clustering:\n"
-                    "    shape:\n      k: 3\n    chem:\n      method: kmedoids\n      k: 3\n",
-                    encoding="utf-8")
+                    "    chem:\n      method: kmedoids\n      k: 3\n", encoding="utf-8")
     cfg, _ = load_with_notices(str(path))
-    assert (cfg.distance.clustering.shape.criterion, cfg.distance.clustering.shape.k) == ("count", 3)
-    assert (cfg.distance.clustering.chem.criterion, cfg.distance.clustering.chem.k) == ("count", 3)
-    cfg = load_qpocket_config(overrides=["reference.pdb_id=1ABC", "distance.clustering.shape.k=4"])
-    assert (cfg.distance.clustering.shape.criterion, cfg.distance.clustering.shape.k) == ("count", 4)
+    assert (cfg.distance.clustering.chem.method, cfg.distance.clustering.chem.k) == ("kmedoids", 3)
 
 
 def test_an_old_link_cutoff_loads_and_is_dropped(tmp_path):
@@ -276,3 +272,14 @@ def test_a_new_box_padding_is_kept(tmp_path):
     cfg = OmegaConf.create({"sites": {"box_padding": 2.0}})
     migrate_legacy(cfg)
     assert OmegaConf.select(cfg, "sites.box_padding") == 2.0
+
+
+def test_old_criterion_migrates_to_percentile(tmp_path):
+    path = tmp_path / "old.yaml"
+    path.write_text("mode: pdb_query\nreference:\n  pdb_id: 1ABC\ndistance:\n  clustering:\n    shape:\n"
+                    "      criterion: relative\n      threshold: 0.5\n")
+    cfg = load_qpocket_config(config_path=str(path))
+    assert cfg.distance.clustering.shape.percentile == 15.0
+    notes = migrate_legacy(OmegaConf.create({"distance": {"clustering": {"shape": {
+        "criterion": "relative", "threshold": 0.5}}}}))
+    assert any("percentile" in note for note in notes)

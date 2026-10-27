@@ -396,29 +396,15 @@ def _stage(**kw):
     return evolve(_dm(), "clustering", ClusteringParams(shape=StageClustering(**kw)))
 
 
-@pytest.mark.parametrize("kw", [
-    dict(criterion="relative", threshold=0.0),
-    dict(criterion="relative", threshold=1.5),
-    dict(criterion="relative", threshold=None),
-    dict(method="kmedoids", criterion="relative", threshold=0.5),
-    dict(criterion="count", k=None),
-    dict(criterion="threshold", threshold=0.0),
-    dict(criterion="silhouette"),
-])
-def test_bad_stage_criteria_are_refused(kw):
+@pytest.mark.parametrize("kw", [dict(percentile=0.0), dict(percentile=100.0), dict(method="kmedoids")])
+def test_bad_stage_cuts_are_refused(kw):
     with pytest.raises(ValueError, match="distance.clustering.shape"):
         validate_config(make_config(distance=_stage(**kw)))
 
 
-@pytest.mark.parametrize("kw", [
-    dict(criterion="relative", threshold=1.0),
-    dict(criterion="relative", threshold=0.05),
-    dict(criterion="count", k=2),
-    dict(method="kmedoids", criterion="count", k=3),
-    dict(criterion="threshold", threshold=4.0),
-    dict(method="affinity"),
-])
-def test_good_stage_criteria_pass(kw):
+@pytest.mark.parametrize("kw", [dict(percentile=15.0), dict(percentile=0.5), dict(method="kmedoids", k=3),
+                                dict(method="affinity")])
+def test_good_stage_cuts_pass(kw):
     validate_config(make_config(distance=_stage(**kw)))
 
 
@@ -460,3 +446,28 @@ def test_site_defaults():
 def test_site_parameter_ranges(key, value):
     with pytest.raises(ValueError, match=f"sites.{key}"):
         validate_config(evolve(make_config(mode="pdb_query"), f"sites.{key}", value))
+
+
+# ---------------------------------------------------------------------------
+# Percentile cuts
+# ---------------------------------------------------------------------------
+
+def test_cut_defaults_are_percentiles():
+    from qpocket.config import ClusteringParams
+
+    c = ClusteringParams()
+    assert (c.shape.percentile, c.chem.percentile, c.single.percentile) == (15.0, 20.0, 15.0)
+    assert not hasattr(c.shape, "criterion") and not hasattr(c.shape, "threshold")
+
+
+@pytest.mark.parametrize("value", [0.0, 100.0, -5.0])
+def test_percentile_range(value):
+    cfg = evolve(make_config(mode="pdb_query"), "distance.clustering.shape.percentile", value)
+    with pytest.raises(ValueError, match="distance.clustering.shape.percentile"):
+        validate_config(cfg)
+
+
+def test_kmedoids_needs_k():
+    cfg = evolve(make_config(mode="pdb_query"), "distance.clustering.shape.method", "kmedoids")
+    with pytest.raises(ValueError, match="distance.clustering.shape.k"):
+        validate_config(cfg)

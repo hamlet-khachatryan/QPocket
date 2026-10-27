@@ -303,19 +303,18 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
     shape:                  # stage one: shape distances
       method: "hierarchical"  # "hierarchical", "kmedoids" or "affinity"
       linkage: "average"      # average | complete | single | weighted
-      k: null                 # cluster count; needed only for criterion "count"
-      criterion: "relative"   # "relative", "threshold" or "count"
-      threshold: 0.5          # relative: fraction (0, 1]; threshold: absolute height
+      percentile: 15          # cut at this percentile of the site's pairwise shape distances
+      k: null                 # cluster count; "kmedoids" only
 
     chem:                   # stage two: within each shape cluster
       method: "hierarchical"
       linkage: "average"
+      percentile: 20          # percentile of the whole site's chemistry distances
       k: null
-      criterion: "relative"
-      threshold: 0.5
 
     single:                 # only when mode == "single"
       method: "affinity"
+      percentile: 15        # used when method is "hierarchical"
       damping: 0.9          # affinity propagation only, [0.5, 1.0)
       max_iter: 300         # affinity propagation only
 ```
@@ -326,35 +325,24 @@ $$d = \text{shape\_weight} \cdot d_{\text{shape}} + (1 - \text{shape\_weight}) \
 | `single` | Cluster the blended matrix in one pass. Reproduces pre-0.2 runs exactly. |
 | `shape_only` | Run stage one only: group on shape, with no physicochemical subdivision. |
 
-A stage ignores the settings its method does not use: `linkage` applies only to
-`hierarchical`, `k` only to `hierarchical` and `kmedoids`, and
-`damping`/`max_iter` only to `affinity`. They are still accepted, so switching
-method needs no other edit.
+A stage ignores the settings its method does not use: `linkage` and
+`percentile` apply only to `hierarchical`, `k` only to `kmedoids` (where it is
+required), and `damping`/`max_iter` only to `affinity`.
 
-`criterion` says how a hierarchical stage is cut:
+A hierarchical tree is cut at a **site percentile**: `percentile: 15` cuts at the
+distance below which 15 % of the site's pairs lie, so pockets in one cluster are
+about as similar as the closest 15 % of pairs. The same number means the same
+thing for shape, chemistry and combined distances, and on any site. The chemistry
+percentile is measured on the whole site's chemistry distances, not per shape
+cluster, so a chemically uniform shape cluster is not split. Pick the cut with
+the explorer's sliders, or on a finished run with
+`qpocket recluster RUN_DIR --shape-percentile 15 --chem-percentile 20`.
 
-| criterion | cut |
-|---|---|
-| `relative` (default) | at `threshold` times the height of the stage's highest merge, with `threshold` in (0, 1]. Scale-free, so `0.5` means about the same on any site. |
-| `threshold` | at the absolute height `threshold` (> 0). |
-| `count` | into exactly `k` clusters (`k >= 2`; required, there is no automatic choice). |
-
-`threshold` and `relative` need method `hierarchical`; `affinity` ignores the
-criterion. For the chemistry stage the cut applies within each shape cluster. Pick
-the cut by eye with the sliders in the explorer notebook, or try it on a finished
-run with `qpocket recluster RUN_DIR --shape-criterion relative --shape-threshold 0.5`.
-
-!!! warning "Removed: `k_range` and the silhouette choice"
-    The number of clusters is no longer chosen by silhouette. `k_range` is
-    obsolete; a config that still sets it gets a warning and the key is ignored.
-    A config, or a run's saved `metadata/config.yaml`, from an older version
-    with `k: null` and `criterion: "count"` is converted automatically to a
-    hierarchical relative cut at 0.5, with a warning naming the stage; set `k` or
-    a threshold to choose otherwise. A setting that gives `k` but no `criterion`
-    means `criterion: "count"`. Reclustering such a run's saved
-    `clustering_params.json` still needs `--shape-criterion relative
-    --chem-criterion relative` (threshold defaults to 0.5) or an explicit
-    `--shape-k`/`--chem-k`.
+!!! warning "Removed: `criterion`, `threshold`, `k_range` and the silhouette choice"
+    Cuts used to be a cluster count, an absolute height or a fraction of the
+    tallest merge. A config, or a run's saved `metadata/config.yaml`, that still
+    sets `criterion` or `threshold` on a stage loads with a warning naming the
+    stage, and the stage takes its default percentile.
 
 ---
 

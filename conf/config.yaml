@@ -113,21 +113,21 @@ distance:
     shape:                        # stage one: Laplacian eigenvalue distances
       method: "hierarchical"      # "hierarchical", "kmedoids" or "affinity"
       linkage: "average"          # average | complete | single | weighted
-      criterion: "relative"       # "count" (k clusters), "threshold" (a height)
-                                  # or "relative" (a fraction of the tallest merge)
-      threshold: 0.5              # height for "threshold"; fraction in (0, 1]
-                                  # for "relative"
-      k: null                     # cluster count, needed when criterion is "count"
+      percentile: 15              # cut the tree at this percentile (0-100) of the
+                                  # site's pairwise shape distances
+      k: null                     # cluster count, used by "kmedoids" only
 
     chem:                         # stage two: Graph-Fourier feature distances,
       method: "hierarchical"      # applied within each shape cluster only.
       linkage: "average"
-      criterion: "relative"       # "threshold" and "relative" need "hierarchical";
-      threshold: 0.5              # relative cuts each cluster's own tree
-      k: null
+      percentile: 20              # percentile of the whole site's chemistry
+                                  # distances, so it means the same in every
+                                  # shape cluster
+      k: null                     # "kmedoids" only
 
     single:                       # used only when mode == "single"
       method: "affinity"
+      percentile: 15              # used when method is "hierarchical"
       damping: 0.9                # affinity propagation only, [0.5, 1.0)
       max_iter: 300               # affinity propagation only
 

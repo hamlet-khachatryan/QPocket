@@ -115,21 +115,19 @@ class StageClustering:
     """Clustering settings for one stage of a two-stage grouping.
 
     Attributes:
-        method: ``"hierarchical"`` cuts a linkage tree, ``"kmedoids"`` partitions around medoids, ``"affinity"`` lets Affinity Propagation choose its own cluster count and ignores ``k`` and ``criterion``.
+        method: ``"hierarchical"`` cuts a linkage tree, ``"kmedoids"`` partitions around medoids, ``"affinity"`` lets Affinity Propagation choose its own cluster count.
         linkage: Linkage used when ``method`` is ``"hierarchical"``.
-        k: Cluster count for the ``"count"`` criterion.
+        percentile: Where a hierarchical tree is cut: this percentile, in (0, 100), of the site's pairwise distances.
+        k: Cluster count for ``"kmedoids"``.
         damping: Affinity Propagation damping, in ``[0.5, 1.0)``.
         max_iter: Affinity Propagation iteration cap.
-        criterion: ``"count"`` makes k clusters; ``"threshold"`` cuts a hierarchical tree at the height ``threshold``; ``"relative"`` cuts it at ``threshold`` times its tallest merge.
-        threshold: Cut height for a threshold stage, in that stage's distance units; for a relative stage, a fraction in ``(0, 1]``.
     """
     method: Literal["hierarchical", "kmedoids", "affinity"] = "hierarchical"
     linkage: Literal["average", "complete", "single", "weighted"] = "average"
+    percentile: float = 15.0
     k: Optional[int] = None
     damping: float = 0.9
     max_iter: int = 300
-    criterion: Literal["count", "threshold", "relative"] = "relative"
-    threshold: Optional[float] = 0.5
 
 
 @dataclass(frozen=True)
@@ -146,13 +144,13 @@ class ClusteringParams:
     mode: Literal["two_stage", "single", "shape_only"] = "two_stage"
     min_cluster_size: int = 4
     single: StageClustering = field(
-        default_factory=lambda: StageClustering(method="affinity")
+        default_factory=lambda: StageClustering(method="affinity", percentile=15.0)
     )
     shape: StageClustering = field(
-        default_factory=lambda: StageClustering(method="hierarchical")
+        default_factory=lambda: StageClustering(method="hierarchical", percentile=15.0)
     )
     chem: StageClustering = field(
-        default_factory=lambda: StageClustering(method="hierarchical")
+        default_factory=lambda: StageClustering(method="hierarchical", percentile=20.0)
     )
 
 
@@ -436,26 +434,6 @@ def _config_keys(node: object, prefix: str = "") -> set:
     return out
 
 
-def _k_means_count(layer: DictConfig) -> DictConfig:
-    """Give every clustering stage that sets k but no criterion the count criterion.
-
-    Applied to the user's own layer before it is merged, because the packaged
-    default criterion would otherwise silently override an explicit k.
-
-    Args:
-        layer: A user config file or the command-line overrides, modified in place.
-
-    Returns:
-        The same layer.
-    """
-    for root in ("distance.clustering", "spectral_distance_matrix.clustering"):
-        for name in ("single", "shape", "chem"):
-            stage = OmegaConf.select(layer, f"{root}.{name}", default=None)
-            if isinstance(stage, DictConfig) and stage.get("k") is not None and "criterion" not in stage:
-                stage.criterion = "count"
-    return layer
-
-
 def migrate_legacy(cfg: DictConfig) -> List[str]:
     """Rewrite renamed keys in place and report what needs changing.
 
@@ -536,16 +514,20 @@ def migrate_legacy(cfg: DictConfig) -> List[str]:
             f"the old names still work but will be removed"
         )
 
-    # Before the relative cut, count with no k meant "choose k by silhouette"; every
-    # config and run saved then carries that, and it no longer validates.
+    # Cuts used to be a count, a height or a fraction of the tallest merge; they are
+    # site percentiles now, and the stage keeps its default percentile.
     for name in ("single", "shape", "chem"):
         stage = OmegaConf.select(cfg, f"distance.clustering.{name}", default=None)
-        if (isinstance(stage, DictConfig) and stage.get("criterion") == "count"
-                and stage.get("k") is None and stage.get("method") != "affinity"):
-            stage.method, stage.criterion, stage.threshold = "hierarchical", "relative", 0.5
+        if not isinstance(stage, DictConfig):
+            continue
+        old = {key: stage.pop(key) for key in ("criterion", "threshold") if key in stage}
+        if old.get("criterion") == "count" and stage.get("k") is None and stage.get("method") != "affinity":
+            # count with no k meant "choose k by silhouette", which no longer exists
+            stage.method = "hierarchical"
+        if old:
             warnings.append(
-                f"distance.clustering.{name} chose k by silhouette, which no longer exists; "
-                "using a relative cut at 0.5 — set k or a threshold to choose"
+                f"distance.clustering.{name}: {', '.join(f'{k}={v}' for k, v in old.items())} no longer "
+                f"applies; cuts are site percentiles now, set distance.clustering.{name}.percentile"
             )
 
     # Drop legacy containers emptied by the moves above, so they are not then
@@ -813,27 +795,10 @@ def validate_config(cfg: "QPocketConfig") -> None:
             raise ValueError(
                 f"{prefix}.max_iter must be >= 1, got: {stage.max_iter}"
             )
-        criterion, threshold = stage.criterion, stage.threshold
-        if stage.method == "affinity":  # chooses its own count; criterion and threshold are ignored
-            continue
-        if criterion not in ("count", "threshold", "relative"):
-            raise ValueError(f"{prefix}.criterion must be 'count', 'threshold' or 'relative', "
-                             f"got: {criterion!r}")
-        if criterion == "count" and stage.k is None:
-            raise ValueError(f"{prefix}.k must be set when criterion is 'count'; "
-                             f"set k or use criterion 'threshold' or 'relative'")
-        if criterion == "threshold" and (
-                stage.method != "hierarchical" or threshold is None or threshold <= 0):
-            raise ValueError(
-                f"{prefix}.threshold must be > 0 with method 'hierarchical' when "
-                f"criterion is 'threshold', got method {stage.method!r}, threshold {threshold!r}"
-            )
-        if criterion == "relative" and (
-                stage.method != "hierarchical" or threshold is None or not 0 < threshold <= 1):
-            raise ValueError(
-                f"{prefix}.threshold must be in (0, 1] with method 'hierarchical' when "
-                f"criterion is 'relative', got method {stage.method!r}, threshold {threshold!r}"
-            )
+        if stage.method == "hierarchical" and not 0 < stage.percentile < 100:
+            raise ValueError(f"{prefix}.percentile must be in (0, 100), got: {stage.percentile}")
+        if stage.method == "kmedoids" and stage.k is None:
+            raise ValueError(f"{prefix}.k must be set when method is 'kmedoids'")
 
     # --- FeaturesConfig ---
     from qpocket.core.ports import FEATURES as _features
@@ -1002,11 +967,11 @@ def load_qpocket_config(
 
     if config_path:
         user_cfg = OmegaConf.load(config_path)
-        cfg = OmegaConf.merge(cfg, _k_means_count(user_cfg))
+        cfg = OmegaConf.merge(cfg, user_cfg)
 
     if overrides:
         override_cfg = OmegaConf.from_dotlist(overrides)
-        cfg = OmegaConf.merge(cfg, _k_means_count(override_cfg))
+        cfg = OmegaConf.merge(cfg, override_cfg)
 
     for notice in migrate_legacy(cfg):
         log_message(message_type="config_deprecation", notice=notice)
