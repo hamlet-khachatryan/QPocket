@@ -1,5 +1,4 @@
 """The Site page's notebook-free helpers: the 3D overview, the override table, the loss summary."""
-import pandas as pd
 
 from qpocket.arms import sites as steps
 from qpocket.viz.pages import site as page
