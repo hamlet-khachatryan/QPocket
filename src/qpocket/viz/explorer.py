@@ -31,7 +31,7 @@ def _():
     from qpocket.viz import pages as qpages
     from qpocket.viz.pages import site as qsite_page
     from qpocket.viz.pages import exploration as qexplore
-    from qpocket.arms import final as qfinal
+    from qpocket.arms.sites import final as qfinal
 
     return Path, json, lru_cache, mo, np, pd, px, qcontrols, qexplore, qfinal, qpages, qsite_page, qsites, qviz
 
@@ -1493,7 +1493,7 @@ def _(active_info, get_final_message, get_final_version, mo, qfinal, qpages, run
     if _status == "current":
         import json as _json
 
-        _when = _json.loads((site_dir / "final" / "settings.json").read_text())["finalised_at"]
+        _when = _json.loads((site_dir / "final" / "settings.json").read_text(encoding="utf-8"))["finalised_at"]
         _line = f"Finalised {_when} and current · {_n_history} earlier version(s) in `final/history/`."
     elif _status == "stale":
         _line = "Finalised, but the clustering or a representative changed since: finalise again."

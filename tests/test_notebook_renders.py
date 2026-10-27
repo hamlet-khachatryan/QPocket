@@ -301,7 +301,7 @@ def test_a_site_edit_waits_for_confirm_and_keeps_its_outcome(tmp_path, monkeypat
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
 def test_finalise_from_the_page_writes_final_and_clears_the_guard(tmp_path, monkeypatch):
-    from qpocket.arms import final
+    from qpocket.arms.sites import final
 
     root = _site_run(tmp_path, monkeypatch, True)
 

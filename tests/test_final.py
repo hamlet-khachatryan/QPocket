@@ -5,7 +5,7 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from qpocket.arms import final
+from qpocket.arms.sites import final
 from qpocket.arms import sites as steps
 from tests.test_site_steps import FAR, NEAR, _finished_run
 

@@ -131,5 +131,5 @@ def test_the_sites_task_writes_what_the_serial_run_writes(tmp_path, monkeypatch)
 
 
 def test_the_site_featurize_task_reuses_the_site_featuriser():
-    assert "featurize_pocket" in _function("arms/sites.py", "run_site_task")
-    assert "_featurize_pocket" in _function("arms/sites.py", "featurize_pocket")
+    assert "featurize_pocket" in _function("arms/sites/__init__.py", "run_site_task")
+    assert "_featurize_pocket" in _function("arms/sites/__init__.py", "featurize_pocket")
