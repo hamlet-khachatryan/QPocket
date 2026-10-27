@@ -329,7 +329,7 @@ def _(mo, qpages, qviz, run_dir):
         "cavity_overlap": _number("cavity_overlap", 0.05, 1.0, 0.05, "Cavity overlap (IoU)"),
         "ligand_fraction": _number("ligand_fraction", 0.05, 1.0, 0.05, "Ligand fraction"),
         "box_padding": _number("box_padding", 0.0, 10.0, 0.5, "Box padding (Å)"),
-        "min_cavity_points": _number("min_cavity_points", 1, 2000, 10, "Min cavity points"),
+        "min_cavity_points": _number("min_cavity_points", 1, 2000, 1, "Min cavity points"),
         "min_structure_fraction": _number("min_structure_fraction", 0.0, 1.0, 0.01, "Min structure share"),
     })
     regroup_button = mo.ui.run_button(label="Regroup sites…")
@@ -400,8 +400,11 @@ def _(drop_button, edit_sites, merge_button, mo, qpages, qsites, regroup_button,
             if len(_picked) != 1:
                 raise qsites.SiteError("pick exactly one site")
             _make = qsites.drop_override if drop_button.value else qsites.split_override
+            # A split on an older grouping works its strict groups out again, which takes a while.
+            with mo.status.spinner(title=f"Reading {_picked[0]}'s cavity groups…"):
+                _override = _make(run_dir, _picked[0])
             _change = {"label": f"{'drop' if drop_button.value else 'split'} {_picked[0]}",
-                       "overrides": _current + [_make(run_dir, _picked[0])]}
+                       "overrides": _current + [_override]}
         set_pending_site_change({**_change, "run": str(run_dir)})
         _out = mo.md("")
     except Exception as _e:  # a site error is the user's to fix; anything else must not leave an old change pending

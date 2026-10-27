@@ -289,3 +289,15 @@ def test_later_overrides_see_earlier_ones():
     groups, dropped, _ = _apply([{"op": "merge", "sites": [_cavs(4, 5), _cavs(6)]},
                                  {"op": "drop", "cavities": _cavs(4, 5, 6)}])
     assert sorted(map(sorted, groups)) == [[0, 1, 2, 3]] and dropped == [[4, 5, 6]]
+
+
+def test_split_parts_keep_overlap_members_but_not_each_others_cavities():
+    from qpocket.core.sites import apply_overrides
+
+    def members_of(pieces):  # every part's box also overlaps candidate 6 (site C) and candidate 2 (its sibling)
+        return [set(p) | {2, 6} for p in pieces]
+
+    done = apply_overrides([list(g) for g in _GROUPS], _CORES, [list(g) for g in _GROUPS], _KEYS,
+                           [{"op": "split", "cavities": _cavs(0, 1, 2, 3)}], members_of=members_of)
+    by_group = {tuple(g): m for g, m in zip(done.groups, done.members)}
+    assert by_group[(0, 1)] == [0, 1, 6] and by_group[(2, 3)] == [2, 3, 6]

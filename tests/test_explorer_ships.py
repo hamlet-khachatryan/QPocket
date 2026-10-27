@@ -54,3 +54,17 @@ def test_the_wheel_carries_the_notebook(tmp_path):
     subprocess.run(["uv", "build", "--wheel", "-o", str(tmp_path)], cwd=REPO, check=True)
     names = zipfile.ZipFile(next(tmp_path.glob("*.whl"))).namelist()
     assert "qpocket/viz/explorer.py" in names
+
+
+def test_regroup_controls_put_the_config_defaults_on_their_step_grid():
+    import ast
+
+    from qpocket.config import SitesConfig
+
+    tree = ast.parse((Path(__file__).parents[1] / "src/qpocket/viz/explorer.py").read_text(encoding="utf-8"))
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_number"]
+    assert len(calls) == 5
+    for call in calls:
+        key, lo, _, step = (ast.literal_eval(a) for a in call.args[:4])
+        default = getattr(SitesConfig(), key)
+        assert abs(round((default - lo) / step) * step - (default - lo)) < 1e-9, key

@@ -180,7 +180,11 @@ def _group(cfg: QPocketConfig, ws: Workspace, records: Sequence[Structure], cand
     dropped, applied = [], []
     if overrides:
         keys = [(c[0], c[1]) for c in candidates]
-        done = apply_overrides(groups, cores, members, keys, overrides)
+        def part_members(pieces):
+            part_boxes = np.array([median_box(boxes[q]) for q in pieces]).reshape(-1, 6)
+            return [set(m) for m in site_members(part_boxes, boxes, p.cavity_overlap, groups=pieces)]
+
+        done = apply_overrides(groups, cores, members, keys, overrides, members_of=part_members)
         groups, members, dropped, applied = done.groups, done.members, done.dropped, done.report
         # Built from the parts, never re-derived: a median over merged sites lies between them.
         site_boxes = np.array([joined_box(boxes, part) for part in done.parts]).reshape(-1, 6)

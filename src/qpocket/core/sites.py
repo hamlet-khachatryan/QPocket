@@ -1,7 +1,7 @@
 """Binding-site discovery: ligands a structure holds, and sites built from cavity boxes (pure)."""
 from __future__ import annotations
 
-from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
@@ -260,7 +260,8 @@ def joined_box(boxes: np.ndarray, parts: Sequence[Sequence[int]]) -> np.ndarray:
 
 
 def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: List[List[int]],
-                    keys: Sequence[Tuple[str, int]], overrides: Sequence[Mapping]) -> Overridden:
+                    keys: Sequence[Tuple[str, int]], overrides: Sequence[Mapping],
+                    members_of: Optional[Callable[[List[List[int]]], List[Set[int]]]] = None) -> Overridden:
     """Re-apply manual merges, drops and splits, in order, to the automatic site groups.
 
     Args:
@@ -269,6 +270,8 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
         members: Per group, every candidate belonging to it (:func:`site_members`); overrides match on these.
         keys: ``(pdb_id, cavity)`` of each candidate.
         overrides: ``{"op": "merge", "sites": [cavities, ...]}`` or ``{"op": "drop"|"split", "cavities": [[pdb, cav], ...]}``.
+        members_of: For a split's parts, the candidates each part's box overlaps (as :func:`site_members`);
+            a part keeps those except its siblings' cavities. Each part is its own cavities only when None.
 
     Returns:
         The groups, their members and box parts, the dropped groups, and a report per override.
@@ -315,8 +318,10 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
                 pieces = [sorted(c) for c in cores if c and set(c) <= inside]
                 entry["parts"] = len(pieces)
                 if len(pieces) >= 2:
-                    # A part is its own cavities only; taking overlap members back would rebuild the site it left.
-                    replace([k], pieces, [set(p) for p in pieces], [[p] for p in pieces])
+                    # A part never takes its siblings' cavities: that would rebuild the site it left.
+                    found = members_of(pieces) if members_of else [set(p) for p in pieces]
+                    split_mem = [(set(m) | set(p)) - (inside - set(p)) for m, p in zip(found, pieces)]
+                    replace([k], pieces, split_mem, [[p] for p in pieces])
                     entry.update(status="applied", groups=pieces)
         else:
             raise ValueError(f"unknown site override {op!r}; known: merge, drop, split")
