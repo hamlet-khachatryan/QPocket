@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -91,18 +92,25 @@ def finalise_site(run_dir: Path, site_id: str, now: Optional[datetime] = None) -
 
     folder = ws.root / "final"
     folder.mkdir(parents=True, exist_ok=True)
-    _park(folder, when.isoformat().replace(":", "-"))
-    clusters.to_csv(folder / "clusters.csv", index=False)
-    profile.drop(columns=["n_members", "n_holo"]).to_csv(folder / "residue_profile.csv", index=False)
-    _ligands(run_dir, site_id, dict(zip(clusters["pdb_id"], clusters["cluster"]))).to_csv(
-        folder / "ligands.csv", index=False)
-    settings = {"site_id": site_id, "finalised_at": when.isoformat(), "shape_only": shape_only,
-                "features": [] if shape_only else list(features), "clustering": params,
-                "n_structures": len(clusters), "n_clusters": int(clusters["cluster_id"].nunique()),
-                "representatives": clusters.loc[clusters["is_representative"], "pdb_id"].tolist(),
-                "matrices": {m: file_hash(meta / m) for m in MATRICES if (meta / m).exists()},
-                "clustering_hash": file_hash(meta / "clustering_metadata.csv")}
-    (folder / "settings.json").write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    # Written aside first and swapped in last, so a failure leaves the previous final as it was.
+    incoming = Path(tempfile.mkdtemp(prefix=".incoming-", dir=folder))
+    try:
+        clusters.to_csv(incoming / "clusters.csv", index=False)
+        profile.drop(columns=["n_members", "n_holo"]).to_csv(incoming / "residue_profile.csv", index=False)
+        _ligands(run_dir, site_id, dict(zip(clusters["pdb_id"], clusters["cluster"]))).to_csv(
+            incoming / "ligands.csv", index=False)
+        settings = {"site_id": site_id, "finalised_at": when.isoformat(), "shape_only": shape_only,
+                    "features": [] if shape_only else list(features), "clustering": params,
+                    "n_structures": len(clusters), "n_clusters": int(clusters["cluster_id"].nunique()),
+                    "representatives": clusters.loc[clusters["is_representative"], "pdb_id"].tolist(),
+                    "matrices": {m: file_hash(meta / m) for m in MATRICES if (meta / m).exists()},
+                    "clustering_hash": file_hash(meta / "clustering_metadata.csv")}
+        (incoming / "settings.json").write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        _park(folder, when.isoformat().replace(":", "-"))
+        for name in FINAL_FILES:
+            (incoming / name).replace(folder / name)
+    finally:
+        shutil.rmtree(incoming, ignore_errors=True)
     log_message(message_type="site_finalised", site_id=site_id, n_clusters=settings["n_clusters"],
                 n_representatives=len(settings["representatives"]))
     return folder

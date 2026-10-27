@@ -47,3 +47,10 @@ def test_representative_options_put_the_current_first():
     options = page.representative_options(info, 0)
     assert list(options.values()) == ["B", "A"]
     assert list(options)[1] == "A · holo · d=0.0012"
+
+
+def test_an_unclustered_site_has_no_clusters_to_pick():
+    info = pd.DataFrame({"pdb_id": ["A", "B"], "cluster_id": [-1, -1], "is_representative": [False, False],
+                         "protein_state": ["BOUND_STATE", "x"]})        # no dist_to_exemplar, as before clustering
+    assert page.representative_options(info, -1) == {}
+    assert page.cluster_members(info, {-1: "S0"}) == {}

@@ -85,7 +85,11 @@ def representative_options(info: pd.DataFrame, cluster_id: int) -> Dict[str, str
     Returns:
         Label ``pdb_id · holo|apo · d=…`` to pdb_id.
     """
-    rows = info[info["cluster_id"] == cluster_id].copy()
+    rows = info[(info["cluster_id"] == cluster_id) & (info["cluster_id"] != -1)].copy()  # -1: not clustered yet
+    if rows.empty:
+        return {}
+    if "dist_to_exemplar" not in rows:
+        rows["dist_to_exemplar"] = float("nan")
     rows["_rep"] = rows["is_representative"].astype(bool)
     rows = rows.sort_values(["_rep", "dist_to_exemplar", "pdb_id"], ascending=[False, True, True])
     return {f"{r.pdb_id} · {'holo' if r.protein_state == 'BOUND_STATE' else 'apo'} · d={r.dist_to_exemplar:.2g}":
@@ -102,7 +106,7 @@ def cluster_members(info: pd.DataFrame, names: Dict[int, str]) -> Dict[str, List
     Returns:
         Ordered name → members.
     """
-    sizes = info["cluster_id"].value_counts()
+    sizes = info.loc[info["cluster_id"] != -1, "cluster_id"].value_counts()  # -1: not clustered yet
     order = sorted(sizes.index, key=lambda c: (-sizes[c], c))
     return {names.get(int(c), str(c)): info.loc[info["cluster_id"] == c, "pdb_id"].astype(str).tolist()
             for c in order}

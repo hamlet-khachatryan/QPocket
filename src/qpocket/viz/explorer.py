@@ -768,8 +768,10 @@ def _(mo):
 
 @app.cell
 def _(active_info, mo, qviz):
-    _names = qviz.clusters.cluster_labels_of(active_info) if "cluster_id" in active_info else {}
-    _sizes = active_info["cluster_id"].value_counts() if len(_names) else {}
+    # cluster_id -1 marks a site that is not clustered yet: nothing to pick.
+    _clustered = active_info[active_info["cluster_id"] != -1] if "cluster_id" in active_info else active_info.iloc[:0]
+    _names = qviz.clusters.cluster_labels_of(_clustered) if len(_clustered) else {}
+    _sizes = _clustered["cluster_id"].value_counts() if len(_names) else {}
     rep_cluster = mo.ui.dropdown(
         options={f"{_names[int(c)]} ({_sizes[c]})": int(c)
                  for c in sorted(_sizes.index, key=lambda c: (-_sizes[c], c))} if len(_names) else {},

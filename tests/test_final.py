@@ -90,3 +90,19 @@ def test_read_final_returns_the_tables(run):
     got = final.read_final(run, FAR)
     assert set(got) == {"clusters", "settings", "residue_profile", "ligands"}
     assert isinstance(got["settings"], dict) and len(got["clusters"]) == 3
+
+
+def test_a_failed_finalise_keeps_the_previous_final(run, monkeypatch):
+    final.finalise_site(run, FAR)
+    before = (run / "sites" / FAR / "final" / "clusters.csv").read_text()
+
+    def broken(*args, **kwargs):
+        raise AttributeError("old ligands.csv layout")
+
+    monkeypatch.setattr(final, "_ligands", broken)
+    with pytest.raises(AttributeError):
+        final.finalise_site(run, FAR)
+    folder = run / "sites" / FAR / "final"
+    assert final.final_status(run, FAR) == "current"
+    assert (folder / "clusters.csv").read_text() == before
+    assert not (folder / "history").exists() and not list(folder.glob(".incoming*"))
