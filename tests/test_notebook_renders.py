@@ -396,3 +396,21 @@ def test_a_representative_swap_keeps_its_cluster_and_its_message(tmp_path, monke
     for _ in range(4):
         swapped = _html.unescape(swapped).replace("\\u003c", "<").replace("\\u003e", ">").replace("\\", "")
     assert f"""data-initial-value='["{cluster}"]'""" in swapped, "the Cluster pick was reset"
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_an_empty_fingerprint_never_breaks_the_pocket_viewer(tmp_path, monkeypatch):
+    """A site whose ligands made no recorded contact: the fingerprint is empty by default, and a pocket-viewer
+    control still reruns the viewer without a NameError on residue_picker."""
+    root = _site_run(tmp_path, monkeypatch, True)
+    (root / "sites" / "S1-Y1" / "metadata" / "observed_interactions.h5").unlink()  # lining kept, no contacts
+
+    def toggle_pocket(outputs):
+        box = _element_id("\n".join(outputs), "checkbox", "Pocket cloud")
+        assert box, "no Pocket cloud checkbox"
+        return [box], [False]
+
+    first, toggled = _session(root, [toggle_pocket])
+    errors = [html for cell, html in first + toggled if cell == "ERROR"]
+    assert not errors, "cells failed: " + "; ".join(e[:200] for e in errors[:3])
+    assert any("Nothing left to plot" in html for _, html in first)

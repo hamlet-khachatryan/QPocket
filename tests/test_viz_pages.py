@@ -42,3 +42,10 @@ def test_a_message_shows_only_while_its_stamp_holds(tmp_path):
     other = tmp_path / "S2"
     assert pages.clustering_stamp(other) != stamp          # another site never shows this site's message
     assert pages.shown("", stamp) == "" and pages.shown(None, stamp) == ""
+
+
+def test_the_tab_bar_stays_at_the_top_while_scrolling():
+    css = pages.page_css("Exploration")
+    assert ".marimo-cell:has(.qp-tabbar)" in css and "position: sticky" in css and "top: 0" in css
+    html = pages.tab_bar("TABS").text
+    assert html.startswith('<div class="qp-tabbar">') and "TABS" in html

@@ -38,7 +38,20 @@ def page_css(active: str) -> str:
     """The style block that hides every page section except ``active``'s, and every cell holding only those."""
     # Hiding the sections alone leaves each cell's own box and spacing, which stack up above later pages.
     return (f"<style>.qp-page:not(.qp-on-{active}) {{ display: none; }}\n"
-            f".marimo-cell:has(.qp-page):not(:has(.qp-on-{active})) {{ display: none; }}</style>")
+            f".marimo-cell:has(.qp-page):not(:has(.qp-on-{active})) {{ display: none; }}\n"
+            f"{TAB_BAR_CSS}</style>")
+
+
+#: The tab bar's cell sticks to the top of the page, so the pages can be switched from anywhere.
+TAB_BAR_CSS = (".marimo-cell:has(.qp-tabbar) { position: sticky; top: 0; z-index: 50; "
+               "background: var(--background, #fff); padding: 6px 0; border-bottom: 1px solid #e3e5e8; }")
+
+
+def tab_bar(tabs):
+    """The page tabs, marked so :data:`TAB_BAR_CSS` keeps them at the top while the page scrolls."""
+    import marimo as mo
+
+    return mo.Html(f'<div class="qp-tabbar">{mo.as_html(tabs).text}</div>')
 
 
 def clustering_stamp(site_dir: Path) -> str:

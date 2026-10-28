@@ -99,7 +99,7 @@ def _(mo, qpages):
     # The tab bar. Its panels are empty: sections render in their own cells, wrapped by qpages.on,
     # and the CSS below shows one page, so switching tabs reruns nothing and controls keep their values.
     page_tabs = mo.ui.tabs({name: "" for name in qpages.PAGES})
-    page_tabs
+    qpages.tab_bar(page_tabs)
     return (page_tabs,)
 
 
@@ -1231,9 +1231,8 @@ def _(mo, qpages):
 
 @app.cell
 def _(active_info, mo, qcontrols, qpages, run_interactions):
-    mo.stop(run_interactions is None,
-            qpages.on("Exploration", mo.md("No `observed_interactions.h5` or `potential_interactions.h5` in this run.")))
-
+    # No mo.stop in the fingerprint cells: a stopped cell drops what it defines, and the pocket viewer
+    # above reads residue_picker, so rerunning the viewer alone would fail on a missing name.
     _clusters = [str(c) for c in sorted(active_info["cluster_id"].dropna().unique())]
     fingerprint_scope = mo.ui.dropdown(
         options=["all clusters", *_clusters], value="all clusters", label="**Show**")
@@ -1248,51 +1247,53 @@ def _(active_info, mo, qcontrols, qpages, run_interactions):
     qpages.on("Exploration", qcontrols.panel(
         primary=[fingerprint_scope, potential_mode],
         groups={"Rows": [min_frequency, row_px]},
-    ))
+    ) if run_interactions is not None else
+        mo.md("No `observed_interactions.h5` or `potential_interactions.h5` in this run."))
     return fingerprint_scope, min_frequency, potential_mode, row_px
 
 
 @app.cell
 def _(active_info, fingerprint_scope, min_frequency, mo, potential_mode, qpages, qviz, row_px, run_interactions):
-    mo.stop(run_interactions is None, qpages.on("Exploration", mo.md("")))
-
-    if fingerprint_scope.value == "all clusters":
-        _members = list(active_info["pdb_id"].astype(str))
-        _label = "all clusters"
+    # Always defines fingerprint_plot (None when there is nothing to plot); see the controls cell above.
+    fingerprint_plot = None
+    if run_interactions is None:
+        _out = mo.md("")
     else:
-        _members = list(
-            active_info[active_info["cluster_id"].astype(str) == str(fingerprint_scope.value)]
-            ["pdb_id"].astype(str)
+        if fingerprint_scope.value == "all clusters":
+            _members = list(active_info["pdb_id"].astype(str))
+            _label = "all clusters"
+        else:
+            _members = list(
+                active_info[active_info["cluster_id"].astype(str) == str(fingerprint_scope.value)]
+                ["pdb_id"].astype(str)
+            )
+            _label = f"cluster {fingerprint_scope.value}"
+
+        _freqs = qviz.interactions.filter_residues(
+            qviz.interactions.cluster_frequencies(run_interactions, _members, label=_label),
+            min_percent=float(min_frequency.value),
+            only_unused=potential_mode.value.startswith("lining only"),
+            contacted_only=potential_mode.value == "contacted by a ligand",
         )
-        _label = f"cluster {fingerprint_scope.value}"
-
-    _freqs = qviz.interactions.filter_residues(
-        qviz.interactions.cluster_frequencies(run_interactions, _members, label=_label),
-        min_percent=float(min_frequency.value),
-        only_unused=potential_mode.value.startswith("lining only"),
-        contacted_only=potential_mode.value == "contacted by a ligand",
-    )
-
-    mo.stop(not _freqs.residues,
-            qpages.on("Exploration", mo.md(f"_Nothing left to plot for {_label} at this cutoff"
-                                           + (" (no residue is contacted; show lining residues under Residues)._"
-                                              if potential_mode.value == "contacted by a ligand" else "._"))))
-
-    # Each half of the row has room for ~590 px; a wider figure would be cut off at the page edge.
-    fingerprint_plot = mo.ui.plotly(
-        qviz.interactions.observed_figure(_freqs, height_per_row=int(row_px.value)).update_layout(width=590))
-    _right = mo.ui.plotly(
-        qviz.interactions.potential_figure(_freqs, height_per_row=int(row_px.value)).update_layout(width=590))
-
-    _notes = [f"{len(_freqs.residues)} residues",
-              f"{_freqs.n_holo} of {_freqs.n_members} structures carry a ligand"]
-    if run_interactions.folded:
-        _notes.append(f"folded into \u201cOther\u201d: {', '.join(run_interactions.folded)}")
-
-    qpages.on("Exploration", mo.vstack([
-        mo.hstack([fingerprint_plot, _right], widths=[1, 1], gap=0.5),
-        mo.md("_" + " \u00b7 ".join(_notes) + "_"),
-    ]))
+        if not _freqs.residues:
+            _out = mo.md(f"_Nothing left to plot for {_label} at this cutoff"
+                         + (" (no residue is contacted; show lining residues under Residues)._"
+                            if potential_mode.value == "contacted by a ligand" else "._"))
+        else:
+            # Each half of the row has room for ~590 px; a wider figure would be cut off at the page edge.
+            fingerprint_plot = mo.ui.plotly(
+                qviz.interactions.observed_figure(_freqs, height_per_row=int(row_px.value)).update_layout(width=590))
+            _right = mo.ui.plotly(
+                qviz.interactions.potential_figure(_freqs, height_per_row=int(row_px.value)).update_layout(width=590))
+            _notes = [f"{len(_freqs.residues)} residues",
+                      f"{_freqs.n_holo} of {_freqs.n_members} structures carry a ligand"]
+            if run_interactions.folded:
+                _notes.append(f"folded into \u201cOther\u201d: {', '.join(run_interactions.folded)}")
+            _out = mo.vstack([
+                mo.hstack([fingerprint_plot, _right], widths=[1, 1], gap=0.5),
+                mo.md("_" + " \u00b7 ".join(_notes) + "_"),
+            ])
+    qpages.on("Exploration", _out)
     return (fingerprint_plot,)
 
 
@@ -1302,7 +1303,7 @@ def _(fingerprint_plot, mo, qpages, run_interactions):
     # the viewer above, coloured by whether they are contacted or only line the
     # pocket. Box-select the bars, or pick from the list.
     _selected = []
-    for _pt in fingerprint_plot.value or []:
+    for _pt in (fingerprint_plot.value if fingerprint_plot is not None else None) or []:
         _cd = _pt.get("customdata")
         if isinstance(_cd, (list, tuple)) and _cd:
             _selected.append(str(_cd[0]))
@@ -1443,12 +1444,18 @@ def _(active_info, get_final_message, get_final_version, mo, qfinal, qpages, run
         _line = "Finalised, but the clustering or a representative changed since: finalise again."
     else:
         _line = "Not finalised yet."
-    finalise_button = mo.ui.run_button(label="Finalise site")
+    # The step Screening waits for: a full-width button in a box coloured by whether the final is current.
+    finalise_button = mo.ui.run_button(
+        label="<span style='font-size:1.2rem;font-weight:600;display:inline-block;padding:8px 0'>"
+              "✓&nbsp; Finalise site</span>", kind="success", full_width=True)
     qpages.on("Exploration", mo.vstack([
-        mo.md("## Finalise\nFreezes this site's clustering, representatives, residue profile and actives into "
-              f"`{site_dir / 'final'}`; Screening reads it.\n\n**{_line}**"),
-        finalise_button,
-        mo.md(qpages.shown(get_final_message(), qpages.clustering_stamp(site_dir))),
+        mo.md("## Finalise"),
+        mo.callout(mo.vstack([
+            mo.md(f"**{_line}**\n\nFreezes this site's clustering, representatives, residue profile and actives "
+                  f"into `{site_dir / 'final'}`; Screening reads it."),
+            finalise_button,
+            mo.md(qpages.shown(get_final_message(), qpages.clustering_stamp(site_dir))),
+        ], gap=0.75), kind="success" if _status == "current" else "warn"),
     ]))
     return (finalise_button,)
 
