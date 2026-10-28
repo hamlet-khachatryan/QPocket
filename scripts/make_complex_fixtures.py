@@ -1,4 +1,4 @@
-"""Prepare the protonated complexes the known-answer tests read."""
+"""Prepare the protonated complexes."""
 import sys
 import urllib.request
 from pathlib import Path
