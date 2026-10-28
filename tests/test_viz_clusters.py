@@ -1,7 +1,5 @@
 """Collapsed trees and the cluster table for large sites."""
 import numpy as np
-import pandas as pd
-import pytest
 
 from qpocket.config import ClusteringParams
 from qpocket.viz import two_stage as ts

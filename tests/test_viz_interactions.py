@@ -290,3 +290,12 @@ def test_classify_keeps_the_axis_order(tmp_path):
     run = load_run_interactions(five_member_run(tmp_path))
     groups = classify_residues(run, ["ASN_20_A", "TYR_10_A"])
     assert groups["observed"] == ("TYR_10_A", "ASN_20_A")
+
+
+def test_contacted_only_keeps_the_residues_a_ligand_touches(tmp_path):
+    run = load_run_interactions(five_member_run(tmp_path))
+    freqs = cluster_frequencies(run, list(run.potential))
+    trimmed = filter_residues(freqs, contacted_only=True)
+    assert trimmed.residues and "LEU_30_A" not in trimmed.residues
+    assert all(freqs.contacted[r] > 0 for r in trimmed.residues)
+    assert set(trimmed.residues) | {"LEU_30_A"} == set(freqs.residues)

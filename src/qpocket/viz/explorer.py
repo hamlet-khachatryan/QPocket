@@ -231,32 +231,15 @@ def _(mo):
 
 
 @app.cell
-def _(Path, info, mo, qpages, qviz, run_dir, site_dir, site_ligand_limit, sites_df):
-    # Some of the site's ligands (one per holo structure, at most the limit) over the frame
-    # protein, every site's centre as a sphere (this one dark, the others faint).
-    _centres = sites_df[["centre_x", "centre_y", "centre_z"]].to_numpy(dtype=float)
-    _here = (sites_df["site_id"] == site_dir.name).to_numpy(dtype=float)
+def _(info, mo, qpages, qsite_page, qviz, run_dir, site_dir, site_ligand_limit, sites_df):
+    # Some of the site's ligands (one per holo structure, at most the limit) over the frame protein,
+    # every site's centre as a sphere: this one red, the rest grey, each named on hover.
     _files = qviz.site_view_ligands(run_dir, site_dir.name, int(site_ligand_limit.value))
     # shortcut: the first aligned structure stands in for the frame; every one is superposed onto it.
     _frame = next((run_dir / f for f in info.get("aligned_file", [])
                    if isinstance(f, str) and f and (run_dir / f).exists()), None)
-    _ramp = qviz.RampSpec("sequential", "Blues", ("other sites", "this site"))
-    _domain = qviz.ColourDomain(0.15, 1.0, None)
-    _stops = qviz.ramp_stops(_ramp.scale)
-    _panel = {
-        "id": site_dir.name, "title": f"{site_dir.name} · {len(_files)} ligands shown",
-        "cloud": qviz.pseudo_atom_pdb(_centres, b=qviz.scale_to_percent(_here, _domain)),
-        "cartoon": _frame.read_text(encoding="utf-8") if _frame else "",
-        "side": "", "highlights": {}, "n_forced": 0,
-        "ligand": "".join(qviz.ligand_pdb(f) for f in _files if Path(f).exists()),
-        "vals": [round(float(v), 3) for v in _here], "n_points": len(_centres), "n_ctx": 0,
-    }
-    _html, _h = qviz.grid.grid_html(
-        [_panel], bbox_pdb=qviz.pseudo_atom_pdb(qviz.bbox_corners(_centres, pad=10.0), resname="BOX", chain="Z"),
-        n_cols=1, panel_px=420, sphere_radius=1.2, stops=_stops, value_label="this site",
-        ramp=_ramp, domain=_domain, hover=False, cartoon_opacity=0.5, ligand_color="greenCarbon",
-        observed_colour="#eb6834", potential_colour="#7b5cd6", offline=True)
-    qpages.on("Site", mo.vstack([site_ligand_limit, mo.iframe(_html, height=f"{_h + 70}px")]))
+    _html = qsite_page.site_scene(sites_df, site_dir.name, _frame, [str(f) for f in _files])
+    qpages.on("Site", mo.vstack([site_ligand_limit, mo.iframe(_html, height="500px")]))
     return
 
 
@@ -1237,6 +1220,120 @@ def _(Path, active_info, cartoon_opacity, clip_pct, cloud_path, cluster_sel, col
 @app.cell
 def _(mo, qpages):
     qpages.on("Exploration", mo.md("""
+    ## Interaction fingerprint
+    What the ligands touch, and what lines the pocket. Rows are the residues a ligand
+    contacts; **Residues** adds those that only line it. Percentages on the left are
+    over the ligand-bound structures; on the right, the pale bar is over every
+    structure, since an apo pocket still has a lining.
+    """))
+    return
+
+
+@app.cell
+def _(active_info, mo, qcontrols, qpages, run_interactions):
+    mo.stop(run_interactions is None,
+            qpages.on("Exploration", mo.md("No `observed_interactions.h5` or `potential_interactions.h5` in this run.")))
+
+    _clusters = [str(c) for c in sorted(active_info["cluster_id"].dropna().unique())]
+    fingerprint_scope = mo.ui.dropdown(
+        options=["all clusters", *_clusters], value="all clusters", label="**Show**")
+    # Contacted residues by default, so the panel is as tall as what the ligands touch; lining ones on request.
+    potential_mode = mo.ui.dropdown(
+        options=["contacted by a ligand", "also lining only", "lining only (never contacted)"],
+        value="contacted by a ligand", label="**Residues**")
+    min_frequency = mo.ui.slider(start=0, stop=100, step=5, value=0,
+                                 label="Hide below (%)", show_value=True)
+    row_px = mo.ui.slider(start=12, stop=40, step=2, value=24, label="Row height (px)")
+
+    qpages.on("Exploration", qcontrols.panel(
+        primary=[fingerprint_scope, potential_mode],
+        groups={"Rows": [min_frequency, row_px]},
+    ))
+    return fingerprint_scope, min_frequency, potential_mode, row_px
+
+
+@app.cell
+def _(active_info, fingerprint_scope, min_frequency, mo, potential_mode, qpages, qviz, row_px, run_interactions):
+    mo.stop(run_interactions is None, qpages.on("Exploration", mo.md("")))
+
+    if fingerprint_scope.value == "all clusters":
+        _members = list(active_info["pdb_id"].astype(str))
+        _label = "all clusters"
+    else:
+        _members = list(
+            active_info[active_info["cluster_id"].astype(str) == str(fingerprint_scope.value)]
+            ["pdb_id"].astype(str)
+        )
+        _label = f"cluster {fingerprint_scope.value}"
+
+    _freqs = qviz.interactions.filter_residues(
+        qviz.interactions.cluster_frequencies(run_interactions, _members, label=_label),
+        min_percent=float(min_frequency.value),
+        only_unused=potential_mode.value.startswith("lining only"),
+        contacted_only=potential_mode.value == "contacted by a ligand",
+    )
+
+    mo.stop(not _freqs.residues,
+            qpages.on("Exploration", mo.md(f"_Nothing left to plot for {_label} at this cutoff"
+                                           + (" (no residue is contacted; show lining residues under Residues)._"
+                                              if potential_mode.value == "contacted by a ligand" else "._"))))
+
+    # Each half of the row has room for ~590 px; a wider figure would be cut off at the page edge.
+    fingerprint_plot = mo.ui.plotly(
+        qviz.interactions.observed_figure(_freqs, height_per_row=int(row_px.value)).update_layout(width=590))
+    _right = mo.ui.plotly(
+        qviz.interactions.potential_figure(_freqs, height_per_row=int(row_px.value)).update_layout(width=590))
+
+    _notes = [f"{len(_freqs.residues)} residues",
+              f"{_freqs.n_holo} of {_freqs.n_members} structures carry a ligand"]
+    if run_interactions.folded:
+        _notes.append(f"folded into \u201cOther\u201d: {', '.join(run_interactions.folded)}")
+
+    qpages.on("Exploration", mo.vstack([
+        mo.hstack([fingerprint_plot, _right], widths=[1, 1], gap=0.5),
+        mo.md("_" + " \u00b7 ".join(_notes) + "_"),
+    ]))
+    return (fingerprint_plot,)
+
+
+@app.cell
+def _(fingerprint_plot, mo, qpages, run_interactions):
+    # Residues picked out here are drawn as highlighted sticks in every panel of
+    # the viewer above, coloured by whether they are contacted or only line the
+    # pocket. Box-select the bars, or pick from the list.
+    _selected = []
+    for _pt in fingerprint_plot.value or []:
+        _cd = _pt.get("customdata")
+        if isinstance(_cd, (list, tuple)) and _cd:
+            _selected.append(str(_cd[0]))
+        elif _pt.get("y"):
+            _selected.append(str(_pt["y"]))
+
+    residue_picker = mo.ui.multiselect(
+        options=list(run_interactions.residues) if run_interactions else [],
+        value=sorted(dict.fromkeys(_selected)),
+        label="Highlight residues",
+    )
+    qpages.on("Exploration", mo.hstack([residue_picker], justify="start"))
+    return (residue_picker,)
+
+
+@app.cell
+def _(active_info, mo, qexplore, qpages, qviz, run_interactions):
+    # Contacted share over each cluster's ligand-bound members; hover gives the lining share too.
+    _names = qviz.clusters.cluster_labels_of(active_info) if "cluster_id" in active_info else {}
+    _members = qexplore.cluster_members(active_info, _names) if _names else {}
+    qpages.on("Exploration", mo.vstack([
+        mo.md("## Residue contacts by cluster\nShare of each cluster's ligand-bound structures whose ligand "
+              "contacts the residue."),
+        qexplore.residue_heatmap(qexplore.residue_profile(run_interactions, _members)),
+    ]))
+    return
+
+
+@app.cell
+def _(mo, qpages):
+    qpages.on("Exploration", mo.md("""
     ## Ligands
     One depiction per distinct molecule, most frequent first. Filter by cluster to
     link chemotypes to conformations.
@@ -1322,115 +1419,6 @@ def _(active_info, ligand_cluster, ligand_cols, ligand_rows, max_ligands, mo, n_
            if show_ligand_props.value else [])
     ))
     return
-
-@app.cell
-def _(mo, qpages):
-    qpages.on("Exploration", mo.md("""
-    ## Interaction fingerprint
-    What the ligands touch, and what merely lines the pocket. Percentages on the
-    left are over the ligand-bound structures; on the right, the pale bar is over
-    every structure, since an apo pocket still has a lining. Rows are the same in
-    both panels, and in every cluster.
-    """))
-    return
-
-
-@app.cell
-def _(active_info, mo, qcontrols, qpages, run_interactions):
-    mo.stop(run_interactions is None,
-            qpages.on("Exploration", mo.md("No `observed_interactions.h5` or `potential_interactions.h5` in this run.")))
-
-    _clusters = [str(c) for c in sorted(active_info["cluster_id"].dropna().unique())]
-    fingerprint_scope = mo.ui.dropdown(
-        options=["all clusters", *_clusters], value="all clusters", label="**Show**")
-    potential_mode = mo.ui.dropdown(
-        options=["every pocket residue", "never contacted"],
-        value="every pocket residue", label="Right panel")
-    min_frequency = mo.ui.slider(start=0, stop=100, step=5, value=0,
-                                 label="Hide below (%)", show_value=True)
-    row_px = mo.ui.slider(start=12, stop=40, step=2, value=24, label="Row height (px)")
-
-    qpages.on("Exploration", qcontrols.panel(
-        primary=[fingerprint_scope],
-        groups={"Rows": [potential_mode, min_frequency, row_px]},
-    ))
-    return fingerprint_scope, min_frequency, potential_mode, row_px
-
-
-@app.cell
-def _(active_info, fingerprint_scope, min_frequency, mo, potential_mode, qpages, qviz, row_px, run_interactions):
-    mo.stop(run_interactions is None, qpages.on("Exploration", mo.md("")))
-
-    if fingerprint_scope.value == "all clusters":
-        _members = list(active_info["pdb_id"].astype(str))
-        _label = "all clusters"
-    else:
-        _members = list(
-            active_info[active_info["cluster_id"].astype(str) == str(fingerprint_scope.value)]
-            ["pdb_id"].astype(str)
-        )
-        _label = f"cluster {fingerprint_scope.value}"
-
-    _freqs = qviz.interactions.filter_residues(
-        qviz.interactions.cluster_frequencies(run_interactions, _members, label=_label),
-        min_percent=float(min_frequency.value),
-        only_unused=potential_mode.value == "never contacted",
-    )
-
-    mo.stop(not _freqs.residues,
-            qpages.on("Exploration", mo.md(f"_Nothing left to plot for {_label} at this cutoff._")))
-
-    fingerprint_plot = mo.ui.plotly(
-        qviz.interactions.observed_figure(_freqs, height_per_row=int(row_px.value)))
-    _right = mo.ui.plotly(
-        qviz.interactions.potential_figure(_freqs, height_per_row=int(row_px.value)))
-
-    _notes = [f"{len(_freqs.residues)} residues",
-              f"{_freqs.n_holo} of {_freqs.n_members} structures carry a ligand"]
-    if run_interactions.folded:
-        _notes.append(f"folded into \u201cOther\u201d: {', '.join(run_interactions.folded)}")
-
-    qpages.on("Exploration", mo.vstack([
-        mo.hstack([fingerprint_plot, _right], widths=[1, 1], gap=0.5),
-        mo.md("_" + " \u00b7 ".join(_notes) + "_"),
-    ]))
-    return (fingerprint_plot,)
-
-
-@app.cell
-def _(fingerprint_plot, mo, qpages, run_interactions):
-    # Residues picked out here are drawn as highlighted sticks in every panel of
-    # the viewer above, coloured by whether they are contacted or only line the
-    # pocket. Box-select the bars, or pick from the list.
-    _selected = []
-    for _pt in fingerprint_plot.value or []:
-        _cd = _pt.get("customdata")
-        if isinstance(_cd, (list, tuple)) and _cd:
-            _selected.append(str(_cd[0]))
-        elif _pt.get("y"):
-            _selected.append(str(_pt["y"]))
-
-    residue_picker = mo.ui.multiselect(
-        options=list(run_interactions.residues) if run_interactions else [],
-        value=sorted(dict.fromkeys(_selected)),
-        label="Highlight residues",
-    )
-    qpages.on("Exploration", mo.hstack([residue_picker], justify="start"))
-    return (residue_picker,)
-
-
-@app.cell
-def _(active_info, mo, qexplore, qpages, qviz, run_interactions):
-    # Contacted share over each cluster's ligand-bound members; hover gives the lining share too.
-    _names = qviz.clusters.cluster_labels_of(active_info) if "cluster_id" in active_info else {}
-    _members = qexplore.cluster_members(active_info, _names) if _names else {}
-    qpages.on("Exploration", mo.vstack([
-        mo.md("## Residue contacts by cluster\nShare of each cluster's ligand-bound structures whose ligand "
-              "contacts the residue."),
-        qexplore.residue_heatmap(qexplore.residue_profile(run_interactions, _members)),
-    ]))
-    return
-
 
 @app.cell
 def _(mo):

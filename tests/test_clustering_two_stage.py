@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 
 from qpocket.core.clustering import (
-    AFFINITY,
     KMEDOIDS,
     _stage_labels,
     cluster_labels,

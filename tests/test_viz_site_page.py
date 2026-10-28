@@ -40,3 +40,17 @@ def test_override_table_shows_unmatched(tmp_path, monkeypatch):
     steps.apply_site_overrides(root, [{"op": "drop", "cavities": [["X", 9]], "label": "gone"}])
     table = page.override_table(root)
     assert table.to_dict("records") == [{"#": 0, "operation": "drop", "sites": "gone", "status": "unmatched"}]
+
+
+def test_site_scene_marks_the_current_site_red_and_names_every_site_on_hover(tmp_path, monkeypatch):
+    import json
+    import re
+
+    root = _finished_run(tmp_path, monkeypatch)
+    html = page.site_scene(steps.site_table(root), FAR, frame_pdb=None, ligand_files=[])
+    payload = json.loads(re.search(r'id="qp-scene">(.*?)</script>', html, re.S).group(1).replace("<\\/", "</"))
+    spheres = {s["hover"].split(" · ")[0]: s for s in payload["spheres"]}
+    assert set(spheres) == {NEAR, FAR}
+    assert spheres[FAR]["color"] == page.CURRENT and spheres[NEAR]["color"] == page.OTHER
+    assert "structures" in spheres[NEAR]["hover"] and not spheres[NEAR].get("label")
+    assert "drag any panel" not in html and "Blues" not in html and "hoverable" in html

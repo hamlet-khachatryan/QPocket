@@ -29,6 +29,7 @@ _SCRIPT = """
   const el = document.getElementById("qp-viewer");
   if (typeof $3Dmol === "undefined") { el.textContent = "3Dmol.js did not load."; return; }
   const viewer = $3Dmol.createViewer(el, {backgroundColor: "white"});
+  window.qpViewer = viewer;  // for checking a scene from the page (e.g. a test driving the browser)
   for (const m of payload.models) { const model = viewer.addModel(m.pdb, "pdb"); model.setStyle({}, m.style); }
   for (const b of payload.boxes) {
     const c = [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2), d = [0, 1, 2].map(i => b.max[i] - b.min[i]);
@@ -37,9 +38,12 @@ _SCRIPT = """
   }
   for (const s of payload.spheres) {
     const p = {x: s.center[0], y: s.center[1], z: s.center[2]};
-    viewer.addSphere({center: p, radius: s.radius, color: s.color});
-    if (s.label) viewer.addLabel(s.label, {position: p, fontSize: 11, fontColor: "#222",
-                                           backgroundColor: "white", backgroundOpacity: 0.6});
+    const look = {position: p, fontSize: 11, fontColor: "#222", backgroundColor: "white", backgroundOpacity: 0.8};
+    let shown = null;  // a hover label, there only while the pointer is on the sphere
+    viewer.addSphere({center: p, radius: s.radius, color: s.color, hoverable: !!s.hover,
+      hover_callback: () => { if (!shown) { shown = viewer.addLabel(s.hover, look); viewer.render(); } },
+      unhover_callback: () => { if (shown) { viewer.removeLabel(shown); shown = null; viewer.render(); } }});
+    if (s.label) viewer.addLabel(s.label, look);
   }
   viewer.zoomTo(); viewer.render();
 })();
@@ -54,7 +58,7 @@ def scene_html(models: List[dict], boxes: List[dict], spheres: List[dict], heigh
     Args:
         models: ``{"pdb": text, "style": 3Dmol style}``, optionally with a ``role``.
         boxes: ``{"min": [x, y, z], "max": [x, y, z], "color", "dashed"}``.
-        spheres: ``{"center": [x, y, z], "radius", "color", "label"}``.
+        spheres: ``{"center": [x, y, z], "radius", "color", "label"}``; a ``hover`` text shows on hover only.
         height: Viewer height in pixels.
         offline: Inline the vendored 3Dmol build.
         message: Text shown above the viewer (plain text; escaped).

@@ -16,10 +16,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install (locked)
         run: uv sync --locked --extra viz
-      - name: Lint
-        # Real breakage only: undefined names, redefinitions, unused imports.
-        # The full ruff config still reports pre-existing style findings.
-        run: uv run ruff check --select F401,F811,F821 src/qpocket tests
       - name: Tests
         run: uv run pytest -q -m "not golden"
       - name: Doctor

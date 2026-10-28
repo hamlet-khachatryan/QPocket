@@ -203,7 +203,8 @@ def cluster_frequencies(
 
 
 def filter_residues(
-    freqs: ClusterFrequencies, min_percent: float = 0.0, only_unused: bool = False
+    freqs: ClusterFrequencies, min_percent: float = 0.0, only_unused: bool = False,
+    contacted_only: bool = False,
 ) -> ClusterFrequencies:
     """Trim the residue axis without disturbing its order.
 
@@ -211,6 +212,7 @@ def filter_residues(
         freqs: A fingerprint from :func:`cluster_frequencies`.
         min_percent: Drop residues below this in both contacted and lining percentage.
         only_unused: Keep only residues this selection never contacts.
+        contacted_only: Keep only residues this selection's ligands contact.
 
     Returns:
         The same fingerprint over fewer residues, counts unchanged.
@@ -219,6 +221,7 @@ def filter_residues(
         r
         for r in freqs.residues
         if (not only_unused or freqs.contacted[r] <= 0.0)
+        and (not contacted_only or freqs.contacted[r] > 0.0)
         and max(float(freqs.contacted[r]), float(freqs.potential[r])) >= min_percent
     ]
     return freqs._replace(
@@ -235,7 +238,7 @@ CONTACTED_COLOR = "#2a78d6"
 
 #: Chart height per residue row, and the room a title and legend need.
 ROW_PX = 24
-CHROME_PX = 120
+CHROME_PX = 170
 
 
 def _figure_height(n_rows: int, height_per_row: int) -> int:
@@ -285,7 +288,9 @@ def observed_figure(freqs: ClusterFrequencies, height_per_row: int = ROW_PX):
         # which would leave legend order disagreeing with the stacking order.
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title="",
                     traceorder="normal"),
-        margin=dict(l=10, r=20, t=90, b=10),
+        # Room for a title above a legend of up to three rows of interaction types.
+        title_y=0.995, title_yanchor="top",
+        margin=dict(l=10, r=20, t=140, b=10),
     )
     return figure
 
@@ -338,7 +343,8 @@ def potential_figure(
                    showticklabels=show_ticklabels),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title="",
                     traceorder="normal"),
-        margin=dict(l=10, r=20, t=90, b=10),
+        title_y=0.995, title_yanchor="top",
+        margin=dict(l=10, r=20, t=140, b=10),
     )
     return figure
 
