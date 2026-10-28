@@ -64,17 +64,47 @@ def engines(cfg: ScreenConfig) -> Dict[str, Optional[str]]:
     return found
 
 
+WINDOWS = sys.platform == "win32"
+
+
+def _command_line(pid: int) -> Optional[str]:
+    """The process's command line, "" when it is gone, or None when it cannot be read."""
+    if WINDOWS:
+        argv = ["powershell", "-NoProfile", "-Command",
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}').CommandLine"]
+    else:
+        argv = ["ps", "-p", str(int(pid)), "-o", "command="]
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out.stdout if out.returncode == 0 else ("" if not WINDOWS else None)
+
+
 def _is_run_local(pid: int) -> bool:
     """Whether ``pid`` is a ``screen run-local`` process; a pid the system gave to another program is not."""
+    line = _command_line(pid)
+    return True if line is None else "run-local" in line  # cannot tell: trust the pid over a second run
+
+
+def _windows_alive(pid: int) -> bool:
+    """Whether a Windows process is still running, asked without signalling it (os.kill would end it)."""
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x1000, False, int(pid))  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
     try:
-        out = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="], capture_output=True, text=True,
-                             timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return True  # cannot tell: trust the pid rather than start a second run beside it
-    return out.returncode == 0 and "run-local" in out.stdout
+        code = ctypes.c_ulong()
+        return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _alive(pid: int) -> bool:
+    if WINDOWS:
+        return _windows_alive(pid) and _is_run_local(pid)
     try:
         done, _ = os.waitpid(pid, os.WNOHANG)  # reaps our own finished child, which kill(0) would call alive
         if done:
@@ -124,9 +154,10 @@ def start_local(folder: Path, workers: int, cpus: int) -> dict:
     qpocket = Path(sys.executable).with_name("qpocket")
     argv = [str(qpocket) if qpocket.exists() else "qpocket", "screen", "run-local", "docking_jobs.csv",
             "--workers", str(int(workers)), "--cpus", str(int(cpus))]
+    # Its own session (POSIX) or process group (Windows), so stopping it reaches the dockings it starts.
+    detach = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True})
     with open(folder / "local_run.log", "a", encoding="utf-8") as log:
-        process = subprocess.Popen(argv, cwd=str(folder), stdout=log, stderr=subprocess.STDOUT,
-                                   start_new_session=True)
+        process = subprocess.Popen(argv, cwd=str(folder), stdout=log, stderr=subprocess.STDOUT, **detach)
     record = {"pid": process.pid, "started_at": datetime.now().replace(microsecond=0).isoformat(),
               "n_jobs": len(pd.read_csv(folder / "docking_jobs.csv")), "command": " ".join(argv)}
     (folder / LOCAL_RUN).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
@@ -166,7 +197,10 @@ def stop_local(folder: Path) -> bool:
     if record is None:
         return False
     stopped = _running(record)
-    if stopped:
+    if stopped and WINDOWS:  # /T ends the whole tree: the run and the dockings it started
+        stopped = subprocess.run(["taskkill", "/PID", str(int(record["pid"])), "/T", "/F"],
+                                 capture_output=True).returncode == 0
+    elif stopped:
         try:  # start_local made it a session leader: its group holds the dockings too
             os.killpg(int(record["pid"]), signal.SIGTERM)
         except (ProcessLookupError, PermissionError):

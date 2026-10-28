@@ -148,7 +148,9 @@ def test_a_corrupt_local_run_json_reads_as_no_run(tmp_path):
 
 def test_stop_local_ends_the_run_and_says_so(tmp_path):
     folder = _folder(tmp_path)
-    child = subprocess.Popen(["/bin/sh", "-c", "sleep 60; : screen run-local"], start_new_session=True)
+    detach = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if submit.WINDOWS
+              else {"start_new_session": True})  # as start_local starts a run
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)  # screen run-local"], **detach)
     (folder / "local_run.json").write_text(json.dumps({"pid": child.pid, "started_at": "t", "n_jobs": 3}))
     assert submit.local_progress(folder)["running"] is True
     assert submit.stop_local(folder) is True

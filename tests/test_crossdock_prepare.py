@@ -346,13 +346,14 @@ def test_reprepare_with_a_different_job_list_archives_old_poses(site):
 
 def test_prepare_refuses_while_a_local_run_is_alive(site):
     import subprocess
+    import sys
 
     from qpocket.arms.screen import crossdock
 
     ws, _ = site
     crossdock.prepare(ws.root)
     folder = ws.screening / "crossdock"
-    run = subprocess.Popen(["/bin/sh", "-c", "sleep 60; : screen run-local"], start_new_session=True)
+    run = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)  # screen run-local"])
     try:
         (folder / "local_run.json").write_text(json.dumps({"pid": run.pid, "started_at": "t", "n_jobs": 2}))
         with pytest.raises(RuntimeError, match="still running"):
