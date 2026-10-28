@@ -347,3 +347,50 @@ def test_a_finalised_site_renders_the_screening_page_and_saves_its_box(tmp_path,
         assert text in shown, f"{text!r} never rendered"
     box = _json.loads((root / "sites" / "S1-Y1" / "screening" / "box.json").read_text())
     assert box["mode"] in ("interacting_residues", "representative_pockets") and box["site_id"] == "S1-Y1"
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_a_representative_swap_keeps_its_cluster_and_its_message(tmp_path, monkeypatch):
+    import pandas as pd
+
+    from qpocket.viz.clusters import cluster_labels_of
+    from qpocket.viz.pages.exploration import representative_options
+
+    root = _site_run(tmp_path, monkeypatch, True)
+    path = root / "sites" / "S1-Y1" / "metadata" / "clustering_metadata.csv"
+    table = pd.read_csv(path, dtype={"pdb_id": str})
+    table["cluster_id"] = 0
+    table["is_representative"] = [True] + [False] * (len(table) - 1)
+    table.to_csv(path, index=False)
+    cluster = f"{cluster_labels_of(table)[0]} ({len(table)})"
+    other = table["pdb_id"].iloc[1]
+
+    def pick_cluster(outputs):
+        dropdown = _element_id("\n".join(outputs), "dropdown", f'["{cluster}"]')  # another dropdown is "Cluster" too
+        assert dropdown, "no Cluster dropdown"
+        return [dropdown], [[cluster]]
+
+    master = pd.read_csv(path.with_name("master.csv"), dtype={"pdb_id": str})
+    options = representative_options(table.merge(master[["pdb_id", "protein_state"]], on="pdb_id"), 0)
+    member = next(label for label, pdb in options.items() if pdb == other)
+
+    def pick_member(outputs):
+        dropdown = _element_id("\n".join(outputs), "dropdown", member)
+        assert dropdown, "no Representative dropdown"
+        return [dropdown], [[member]]
+
+    def swap(outputs):
+        button = _element_id("\n".join(outputs), "button", "Set representative")
+        assert button, "no Set representative button"
+        return [button], [1]
+
+    steps = _session(root, [pick_cluster, pick_member, swap])
+    after = pd.read_csv(path, dtype={"pdb_id": str})
+    assert after.loc[after["is_representative"].astype(bool), "pdb_id"].tolist() == [other]
+    swapped = "\n".join(html for _, html in steps[-1])
+    assert f"{other} is now the representative" in swapped
+    import html as _html
+
+    for _ in range(4):
+        swapped = _html.unescape(swapped).replace("\\u003c", "<").replace("\\u003e", ">").replace("\\", "")
+    assert f"""data-initial-value='["{cluster}"]'""" in swapped, "the Cluster pick was reset"

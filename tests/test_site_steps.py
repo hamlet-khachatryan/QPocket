@@ -449,3 +449,64 @@ def test_set_representative_before_clustering_is_a_site_error(tmp_path, monkeypa
     root = _finished_run(tmp_path, monkeypatch)
     with pytest.raises(steps.SiteError, match="cluster this site first"):
         steps.set_representative(root, NEAR, 0, "P1")
+
+
+def _meta_dir(tmp_path, mode):
+    """A clustering of A, B, C in one cluster with A its representative; shape and spectral distances differ."""
+    import json
+
+    ids = ["A", "B", "C"]
+    pd.DataFrame({"pdb_id": ids, "cluster_id": 0, "is_representative": [True, False, False],
+                  "dist_to_exemplar": [0.0, 1.0, 2.0]}).to_csv(tmp_path / "clustering_metadata.csv", index=False)
+    shape = pd.DataFrame([[0, 1, 2], [1, 0, 3], [2, 3, 0]], index=ids, columns=ids, dtype=float)
+    shape.to_csv(tmp_path / "shape_distance_matrix.csv")
+    (shape * 10).to_csv(tmp_path / "spectral_distance_matrix.csv")
+    (tmp_path / "clustering_params.json").write_text(json.dumps({"mode": mode}))
+    return tmp_path
+
+
+@pytest.mark.parametrize("mode, scale", [("two_stage", 10.0), ("shape_only", 1.0)])
+def test_swap_distances_come_from_the_matrix_the_clustering_used(tmp_path, mode, scale):
+    from qpocket.pipelines.clustering import set_representative
+
+    meta = _meta_dir(tmp_path, mode)
+    set_representative(meta, 0, "B")
+    after = pd.read_csv(meta / "clustering_metadata.csv").set_index("pdb_id")["dist_to_exemplar"]
+    assert after.to_dict() == {"A": 1.0 * scale, "B": 0.0, "C": 3.0 * scale}
+
+
+def test_set_representative_keeps_a_history(tmp_path):
+    import json
+
+    from qpocket.pipelines.clustering import set_representative
+
+    meta = _meta_dir(tmp_path, "shape_only")
+    set_representative(meta, 0, "B")
+    set_representative(meta, 0, "C")
+    history = json.loads((meta / "clustering_params.json").read_text())["representative_history"]
+    assert [(h["cluster_id"], h["from"], h["to"]) for h in history] == [(0, "A", "B"), (0, "B", "C")]
+    assert all("at" in h for h in history)
+
+
+def test_a_failed_swap_changes_nothing(tmp_path, monkeypatch):
+    import qpocket.pipelines.clustering as clustering
+
+    meta = _meta_dir(tmp_path, "shape_only")
+    before = {p.name: p.read_bytes() for p in meta.iterdir()}
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(clustering.json, "dumps", boom)
+    with pytest.raises(OSError):
+        clustering.set_representative(meta, 0, "B")
+    assert {p.name: p.read_bytes() for p in meta.iterdir()} == before
+
+
+def test_set_representative_without_its_matrix_is_a_site_error(tmp_path, monkeypatch):
+    root = _finished_run(tmp_path, monkeypatch)
+    table = _clustered(root, NEAR)
+    for matrix in (root / "sites" / NEAR / "metadata").glob("*_distance_matrix.csv"):
+        matrix.unlink()
+    with pytest.raises(steps.SiteError, match="distance matrix"):
+        steps.set_representative(root, NEAR, int(table["cluster_id"].iloc[0]), str(table["pdb_id"].iloc[0]))

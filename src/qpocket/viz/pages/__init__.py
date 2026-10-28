@@ -4,7 +4,8 @@ Switching tabs reruns only the CSS cell, so no section recomputes and every cont
 """
 from __future__ import annotations
 
-from typing import Iterable, Union
+from pathlib import Path
+from typing import Iterable, Optional, Tuple, Union
 
 #: Tab labels, in order.
 PAGES = ("Site", "Exploration", "Screening")
@@ -36,3 +37,21 @@ def on(page: Union[str, Iterable[str]], content):
 def page_css(active: str) -> str:
     """The style block that hides every page section except ``active``'s."""
     return f"<style>.qp-page:not(.qp-on-{active}) {{ display: none; }}</style>"
+
+
+def clustering_stamp(site_dir: Path) -> str:
+    """What a site's clustering is now: its name and its applied clustering's hash ("none" before one)."""
+    from qpocket.io.tables import file_hash
+
+    applied = Path(site_dir) / "metadata" / "clustering_metadata.csv"
+    return f"{Path(site_dir).name}:{file_hash(applied) if applied.exists() else 'none'}"
+
+
+def stamped(text: str, stamp: str) -> Tuple[str, str]:
+    """A button's outcome, kept with the state it was about (:func:`shown` drops it once that changes)."""
+    return (stamp, text)
+
+
+def shown(message: Optional[Tuple[str, str]], stamp: str) -> str:
+    """The message's text while ``stamp`` still holds, else ""."""
+    return message[1] if message and message[0] == stamp else ""

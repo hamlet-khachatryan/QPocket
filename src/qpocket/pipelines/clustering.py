@@ -310,6 +310,9 @@ def write_clustering(meta_dir: Path, ids: List[str], assignment: ClusterAssignme
 def set_representative(meta_dir: Path, cluster_id: int, pdb_id: str) -> Path:
     """Make ``pdb_id`` its cluster's representative in the applied clustering, and record the choice.
 
+    The swap is kept in ``clustering_params.json``: ``representative_overrides`` (cluster to member, gone again
+    once the cluster is back on its medoid) and ``representative_history`` (every swap, in order).
+
     Args:
         meta_dir: The site's metadata directory, holding the applied clustering.
         cluster_id: The cluster.
@@ -319,7 +322,7 @@ def set_representative(meta_dir: Path, cluster_id: int, pdb_id: str) -> Path:
         Path of clustering_metadata.csv.
 
     Raises:
-        FileNotFoundError: If the site holds no clustering.
+        FileNotFoundError: If the site holds no clustering or no distance matrix.
         ValueError: If ``pdb_id`` is not in the cluster.
     """
     meta_dir = Path(meta_dir)
@@ -333,14 +336,38 @@ def set_representative(meta_dir: Path, cluster_id: int, pdb_id: str) -> Path:
     # dist_to_exemplar is measured on the matrix the clustering used.
     spectral = meta_dir / "spectral_distance_matrix.csv"
     use = spectral if spectral.exists() and params.get("mode") != "shape_only" else meta_dir / "shape_distance_matrix.csv"
+    if not use.exists():
+        raise FileNotFoundError(f"no distance matrix to measure the swap on ({use.name} is missing)")
     matrix = pd.read_csv(use, index_col=0)
     matrix.index, matrix.columns = matrix.index.astype(str), matrix.columns.astype(str)
+    current = table.loc[members & table["is_representative"].astype(bool), "pdb_id"]
+    previous = str(current.iloc[0]) if len(current) else None
     table.loc[members, "is_representative"] = table.loc[members, "pdb_id"] == str(pdb_id)
     table.loc[members, "dist_to_exemplar"] = [float(matrix.loc[p, str(pdb_id)]) if p in matrix.index else float("nan")
                                               for p in table.loc[members, "pdb_id"]]
-    table.to_csv(meta_csv, index=False)
-    table[table["is_representative"].astype(bool)].to_csv(meta_dir / "selected_representatives.csv", index=False)
-    params.setdefault("representative_overrides", {})[str(int(cluster_id))] = str(pdb_id)
-    params_json.write_text(json.dumps(params, indent=2) + "\n", encoding="utf-8")
+    key = str(int(cluster_id))
+    medoids = params.setdefault("representative_medoids", {})
+    medoids.setdefault(key, previous)
+    overrides = params.setdefault("representative_overrides", {})
+    if str(pdb_id) == medoids[key]:  # back on the medoid: the clustering is as it was made
+        overrides.pop(key, None)
+        medoids.pop(key)
+    else:
+        overrides[key] = str(pdb_id)
+    for name in ("representative_overrides", "representative_medoids"):
+        if not params[name]:
+            del params[name]
+    params.setdefault("representative_history", []).append(
+        {"cluster_id": int(cluster_id), "from": previous, "to": str(pdb_id),
+         "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()})
+    # Every file is written aside first and swapped in last, so a failure leaves the clustering as it was.
+    outputs = {meta_csv: table.to_csv(index=False),
+               meta_dir / "selected_representatives.csv": table[table["is_representative"].astype(bool)].to_csv(
+                   index=False),
+               params_json: json.dumps(params, indent=2) + "\n"}
+    for path, text in outputs.items():
+        path.with_name(path.name + ".incoming").write_text(text, encoding="utf-8")
+    for path in outputs:
+        path.with_name(path.name + ".incoming").replace(path)
     log_message(message_type="representative_set", cluster_id=int(cluster_id), pdb_id=str(pdb_id))
     return meta_csv

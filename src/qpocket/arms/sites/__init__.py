@@ -515,12 +515,13 @@ def set_representative(run_dir: Path, site_id: str, cluster_id: int, pdb_id: str
         Path of the site's clustering_metadata.csv.
 
     Raises:
-        SiteError: If the site is unknown or not clustered, or ``pdb_id`` is not in the cluster.
+        SiteError: If the site is unknown, not clustered or has no distance matrix, or ``pdb_id`` is not in
+            the cluster.
     """
     meta = _site_ws(run_dir, site_id).metadata
     if not (meta / "clustering_metadata.csv").exists():
         raise SiteError(f"cluster this site first: {site_id} has no clustering")
     try:
         return _set_representative(meta, cluster_id, pdb_id)
-    except ValueError as e:
+    except (ValueError, FileNotFoundError) as e:
         raise SiteError(str(e)) from e

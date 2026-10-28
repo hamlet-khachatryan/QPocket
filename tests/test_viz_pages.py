@@ -20,3 +20,18 @@ def test_unknown_page_is_refused():
 def test_css_hides_every_other_page():
     assert pages.page_css("Site") == "<style>.qp-page:not(.qp-on-Site) { display: none; }</style>"
     assert pages.PAGES == ("Site", "Exploration", "Screening")
+
+
+def test_a_message_shows_only_while_its_stamp_holds(tmp_path):
+    site = tmp_path / "S1"
+    (site / "metadata").mkdir(parents=True)
+    csv = site / "metadata" / "clustering_metadata.csv"
+    csv.write_text("pdb_id,cluster_id\nA,0\n")
+    stamp = pages.clustering_stamp(site)
+    message = pages.stamped("_A is now the representative._", stamp)
+    assert pages.shown(message, pages.clustering_stamp(site)) == "_A is now the representative._"
+    csv.write_text("pdb_id,cluster_id\nA,1\n")             # Apply wrote a new clustering
+    assert pages.shown(message, pages.clustering_stamp(site)) == ""
+    other = tmp_path / "S2"
+    assert pages.clustering_stamp(other) != stamp          # another site never shows this site's message
+    assert pages.shown("", stamp) == "" and pages.shown(None, stamp) == ""

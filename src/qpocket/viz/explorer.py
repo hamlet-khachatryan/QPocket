@@ -267,7 +267,12 @@ def _(get_site_steps, mo, qpages, qsites, run_dir, site_dir):
     _no_clouds = " (needs clouds)" if not site_steps["clouds"] else ""
     shape_button = mo.ui.run_button(label="Shape clustering" + _no_clouds, disabled=bool(_no_clouds))
     featurise_button = mo.ui.run_button(label="Featurise" + _no_clouds, disabled=bool(_no_clouds))
-    featurise_workers = mo.ui.number(start=0, stop=512, step=1, value=0, label="Workers (0 = half the cores)")
+    try:  # the run's own setting by default, so the field never overrides it unasked
+        _workers = int(qsites.load_run_config(run_dir).compute.workers)
+    except Exception:
+        _workers = 0
+    featurise_workers = mo.ui.number(start=-1, stop=512, step=1, value=_workers,
+                                     label="Workers (0 = half the cores, -1 = all)")
     # two_stage_site's own precondition: two featurised pockets, not every cloud.
     two_stage_button = mo.ui.run_button(
         label=f"Two-stage clustering ({site_steps['n_featurised']}/{site_steps['n_clouds']} featurised)",
@@ -770,25 +775,26 @@ def _(applied_at, get_rep_version, info, mo, pd, qpages, site_dir):
 def _(mo):
     # Bumped by a representative swap, so every view re-reads the clustering; the swap's outcome.
     get_rep_version, set_rep_version = mo.state(0)
-    get_rep_message, set_rep_message = mo.state("")
-    return get_rep_message, get_rep_version, set_rep_message, set_rep_version
+    get_rep_message, set_rep_message = mo.state(None)
+    get_rep_choice, set_rep_choice = mo.state(None)  # the cluster last swapped, still picked afterwards
+    return get_rep_choice, get_rep_message, get_rep_version, set_rep_choice, set_rep_message, set_rep_version
 
 
 @app.cell
-def _(active_info, mo, qviz):
+def _(active_info, get_rep_choice, mo, qviz):
     # cluster_id -1 marks a site that is not clustered yet: nothing to pick.
     _clustered = active_info[active_info["cluster_id"] != -1] if "cluster_id" in active_info else active_info.iloc[:0]
     _names = qviz.clusters.cluster_labels_of(_clustered) if len(_clustered) else {}
     _sizes = _clustered["cluster_id"].value_counts() if len(_names) else {}
-    rep_cluster = mo.ui.dropdown(
-        options={f"{_names[int(c)]} ({_sizes[c]})": int(c)
-                 for c in sorted(_sizes.index, key=lambda c: (-_sizes[c], c))} if len(_names) else {},
-        label="Cluster")
+    _options = {f"{_names[int(c)]} ({_sizes[c]})": int(c)
+                for c in sorted(_sizes.index, key=lambda c: (-_sizes[c], c))} if len(_names) else {}
+    _keep = next((label for label, c in _options.items() if c == get_rep_choice()), None)
+    rep_cluster = mo.ui.dropdown(options=_options, value=_keep, label="Cluster")
     return (rep_cluster,)
 
 
 @app.cell
-def _(active_info, get_rep_message, mo, qexplore, qpages, rep_cluster):
+def _(active_info, get_rep_message, mo, qexplore, qpages, rep_cluster, site_dir):
     rep_member = mo.ui.dropdown(
         options=qexplore.representative_options(active_info, rep_cluster.value) if rep_cluster.value is not None
         else {}, label="Representative")
@@ -797,22 +803,26 @@ def _(active_info, get_rep_message, mo, qexplore, qpages, rep_cluster):
         mo.md("### Representatives\nEach cluster's medoid by default. Swap one here; cross-docking and Finalise "
               "use it. Applying a new clustering starts from medoids again."),
         mo.hstack([rep_cluster, rep_member, set_rep_button], justify="start", align="end"),
-        mo.md(get_rep_message()),
+        mo.md(qpages.shown(get_rep_message(), qpages.clustering_stamp(site_dir))),
     ]))
     return rep_member, set_rep_button
 
 
 @app.cell
-def _(mo, qsites, rep_cluster, rep_member, run_dir, set_rep_button, set_rep_message, set_rep_version, site_dir):
+def _(mo, qpages, qsites, rep_cluster, rep_member, run_dir, set_rep_button, set_rep_choice, set_rep_message,
+      set_rep_version, site_dir):
     mo.stop(not set_rep_button.value)
     try:
         if rep_member.value is None:
             raise qsites.SiteError("pick the member to make representative")
         qsites.set_representative(run_dir, site_dir.name, rep_cluster.value, rep_member.value)
-        set_rep_message(f"_{rep_member.value} is now the representative of its cluster._")
+        _text = f"_{rep_member.value} is now the representative of its cluster._"
+        set_rep_choice(rep_cluster.value)
         set_rep_version(lambda v: v + 1)
     except qsites.SiteError as _e:
-        set_rep_message(f"_{_e}_")
+        _text = f"_{_e}_"
+    # Kept with the clustering it is about, so Apply or another site hides it.
+    set_rep_message(qpages.stamped(_text, qpages.clustering_stamp(site_dir)))
     return
 
 
@@ -1490,7 +1500,7 @@ def _(active_info, mo, qexplore, qpages, qviz, run_interactions):
 def _(mo):
     # Bumped by Finalise, so the status and the Screening guard re-read final/; Finalise's outcome.
     get_final_version, set_final_version = mo.state(0)
-    get_final_message, set_final_message = mo.state("")
+    get_final_message, set_final_message = mo.state(None)
     return get_final_message, get_final_version, set_final_message, set_final_version
 
 
@@ -1514,19 +1524,21 @@ def _(active_info, get_final_message, get_final_version, mo, qfinal, qpages, run
         mo.md("## Finalise\nFreezes this site's clustering, representatives, residue profile and actives into "
               f"`{site_dir / 'final'}`; Screening reads it.\n\n**{_line}**"),
         finalise_button,
-        mo.md(get_final_message()),
+        mo.md(qpages.shown(get_final_message(), qpages.clustering_stamp(site_dir))),
     ]))
     return (finalise_button,)
 
 
 @app.cell
-def _(finalise_button, mo, qfinal, qsites, run_dir, set_final_message, set_final_version, site_dir):
+def _(finalise_button, mo, qfinal, qpages, qsites, run_dir, set_final_message, set_final_version, site_dir):
     mo.stop(not finalise_button.value)
     try:
         _folder = qfinal.finalise_site(run_dir, site_dir.name)
-        set_final_message(f"_Finalised into `{_folder}`._")
+        _text = f"_Finalised into `{_folder}`._"
     except qsites.SiteError as _e:
-        set_final_message(f"_{_e}_")
+        _text = f"_{_e}_"
+    # Hidden again once the clustering changes (the final is stale then) or on another site.
+    set_final_message(qpages.stamped(_text, qpages.clustering_stamp(site_dir)))
     set_final_version(lambda v: v + 1)
     return
 

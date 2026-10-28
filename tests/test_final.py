@@ -26,7 +26,8 @@ def test_finalise_writes_the_four_files(run):
     assert clusters.groupby("cluster")["is_representative"].sum().eq(1).all()
     assert clusters.set_index("pdb_id").loc["P2", "holo"]
     assert list(pd.read_csv(folder / "residue_profile.csv").columns) == ["cluster", "residue", "contacted_pct",
-                                                                         "lining_pct"]
+                                                                         "lining_pct", "n_members",
+                                                                         "n_with_contacts"]
     ligands = pd.read_csv(folder / "ligands.csv", keep_default_na=False)
     assert list(ligands.columns) == ["cluster", "pdb_id", "ligand_key", "resname", "smiles"]
     assert ligands["resname"].tolist() == ["CCC"]
@@ -76,8 +77,49 @@ def test_new_clustering_makes_the_final_stale(run):
     table = pd.read_csv(run / "sites" / FAR / "metadata" / "clustering_metadata.csv")
     table["cluster_id"] = 0
     table.to_csv(run / "sites" / FAR / "metadata" / "clustering_metadata.csv", index=False)
-    steps.set_representative(run, FAR, 0, "P2")
     assert final.final_status(run, FAR) == "stale"
+
+
+def _one_cluster(run):
+    """FAR's structures in one cluster, its first the representative; returns the table."""
+    path = run / "sites" / FAR / "metadata" / "clustering_metadata.csv"
+    table = pd.read_csv(path, dtype={"pdb_id": str})
+    table["cluster_id"] = 0
+    table["is_representative"] = [True] + [False] * (len(table) - 1)
+    shape = pd.read_csv(path.with_name("shape_distance_matrix.csv"), index_col=0)
+    shape.index, shape.columns = shape.index.astype(str), shape.columns.astype(str)
+    table["dist_to_exemplar"] = [float(shape.loc[p, table["pdb_id"].iloc[0]]) for p in table["pdb_id"]]
+    table.to_csv(path, index=False)
+    return table
+
+
+def test_a_representative_swap_makes_the_final_stale(run):
+    table = _one_cluster(run)
+    final.finalise_site(run, FAR)
+    steps.set_representative(run, FAR, 0, table["pdb_id"].iloc[1])
+    assert final.final_status(run, FAR) == "stale"
+
+
+def test_swapping_back_leaves_no_override_behind(run):
+    table = _one_cluster(run)
+    medoid, other = table["pdb_id"].iloc[0], table["pdb_id"].iloc[1]
+    settings = json.loads((final.finalise_site(run, FAR) / "settings.json").read_text())
+    steps.set_representative(run, FAR, 0, other)
+    steps.set_representative(run, FAR, 0, medoid)
+    params = json.loads((run / "sites" / FAR / "metadata" / "clustering_params.json").read_text())
+    assert params.get("representative_overrides", {}) == settings["clustering"].get("representative_overrides", {})
+    assert final.final_status(run, FAR) == "current"
+
+
+def test_history_is_named_by_the_parked_finals_time(run):
+    final.finalise_site(run, FAR, now=datetime(2026, 10, 27, 9, 0, 0))
+    folder = final.finalise_site(run, FAR, now=datetime(2026, 10, 27, 18, 0, 0))
+    assert [p.name for p in (folder / "history").iterdir()] == ["2026-10-27T09-00-00"]
+
+
+def test_saved_profile_keeps_its_counts(run):
+    profile = pd.read_csv(final.finalise_site(run, FAR) / "residue_profile.csv")
+    assert {"n_members", "n_with_contacts"} <= set(profile.columns)
 
 
 def test_finalise_before_clustering_is_a_site_error(run):

@@ -14,13 +14,13 @@ def _run():
 
 def test_residue_profile_percentages():
     profile = page.residue_profile(_run(), {"S1": ["A", "C"], "S2": ["B"]})
-    assert list(profile.columns) == ["cluster", "residue", "contacted_pct", "lining_pct", "n_members", "n_holo"]
+    assert list(profile.columns) == ["cluster", "residue", "contacted_pct", "lining_pct", "n_members", "n_with_contacts"]
     row = profile.set_index(["cluster", "residue"])
     assert row.loc[("S1", "TYR_1_A"), "contacted_pct"] == 100.0   # A is S1's only holo member
     assert row.loc[("S1", "TYR_1_A"), "lining_pct"] == 100.0
     assert row.loc[("S1", "SER_3_A"), "contacted_pct"] == 0.0 and row.loc[("S1", "SER_3_A"), "lining_pct"] == 50.0
     assert ("S2", "GLY_2_A") not in row.index                     # neither contacted nor lining in S2
-    assert row.loc[("S1", "GLY_2_A"), "n_members"] == 2 and row.loc[("S1", "GLY_2_A"), "n_holo"] == 1
+    assert row.loc[("S1", "GLY_2_A"), "n_members"] == 2 and row.loc[("S1", "GLY_2_A"), "n_with_contacts"] == 1
     assert profile["cluster"].drop_duplicates().tolist() == ["S1", "S2"]
 
 

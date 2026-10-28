@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 
 from qpocket.viz.style import apply
 
-PROFILE_COLUMNS = ["cluster", "residue", "contacted_pct", "lining_pct", "n_members", "n_holo"]
+PROFILE_COLUMNS = ["cluster", "residue", "contacted_pct", "lining_pct", "n_members", "n_with_contacts"]
 
 
 def residue_profile(run, members: Dict[str, List[str]]) -> pd.DataFrame:
@@ -19,25 +19,26 @@ def residue_profile(run, members: Dict[str, List[str]]) -> pd.DataFrame:
         members: Cluster name to its pdb_ids, in the order clusters are shown.
 
     Returns:
-        :data:`PROFILE_COLUMNS`; contacted_pct over the cluster's holo members, lining_pct over all of them;
-        residues at 0 for both are left out.
+        :data:`PROFILE_COLUMNS`; contacted_pct over the members with observed ligand contacts
+        (``n_with_contacts``, not the protein_state "holo"), lining_pct over all of them; residues at 0 for both
+        are left out.
     """
     if run is None:
         return pd.DataFrame(columns=PROFILE_COLUMNS)
     rows = []
     for cluster, ids in members.items():
         ids = [str(i) for i in ids]
-        holo = [i for i in ids if run.observed.get(i)]
-        contacted = {i: {e.split("|", 1)[0] for e in run.observed.get(i, ())} for i in holo}
+        with_contacts = [i for i in ids if run.observed.get(i)]
+        contacted = {i: {e.split("|", 1)[0] for e in run.observed.get(i, ())} for i in with_contacts}
         lining = {i: set(run.potential.get(i, ())) for i in ids}
         for residue in run.residues:
-            c = sum(residue in contacted[i] for i in holo)
+            c = sum(residue in contacted[i] for i in with_contacts)
             lined = sum(residue in lining[i] for i in ids)
             if c or lined:
                 rows.append({"cluster": cluster, "residue": residue,
-                             "contacted_pct": 100.0 * c / len(holo) if holo else 0.0,
+                             "contacted_pct": 100.0 * c / len(with_contacts) if with_contacts else 0.0,
                              "lining_pct": 100.0 * lined / len(ids) if ids else 0.0,
-                             "n_members": len(ids), "n_holo": len(holo)})
+                             "n_members": len(ids), "n_with_contacts": len(with_contacts)})
     return pd.DataFrame(rows, columns=PROFILE_COLUMNS)
 
 

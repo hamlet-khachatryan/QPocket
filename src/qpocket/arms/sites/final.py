@@ -21,9 +21,16 @@ MATRICES = ("shape_distance_matrix.csv", "feature_distance_matrix.csv", "spectra
 
 
 def _park(folder: Path, stamp: str) -> None:
-    """Move the current final (not its history) to history/<stamp>, -2, -3 … on a collision."""
+    """Move the current final (not its history) to history/<its finalised_at>, -2, -3 … on a collision.
+
+    ``stamp`` names the folder only when the parked final records no time of its own.
+    """
     if not any((folder / name).exists() for name in FINAL_FILES):
         return
+    try:
+        stamp = json.loads((folder / "settings.json").read_text(encoding="utf-8"))["finalised_at"].replace(":", "-")
+    except (OSError, ValueError, KeyError, AttributeError):
+        pass
     history = folder / "history"
     target, n = history / stamp, 2
     while target.exists():
@@ -96,7 +103,7 @@ def finalise_site(run_dir: Path, site_id: str, now: Optional[datetime] = None) -
     incoming = Path(tempfile.mkdtemp(prefix=".incoming-", dir=folder))
     try:
         clusters.to_csv(incoming / "clusters.csv", index=False)
-        profile.drop(columns=["n_members", "n_holo"]).to_csv(incoming / "residue_profile.csv", index=False)
+        profile.to_csv(incoming / "residue_profile.csv", index=False)
         _ligands(run_dir, site_id, dict(zip(clusters["pdb_id"], clusters["cluster"]))).to_csv(
             incoming / "ligands.csv", index=False)
         settings = {"site_id": site_id, "finalised_at": when.isoformat(), "shape_only": shape_only,
