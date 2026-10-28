@@ -240,8 +240,9 @@ def _prepare_in(ws, folder: Path, staged: Path, clustering_mode: Optional[str], 
     if saved_status == "current":
         box, mode, padding, source = {k: saved[k] for k in BOX_KEYS}, saved["mode"], saved["padding"], "saved"
     else:
-        warnings.append("the saved box predates the last Finalise; using the configured box"
-                        if saved_status == "stale" else "no saved box; using the configured box")
+        warnings.append({"stale": "the saved box predates the site's current final; using the configured box",
+                         "invalid": "the saved box.json is unreadable or incomplete; using the configured box"}
+                        .get(saved_status, "no saved box; using the configured box"))
         mode, padding, source = cfg.crossdock.box_mode, cfg.crossdock.box_padding, "config"
         box = shared_box(ws, list(receptors), mode, padding)
     (folder / "box.json").write_text(json.dumps({"mode": mode, "padding": padding, "source": source,

@@ -78,3 +78,25 @@ def test_box_needs_a_final(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     with pytest.raises(box.BoxError, match="finalise this site first"):
         box.cloud_box(root, FAR, 5.0)
+
+
+def test_an_interacting_box_goes_stale_when_the_contacts_change(run):
+    _contacted(run, ["TYR_1_A", "ALA_2_A"])
+    box.save_box(run, FAR, box.interacting_box(run, FAR, padding=2.0))
+    assert box.saved_box(run, FAR)[1] == "current"
+    _contacted(run, ["TYR_1_A"])                 # contacts re-run and finalised again, same clustering
+    assert box.saved_box(run, FAR)[1] == "stale"
+
+
+def test_a_cloud_box_ignores_the_contacts(run):
+    box.save_box(run, FAR, box.cloud_box(run, FAR, padding=2.0))
+    _contacted(run, ["TYR_1_A"])
+    assert box.saved_box(run, FAR)[1] == "current"
+
+
+@pytest.mark.parametrize("text", ['{"mode": "representative_pockets", "padding": 2.0}', "{not json"])
+def test_a_broken_box_json_reads_as_invalid(run, text):
+    path = run / "sites" / FAR / "screening" / "box.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    assert box.saved_box(run, FAR)[1] == "invalid"

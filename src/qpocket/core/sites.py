@@ -270,8 +270,7 @@ def apply_overrides(groups: List[List[int]], cores: List[List[int]], members: Li
         members: Per group, every candidate belonging to it (:func:`site_members`); overrides match on these.
         keys: ``(pdb_id, cavity)`` of each candidate.
         overrides: ``{"op": "merge", "sites": [cavities, ...]}`` or ``{"op": "drop"|"split", "cavities": [[pdb, cav], ...]}``.
-        members_of: For a split's parts, the candidates each part's box overlaps (as :func:`site_members`);
-            a part keeps those except its siblings' cavities. Each part is its own cavities only when None.
+        members_of: Per split part, the candidates its box overlaps; a part keeps them but not its siblings' cavities.
 
     Returns:
         The groups, their members and box parts, the dropped groups, and a report per override.

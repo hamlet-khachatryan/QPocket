@@ -1,6 +1,7 @@
 """The Screening page: the box and pose scenes (one 3Dmol viewer each), the ligand picker, the success matrix."""
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
@@ -56,13 +57,13 @@ def scene_html(models: List[dict], boxes: List[dict], spheres: List[dict], heigh
         spheres: ``{"center": [x, y, z], "radius", "color", "label"}``.
         height: Viewer height in pixels.
         offline: Inline the vendored 3Dmol build.
-        message: Text shown above the viewer.
+        message: Text shown above the viewer (plain text; escaped).
 
     Returns:
         A full HTML page, for ``mo.iframe``.
     """
     payload = json.dumps({"models": models, "boxes": boxes, "spheres": spheres}).replace("</", "<\\/")
-    note = f'<div style="font:12px Helvetica,Arial;color:#555;margin:4px 0">{message}</div>' if message else ""
+    note = f'<div style="font:12px Helvetica,Arial;color:#555;margin:4px 0">{html.escape(message)}</div>' if message else ""
     return (f'<!doctype html><html><body style="margin:0">{note}'
             f'<div id="qp-viewer" style="width:100%;height:{int(height)}px;position:relative"></div>'
             f'<script type="application/json" id="qp-scene">{payload}</script>'
@@ -114,14 +115,17 @@ def default_ligands(ligands: pd.DataFrame, clusters: pd.DataFrame, limit: int = 
 def ligand_box_scene(preview, ligand_files: Sequence[str], offline: bool = True) -> str:
     """The interacting-residues box: cartoon, the contacted residues as sticks, the picked ligands, both boxes."""
     models = _frame_models(preview, preview.residues)
+    drawn = 0
     for path in ligand_files:
         text = ligand_pdb(path) if Path(path).exists() else ""
         if text:
             models.append({"pdb": text, "style": {"stick": {"colorscheme": "greenCarbon", "radius": 0.15}},
                            "role": "ligand"})
+            drawn += 1
+    missing = f" ({len(ligand_files) - drawn} not found)" if drawn < len(ligand_files) else ""
     return scene_html(models, [_box(preview.tight, TIGHT, False), _box(preview.padded, PADDED, True)], [],
                       offline=offline, message=f"{len(preview.residues)} contacted residues · "
-                                               f"{len(ligand_files)} ligands · padding {preview.padding:g} Å")
+                                               f"{drawn} ligands{missing} · padding {preview.padding:g} Å")
 
 
 def cloud_box_scene(preview, offline: bool = True) -> str:
@@ -158,8 +162,13 @@ def matrix_figure(matrix: pd.DataFrame, threshold: float) -> go.Figure:
                                zmin=0, zmax=2 * float(threshold), colorscale="RdYlGn_r",
                                colorbar=dict(title=dict(text="best RMSD (Å)", font=dict(size=9)), thickness=8)))
     fig = apply(fig)
-    fig.update_layout(height=max(260, 14 * len(matrix) + 140), xaxis=dict(title="ligand", tickangle=-60),
-                      yaxis=dict(title="receptor", autorange="reversed"),
+    longest = max([len(str(c)) for c in matrix.columns] + [1])
+    # Every ligand keeps a readable column: wide matrices scroll rather than squeeze their labels.
+    fig.update_layout(height=max(260, 14 * len(matrix) + 140 + 6 * longest),
+                      width=max(700, 14 * len(matrix.columns) + 200),
+                      margin=dict(b=max(100, 6 * longest + 40)),
+                      xaxis=dict(title="ligand", tickangle=-60, tickfont=dict(size=9), automargin=True),
+                      yaxis=dict(title="receptor", autorange="reversed", tickfont=dict(size=9)),
                       title=dict(text=f"Cross-docking success · threshold {threshold:g} Å", font=dict(size=11)))
     return fig
 
@@ -206,9 +215,10 @@ def pose_scene(folder: Path, job: pd.Series, top_n: int, threshold: float, resid
         if highlighted:
             models.append({"pdb": highlighted, "style": {"stick": {"colorscheme": "orangeCarbon", "radius": 0.18}},
                            "role": "residues"})
-    if crystal_files and Path(crystal_files[0]).exists():
-        models.append({"pdb": ligand_pdb(crystal_files[0]), "style": {"stick": {"color": "#6a4c93", "radius": 0.2}},
-                       "role": "crystal"})
+    for path in crystal_files:  # every crystal pose the RMSD is taken against
+        if Path(path).exists():
+            models.append({"pdb": ligand_pdb(path), "style": {"stick": {"color": "#6a4c93", "radius": 0.2}},
+                           "role": "crystal"})
     rows = []
     for pose in sorted(engine_for(job, folder).read_poses(out), key=lambda p: p.rank)[:int(top_n)]:
         values = [v for v in (pose_rmsd(pose.mol, c, smiles) for c in crystals) if v is not None] if pose.mol else []
@@ -217,7 +227,7 @@ def pose_scene(folder: Path, job: pd.Series, top_n: int, threshold: float, resid
         if pose.mol is not None:
             models.append({"pdb": Chem.MolToPDBBlock(Chem.RemoveHs(pose.mol, sanitize=False)),
                            "style": {"stick": {"color": _colour(rmsd, threshold), "radius": 0.15}}, "role": "pose"})
-    message = (f"{job['active_id']} in {job['representative']} · crystal pose purple · poses green ≤ {threshold:g} Å,"
+    message = (f"{job['active_id']} in {job['representative']} · crystal poses purple · poses green ≤ {threshold:g} Å,"
                f" amber ≤ {2 * threshold:g} Å, red beyond")
     return scene_html(models, [], [], offline=offline, message=message), pd.DataFrame(rows, columns=empty.columns)
 

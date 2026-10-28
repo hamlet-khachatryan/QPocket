@@ -119,3 +119,46 @@ def test_ligand_files_follow_their_keys(tmp_path):
                   "n_heavy": "6", "file": ["/x/a.pdb", "/x/b.pdb"], "smiles": "", "site_ids": "S1"}).to_csv(
         tmp_path / "structures" / "ligands.csv", index=False)
     assert page.ligand_files(tmp_path, ["P2:A:BBB:2", "nope"]) == ["/x/b.pdb"]
+
+
+def test_scene_message_is_escaped():
+    html = page.scene_html([], [], [], message="<b>R1</b> & co")
+    assert "&lt;b&gt;R1&lt;/b&gt; &amp; co" in html and "<b>R1" not in html
+
+
+def test_ligand_scene_counts_only_ligands_it_draws(tmp_path):
+    lig = tmp_path / "lig.pdb"
+    lig.write_text("HETATM    1  C1  LIG A 101       1.000   1.000   1.000  1.00  0.00           C\nEND\n")
+    html = page.ligand_box_scene(_preview(tmp_path), [str(lig), str(tmp_path / "gone.pdb")])
+    assert "· 1 ligands (1 not found) ·" in html
+
+
+def test_pose_scene_draws_every_crystal_pose_it_scores(tmp_path):
+    folder, job = _task(tmp_path)
+    second = tmp_path / "crystal2.pdb"
+    second.write_text("HETATM    1  C1  LIG B 101       4.000   1.000   1.000  1.00  0.00           C\nEND\n")
+    table = pd.read_csv(folder / "ligands.csv")
+    table["crystal_files"] = table["crystal_files"] + ";" + str(second)
+    table.to_csv(folder / "ligands.csv", index=False)
+    (folder / "poses" / "j0.pdbqt").write_text("MODEL 1\n")
+
+    class Engine:
+        def read_poses(self, path):
+            return []
+
+    import qpocket.viz.pages.screening as screening
+
+    original = screening.engine_for
+    screening.engine_for = lambda job, folder=None: Engine()
+    try:
+        html, _ = page.pose_scene(folder, job, top_n=3, threshold=2.0, residues=[])
+    finally:
+        screening.engine_for = original
+    assert [m["role"] for m in _payload(html)["models"]].count("crystal") == 2
+
+
+def test_a_wide_success_matrix_gets_room_for_its_labels():
+    matrix = pd.DataFrame(np.ones((3, 80)), index=["R1", "R2", "R3"], columns=[f"ligand_{i}" for i in range(80)])
+    fig = page.matrix_figure(matrix, threshold=2.0)
+    assert fig.layout.width >= 80 * 12 and fig.layout.xaxis.tickfont.size <= 9
+    assert fig.layout.margin.b >= 100

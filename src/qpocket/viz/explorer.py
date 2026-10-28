@@ -1556,10 +1556,13 @@ def _(active_info, get_final_version, mo, qfinal, qpages, run_dir, site_dir):
 
 @app.cell
 def _(mo):
-    # Outcomes of the Screening buttons, by action; a counter that re-reads the task folder after one.
+    # Outcomes of the Screening buttons, by action, each kept with its site; a counter that re-reads the task
+    # folder after one; a counter that redraws the poses once new ones may be there.
     get_screen_messages, set_screen_messages = mo.state({})
     get_screen_version, set_screen_version = mo.state(0)
-    return get_screen_messages, get_screen_version, set_screen_messages, set_screen_version
+    get_pose_version, set_pose_version = mo.state(0)
+    return (get_pose_version, get_screen_messages, get_screen_version, set_pose_version, set_screen_messages,
+            set_screen_version)
 
 
 @app.cell
@@ -1603,7 +1606,8 @@ def _(mo, qscreen, screen_cfg, screen_final):
 
 
 @app.cell
-def _(box_ligands, box_mode, box_padding, get_screen_messages, mo, qbox, qpages, qscreen, run_dir, site_dir):
+def _(box_ligands, box_mode, box_padding, mo, qbox, qpages, qscreen, run_dir, site_dir):
+    # The viewer only: button outcomes are shown by the cell below, so they never redraw it.
     box_preview, _error = None, None
     try:
         _make = qbox.interacting_box if box_mode.value == "interacting_residues" else qbox.cloud_box
@@ -1617,29 +1621,38 @@ def _(box_ligands, box_mode, box_padding, get_screen_messages, mo, qbox, qpages,
         _view = mo.iframe(qscreen.ligand_box_scene(box_preview, _files), height="600px")
     else:
         _view = mo.iframe(qscreen.cloud_box_scene(box_preview), height="600px")
-    _saved, _status = qbox.saved_box(run_dir, site_dir.name)
-    _line = {"none": "No box saved yet; preparation uses the configured box.",
-             "stale": "The saved box belongs to an earlier Finalise; save it again.",
-             "current": f"Saved box: {(_saved or {}).get('mode')}, padding {(_saved or {}).get('padding')} Å, "
-                        f"{(_saved or {}).get('saved_at')}."}[_status]
-    save_box_button = mo.ui.run_button(label="Save box", disabled=box_preview is None)
     qpages.on("Screening", mo.vstack([
         mo.md("### Box"),
         mo.hstack([box_mode, box_padding], justify="start", align="end"),
         box_ligands if box_mode.value == "interacting_residues" else mo.md(""),
         _view,
-        mo.hstack([save_box_button, mo.md(f"_{_line}_")], justify="start", align="center"),
-        mo.md(get_screen_messages().get("box", "")),
     ]))
-    return box_preview, save_box_button
+    return (box_preview,)
 
 
 @app.cell
-def _(box_preview, get_screen_messages, mo, qbox, run_dir, save_box_button, set_screen_messages,
+def _(box_preview, get_screen_messages, get_screen_version, mo, qbox, qpages, run_dir, site_dir):
+    _ = get_screen_version()
+    _saved, _status = qbox.saved_box(run_dir, site_dir.name)
+    _line = {"none": "No box saved yet; preparation uses the configured box.",
+             "invalid": "The saved box.json is unreadable or incomplete; save the box again.",
+             "stale": "The saved box belongs to an earlier final (or older contacts); save it again.",
+             "current": f"Saved box: {(_saved or {}).get('mode')}, padding {(_saved or {}).get('padding')} Å, "
+                        f"{(_saved or {}).get('saved_at')}."}[_status]
+    save_box_button = mo.ui.run_button(label="Save box", disabled=box_preview is None)
+    qpages.on("Screening", mo.vstack([
+        mo.hstack([save_box_button, mo.md(f"_{_line}_")], justify="start", align="center"),
+        mo.md(qpages.shown(get_screen_messages().get("box"), str(site_dir))),
+    ]))
+    return (save_box_button,)
+
+
+@app.cell
+def _(box_preview, get_screen_messages, mo, qbox, qpages, run_dir, save_box_button, set_screen_messages,
       set_screen_version, site_dir):
     mo.stop(not save_box_button.value or box_preview is None)
     _path = qbox.save_box(run_dir, site_dir.name, box_preview)
-    set_screen_messages({**get_screen_messages(), "box": f"_Saved `{_path}`._"})
+    set_screen_messages({**get_screen_messages(), "box": qpages.stamped(f"_Saved `{_path}`._", str(site_dir))})
     set_screen_version(lambda v: v + 1)
     return
 
@@ -1666,7 +1679,7 @@ def _(mo, qsubmit, run_dir, screen_cfg, site_dir):
 
 @app.cell
 def _(dock_cpus, dock_engine, dock_exhaustiveness, dock_modes, dock_pairs, get_screen_messages, mo,
-      prepare_button, qpages):
+      prepare_button, qpages, site_dir):
     _r, _c, _p = dock_pairs
     qpages.on("Screening", mo.vstack([
         mo.md("### Docking"),
@@ -1674,14 +1687,14 @@ def _(dock_cpus, dock_engine, dock_exhaustiveness, dock_modes, dock_pairs, get_s
         mo.md(f"**{_r} receptors × {_c} compounds = {_p} dockings** (every distinct compound into every "
               "representative, redocking included)."),
         prepare_button,
-        mo.md(get_screen_messages().get("prepare", "")),
+        mo.md(qpages.shown(get_screen_messages().get("prepare"), str(site_dir))),
     ]))
     return
 
 
 @app.cell
 def _(dock_cpus, dock_engine, dock_exhaustiveness, dock_installed, dock_modes, get_screen_messages, mo,
-      prepare_button, qcrossdock, screen_cfg_path, set_screen_messages, set_screen_version, site_dir):
+      prepare_button, qcrossdock, qpages, screen_cfg_path, set_screen_messages, set_screen_version, site_dir):
     mo.stop(not prepare_button.value)
 
     if dock_engine.value is None or not dock_installed.get(dock_engine.value):
@@ -1696,7 +1709,7 @@ def _(dock_cpus, dock_engine, dock_exhaustiveness, dock_installed, dock_modes, g
                 _msg = f"_Prepared `{_plan.jobs_csv}`._" + (f"\n\nWarnings:{_warn}" if _warn else "")
             except Exception as _e:
                 _msg = f"_Preparation failed: {type(_e).__name__}: {_e}_"
-    set_screen_messages({**get_screen_messages(), "prepare": _msg})
+    set_screen_messages({**get_screen_messages(), "prepare": qpages.stamped(_msg, str(site_dir))})
     set_screen_version(lambda v: v + 1)
     return
 
@@ -1708,23 +1721,24 @@ def _(crossdock_folder, get_screen_version, mo):
     run_workers = mo.ui.number(start=0, stop=512, step=1, value=0, label="Parallel dockings (0 = half the cores)")
     run_start = mo.ui.run_button(label="Start", disabled=not task_ready)
     run_refresh = mo.ui.run_button(label="Refresh progress", disabled=not task_ready)
+    run_stop = mo.ui.run_button(label="Stop", kind="danger", disabled=not task_ready)
     vm_push = mo.ui.run_button(label="Push & start", disabled=not task_ready)
     vm_poll = mo.ui.run_button(label="Poll", disabled=not task_ready)
     vm_pull = mo.ui.run_button(label="Pull poses", disabled=not task_ready)
-    return run_refresh, run_start, run_workers, task_ready, vm_poll, vm_pull, vm_push
+    return run_refresh, run_start, run_stop, run_workers, task_ready, vm_poll, vm_pull, vm_push
 
 
 @app.cell
-def _(crossdock_folder, dock_cpus, get_screen_messages, mo, qpages, qsubmit, run_refresh, run_start,
+def _(crossdock_folder, dock_cpus, get_screen_messages, mo, qpages, qsubmit, run_refresh, run_start, run_stop,
       run_workers, screen_cfg, site_dir, task_ready, vm_poll, vm_pull, vm_push):
-    _ = run_refresh.value
+    _ = (run_refresh.value, get_screen_messages())  # Start and Stop leave a message: show the new state too
     if not task_ready:
         _here = mo.md("_Prepare first._")
     else:
         _prog = qsubmit.local_progress(crossdock_folder)
         _state = "running" if _prog["running"] else ("started " + str(_prog["started_at"]) if _prog["started_at"]
                                                        else "not started here")
-        _here = mo.vstack([mo.hstack([run_workers, run_start, run_refresh], justify="start", align="end"),
+        _here = mo.vstack([mo.hstack([run_workers, run_start, run_refresh, run_stop], justify="start", align="end"),
                            mo.md(f"**{_prog['done']} / {_prog['total']}** dockings done · {_state}")])
     _sbatch = crossdock_folder / "run_docking.sbatch"
     _slurm = (mo.vstack([mo.md("Scripts are written; copy the folder to the cluster and submit:"),
@@ -1743,21 +1757,24 @@ def _(crossdock_folder, dock_cpus, get_screen_messages, mo, qpages, qsubmit, run
     qpages.on("Screening", mo.vstack([
         mo.md("### Run"),
         mo.accordion({"Run here": _here, "SLURM (writes scripts only)": _slurm, "VM over SSH": _vm}),
-        mo.md(get_screen_messages().get("run", "")),
+        mo.md(qpages.shown(get_screen_messages().get("run"), str(site_dir))),
     ]))
     return
 
 
 @app.cell
-def _(crossdock_folder, dock_cpus, get_screen_messages, mo, qsubmit, run_start, run_workers, screen_cfg,
-      set_screen_messages, site_dir, vm_poll, vm_pull, vm_push):
-    mo.stop(not (run_start.value or vm_push.value or vm_poll.value or vm_pull.value))
+def _(crossdock_folder, dock_cpus, get_screen_messages, mo, qpages, qsubmit, run_start, run_stop, run_workers,
+      screen_cfg, set_pose_version, set_screen_messages, site_dir, vm_poll, vm_pull, vm_push):
+    mo.stop(not (run_start.value or run_stop.value or vm_push.value or vm_poll.value or vm_pull.value))
     import subprocess as _subprocess
 
     try:
         if run_start.value:
             _rec = qsubmit.start_local(crossdock_folder, int(run_workers.value), int(dock_cpus.value))
             _msg = f"_Started here (pid {_rec['pid']}, {_rec['n_jobs']} dockings); Refresh progress to follow it._"
+        elif run_stop.value:
+            _msg = ("_Stopped the run started here._" if qsubmit.stop_local(crossdock_folder)
+                    else "_No run started here is running._")
         else:
             _cmds = qsubmit.remote_commands(crossdock_folder, site_dir.name, screen_cfg.remote,
                                             int(run_workers.value), int(dock_cpus.value))
@@ -1777,9 +1794,11 @@ def _(crossdock_folder, dock_cpus, get_screen_messages, mo, qsubmit, run_start, 
                         + (f" · VM {_power}" if _power else "") + f"_{_others}")
             else:
                 _msg = "_Pushed and started._" if vm_push.value else "_Pulled the poses._"
+                if vm_pull.value:
+                    set_pose_version(lambda v: v + 1)
     except Exception as _e:
         _msg = f"_{type(_e).__name__}: {_e}_"
-    set_screen_messages({**get_screen_messages(), "run": _msg})
+    set_screen_messages({**get_screen_messages(), "run": qpages.stamped(_msg, str(site_dir))})
     return
 
 
@@ -1793,7 +1812,7 @@ def _(mo, screen_cfg):
 
 
 @app.cell
-def _(analyse_button, analyse_threshold, get_screen_messages, mo, qcrossdock, screen_cfg_path,
+def _(analyse_button, analyse_threshold, get_screen_messages, mo, qcrossdock, qpages, screen_cfg_path,
       set_screen_messages, set_screen_result, site_dir):
     mo.stop(not analyse_button.value)
 
@@ -1804,12 +1823,15 @@ def _(analyse_button, analyse_threshold, get_screen_messages, mo, qcrossdock, sc
         _msg = ""
     except FileNotFoundError as _e:
         _msg = f"_Nothing to analyse yet: {_e}_"
-    set_screen_messages({**get_screen_messages(), "analyse": _msg})
+    except Exception as _e:  # a broken pose file or table must not leave the button silent
+        set_screen_result(None)
+        _msg = f"_Analysis failed: {type(_e).__name__}: {_e}_"
+    set_screen_messages({**get_screen_messages(), "analyse": qpages.stamped(_msg, str(site_dir))})
     return
 
 
 @app.cell
-def _(analyse_button, analyse_threshold, get_screen_messages, get_screen_result, mo, qpages, qscreen):
+def _(analyse_button, analyse_threshold, get_screen_messages, get_screen_result, mo, qpages, qscreen, site_dir):
     _res = get_screen_result()
     if _res is None or not len(_res.pairs):
         _view = mo.md("_No analysed poses yet._")
@@ -1822,7 +1844,7 @@ def _(analyse_button, analyse_threshold, get_screen_messages, get_screen_result,
     qpages.on("Screening", mo.vstack([
         mo.md("### Analysis"),
         mo.hstack([analyse_threshold, analyse_button], justify="start", align="end"),
-        mo.md(get_screen_messages().get("analyse", "")),
+        mo.md(qpages.shown(get_screen_messages().get("analyse"), str(site_dir))),
         _view,
     ]))
     return
@@ -1840,8 +1862,9 @@ def _(crossdock_folder, get_screen_version, mo, pd, task_ready):
 
 
 @app.cell
-def _(analyse_threshold, crossdock_folder, mo, pd, pose_ligand, pose_receptor, pose_top, qpages, qscreen,
-      screen_final, task_ready):
+def _(analyse_threshold, crossdock_folder, get_pose_version, mo, pd, pose_ligand, pose_receptor, pose_top, qpages,
+      qscreen, run_refresh, screen_final, task_ready):
+    _ = (get_pose_version(), run_refresh.value)  # Pull and Refresh progress may bring new poses
     if not task_ready:
         _view = mo.md("_Prepare and run first._")
     elif pose_receptor.value is None or pose_ligand.value is None:

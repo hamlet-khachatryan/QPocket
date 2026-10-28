@@ -129,3 +129,30 @@ def test_vm_power_state_needs_az_and_a_vm(monkeypatch):
     assert submit.vm_power_state(RemoteConfig(host="h")) is None
     monkeypatch.setattr(submit.shutil, "which", lambda name: None)
     assert submit.vm_power_state(RemoteConfig(host="h", azure_vm="comp-bio-2", azure_resource_group="rg")) is None
+
+
+def test_a_reused_pid_is_not_our_run(tmp_path):
+    import os
+
+    folder = _folder(tmp_path)
+    (folder / "local_run.json").write_text(json.dumps({"pid": os.getpid(), "started_at": "t", "n_jobs": 3}))
+    assert submit.local_progress(folder)["running"] is False   # pytest holds the pid, not run-local
+
+
+def test_a_corrupt_local_run_json_reads_as_no_run(tmp_path):
+    folder = _folder(tmp_path)
+    (folder / "local_run.json").write_text("{broken")
+    assert submit.local_progress(folder)["running"] is False
+    assert submit.local_progress(folder)["started_at"] is None
+
+
+def test_stop_local_ends_the_run_and_says_so(tmp_path):
+    folder = _folder(tmp_path)
+    child = subprocess.Popen(["/bin/sh", "-c", "sleep 60; : screen run-local"], start_new_session=True)
+    (folder / "local_run.json").write_text(json.dumps({"pid": child.pid, "started_at": "t", "n_jobs": 3}))
+    assert submit.local_progress(folder)["running"] is True
+    assert submit.stop_local(folder) is True
+    child.wait(timeout=10)
+    progress = submit.local_progress(folder)
+    assert progress["running"] is False and json.loads((folder / "local_run.json").read_text())["stopped_at"]
+    assert submit.stop_local(folder) is False                 # nothing running any more

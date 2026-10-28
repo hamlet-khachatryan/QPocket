@@ -515,8 +515,7 @@ def set_representative(run_dir: Path, site_id: str, cluster_id: int, pdb_id: str
         Path of the site's clustering_metadata.csv.
 
     Raises:
-        SiteError: If the site is unknown, not clustered or has no distance matrix, or ``pdb_id`` is not in
-            the cluster.
+        SiteError: If the site is unknown, unclustered or lacks its distance matrix, or ``pdb_id`` is not in it.
     """
     meta = _site_ws(run_dir, site_id).metadata
     if not (meta / "clustering_metadata.csv").exists():

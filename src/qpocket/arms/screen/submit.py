@@ -64,22 +64,43 @@ def engines(cfg: ScreenConfig) -> Dict[str, Optional[str]]:
     return found
 
 
+def _is_run_local(pid: int) -> bool:
+    """Whether ``pid`` is a ``screen run-local`` process; a pid the system gave to another program is not."""
+    try:
+        out = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="], capture_output=True, text=True,
+                             timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return True  # cannot tell: trust the pid rather than start a second run beside it
+    return out.returncode == 0 and "run-local" in out.stdout
+
+
 def _alive(pid: int) -> bool:
     try:
         done, _ = os.waitpid(pid, os.WNOHANG)  # reaps our own finished child, which kill(0) would call alive
-        return done == 0
+        if done:
+            return False
     except ChildProcessError:
         pass
     try:
         os.kill(pid, 0)
-        return True
     except (ProcessLookupError, PermissionError):
         return False
+    return _is_run_local(pid)
 
 
 def _record(folder: Path) -> Optional[dict]:
+    """local_run.json, or None when there is none or it cannot be read (then no run counts as started here)."""
     path = Path(folder) / LOCAL_RUN
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        int(record["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return record
+
+
+def _running(record: Optional[dict]) -> bool:
+    return bool(record and not record.get("stopped_at") and _alive(int(record["pid"])))
 
 
 def start_local(folder: Path, workers: int, cpus: int) -> dict:
@@ -98,7 +119,7 @@ def start_local(folder: Path, workers: int, cpus: int) -> dict:
     """
     folder = Path(folder)
     previous = _record(folder)
-    if previous and _alive(int(previous["pid"])):
+    if _running(previous):
         raise RuntimeError(f"a run is already running here (pid {previous['pid']})")
     qpocket = Path(sys.executable).with_name("qpocket")
     argv = [str(qpocket) if qpocket.exists() else "qpocket", "screen", "run-local", "docking_jobs.csv",
@@ -125,8 +146,34 @@ def local_progress(folder: Path) -> Dict[str, object]:
     jobs = pd.read_csv(folder / "docking_jobs.csv")
     done = sum(((folder / p) if not Path(p).is_absolute() else Path(p)).exists() for p in jobs["output_pdbqt"])
     record = _record(folder)
-    return {"done": int(done), "total": len(jobs), "running": bool(record and _alive(int(record["pid"]))),
+    return {"done": int(done), "total": len(jobs), "running": _running(record),
             "started_at": record.get("started_at") if record else None}
+
+
+def stop_local(folder: Path) -> bool:
+    """Stop the run started here from this task folder (it and the dockings it started).
+
+    Args:
+        folder: The task folder.
+
+    Returns:
+        True if a run was stopped, False if none was running; local_run.json records ``stopped_at`` either way.
+    """
+    import signal
+
+    folder = Path(folder)
+    record = _record(folder)
+    if record is None:
+        return False
+    stopped = _running(record)
+    if stopped:
+        try:  # start_local made it a session leader: its group holds the dockings too
+            os.killpg(int(record["pid"]), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            stopped = False
+    record.setdefault("stopped_at", datetime.now().replace(microsecond=0).isoformat())
+    (folder / LOCAL_RUN).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    return stopped
 
 
 def _session(site_id: str) -> str:

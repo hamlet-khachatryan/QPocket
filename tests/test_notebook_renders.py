@@ -347,6 +347,9 @@ def test_a_finalised_site_renders_the_screening_page_and_saves_its_box(tmp_path,
         assert text in shown, f"{text!r} never rendered"
     box = _json.loads((root / "sites" / "S1-Y1" / "screening" / "box.json").read_text())
     assert box["mode"] in ("interacting_residues", "representative_pockets") and box["site_id"] == "S1-Y1"
+    after = "\n".join(html for _, html in saved)
+    assert "box.json</code>" in after and "Saved box:" in after
+    assert "<iframe" not in after, "saving the box redrew the 3D viewer"
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")

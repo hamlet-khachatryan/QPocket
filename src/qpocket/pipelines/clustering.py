@@ -308,10 +308,7 @@ def write_clustering(meta_dir: Path, ids: List[str], assignment: ClusterAssignme
 
 
 def set_representative(meta_dir: Path, cluster_id: int, pdb_id: str) -> Path:
-    """Make ``pdb_id`` its cluster's representative in the applied clustering, and record the choice.
-
-    The swap is kept in ``clustering_params.json``: ``representative_overrides`` (cluster to member, gone again
-    once the cluster is back on its medoid) and ``representative_history`` (every swap, in order).
+    """Make ``pdb_id`` its cluster's representative; clustering_params.json records the override and history.
 
     Args:
         meta_dir: The site's metadata directory, holding the applied clustering.

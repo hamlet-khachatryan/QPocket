@@ -318,7 +318,7 @@ def test_a_box_saved_for_an_older_final_is_ignored(site):
     plan = crossdock.prepare(ws.root)
     written = json.loads((ws.screening / "crossdock" / "box.json").read_text())
     assert written["source"] == "config" and written["max_x"] != 42.0
-    assert any("predates the last Finalise" in w for w in plan.warnings)
+    assert any("predates the site's current final" in w for w in plan.warnings)
 
 
 def test_prepare_without_final_warns(site):
@@ -346,13 +346,30 @@ def test_reprepare_with_a_different_job_list_archives_old_poses(site):
 
 
 def test_prepare_refuses_while_a_local_run_is_alive(site):
-    import os
+    import subprocess
 
     from qpocket.arms.screen import crossdock
 
     ws, _ = site
     crossdock.prepare(ws.root)
     folder = ws.screening / "crossdock"
-    (folder / "local_run.json").write_text(json.dumps({"pid": os.getpid(), "started_at": "t", "n_jobs": 2}))
-    with pytest.raises(RuntimeError, match="still running"):
-        crossdock.prepare(ws.root)
+    run = subprocess.Popen(["/bin/sh", "-c", "sleep 60; : screen run-local"], start_new_session=True)
+    try:
+        (folder / "local_run.json").write_text(json.dumps({"pid": run.pid, "started_at": "t", "n_jobs": 2}))
+        with pytest.raises(RuntimeError, match="still running"):
+            crossdock.prepare(ws.root)
+    finally:
+        run.kill()
+        run.wait()
+
+
+def test_a_broken_saved_box_is_ignored_with_a_warning(site):
+    from qpocket.arms.screen import crossdock
+
+    ws, _ = site
+    _finalise(ws, {"R1", "R2"})
+    (ws.root / "screening").mkdir(parents=True, exist_ok=True)
+    (ws.root / "screening" / "box.json").write_text('{"mode": "representative_pockets", "padding": 2.0}')
+    plan = crossdock.prepare(ws.root)
+    assert json.loads((ws.screening / "crossdock" / "box.json").read_text())["source"] == "config"
+    assert any("unreadable or incomplete" in w for w in plan.warnings)

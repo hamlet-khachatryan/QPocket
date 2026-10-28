@@ -12,6 +12,7 @@ import pandas as pd
 
 from qpocket.core.screening import calculate_box, extremum_points
 from qpocket.io import final as io_final
+from qpocket.io.tables import file_hash
 
 INTERACTING, CLOUDS = "interacting_residues", "representative_pockets"
 
@@ -36,6 +37,7 @@ class BoxPreview(NamedTuple):
         cluster_of: Representative id to its cluster name.
         frame_pdb: Aligned structure the residues and cartoon come from.
         final_hash: The final's clustering hash, recorded with a saved box.
+        profile_hash: The final's residue profile hash (interacting mode, whose box follows the contacts).
     """
 
     mode: str
@@ -50,6 +52,7 @@ class BoxPreview(NamedTuple):
     cluster_of: Dict[str, str]
     frame_pdb: Path
     final_hash: str
+    profile_hash: str = ""
 
 
 def _site(run_dir: Path, site_id: str) -> Tuple[Path, dict]:
@@ -78,11 +81,17 @@ def _frame(run_dir: Path, site: Path, reps: List[str]) -> Path:
     raise BoxError(f"no aligned structure found for {site.name}")
 
 
-def _preview(mode, padding, points, residues, clouds, cluster_of, frame, final) -> BoxPreview:
+def _profile_hash(site: Path) -> str:
+    path = Path(site) / "final" / "residue_profile.csv"
+    return file_hash(path) if path.exists() else ""
+
+
+def _preview(mode, padding, points, residues, clouds, cluster_of, frame, final, site) -> BoxPreview:
     extremes, labels = extremum_points(points)
     return BoxPreview(mode, float(padding), calculate_box(points, padding=0.0), calculate_box(points, padding=padding),
                       points, extremes, labels, residues, clouds, cluster_of, frame,
-                      str(final["settings"].get("clustering_hash", "")))
+                      str(final["settings"].get("clustering_hash", "")),
+                      _profile_hash(site) if mode == INTERACTING else "")
 
 
 def _reps(final) -> Tuple[List[str], Dict[str, str]]:
@@ -120,7 +129,7 @@ def interacting_box(run_dir: Path, site_id: str, padding: float) -> BoxPreview:
     points = interacting_residue_coords(PandasPdb().read_pdb(str(frame)).df["ATOM"], [f"{r}|contact" for r in residues])
     if points is None or not len(points):
         raise BoxError(f"none of {site_id}'s contacted residues is in {frame.name}")
-    return _preview(INTERACTING, padding, points, residues, {}, cluster_of, frame, final)
+    return _preview(INTERACTING, padding, points, residues, {}, cluster_of, frame, final, site)
 
 
 def cloud_box(run_dir: Path, site_id: str, padding: float) -> BoxPreview:
@@ -148,7 +157,7 @@ def cloud_box(run_dir: Path, site_id: str, padding: float) -> BoxPreview:
         raise BoxError(f"no representative of {site_id} has a pocket cloud")
     points = np.vstack(list(clouds.values()))
     return _preview(CLOUDS, padding, points, [], clouds, {r: cluster_of[r] for r in clouds},
-                    _frame(run_dir, site, reps), final)
+                    _frame(run_dir, site, reps), final, site)
 
 
 def save_box(run_dir: Path, site_id: str, preview: BoxPreview, now: Optional[datetime] = None) -> Path:
@@ -168,6 +177,7 @@ def save_box(run_dir: Path, site_id: str, preview: BoxPreview, now: Optional[dat
     payload = {"site_id": site_id, "mode": preview.mode, "padding": preview.padding,
                "saved_at": (now or datetime.now()).replace(microsecond=0).isoformat(),
                "final_hash": preview.final_hash,
+               **({"profile_hash": preview.profile_hash} if preview.mode == INTERACTING else {}),
                **{k: float(v) for k, v in preview.padded.items()},
                **({"residues": preview.residues} if preview.mode == INTERACTING
                   else {"representatives": sorted(preview.clouds)})}
@@ -183,7 +193,9 @@ def saved_box(run_dir: Path, site_id: str) -> Tuple[Optional[dict], str]:
         site_id: The site.
 
     Returns:
-        (box or None, "none" | "stale" | "current"); stale when the site was finalised again, or its final is stale.
+        (box or None, "none" | "invalid" | "stale" | "current"); invalid when box.json is unreadable or lacks
+        a key docking needs; stale when the site's clustering changed since, its final is stale, or (an
+        interacting box) its contacts changed.
     """
     return saved_box_at(Path(run_dir) / "sites" / site_id)
 
@@ -198,8 +210,17 @@ def saved_box_at(site: Path) -> Tuple[Optional[dict], str]:
     path = site / "screening" / "box.json"
     if not path.exists():
         return None, "none"
-    saved = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None, "invalid"
+    if not isinstance(saved, dict) or any(k not in saved for k in (*BOX_KEYS, "mode", "padding")):
+        return (saved if isinstance(saved, dict) else None), "invalid"
     if io_final.final_status(site) != "current":
         return saved, "stale"
     current = io_final.read_final(site)["settings"].get("clustering_hash")
-    return saved, "current" if saved.get("final_hash") == current else "stale"
+    if saved.get("final_hash") != current:
+        return saved, "stale"
+    if saved["mode"] == INTERACTING and saved.get("profile_hash") != _profile_hash(site):
+        return saved, "stale"
+    return saved, "current"
