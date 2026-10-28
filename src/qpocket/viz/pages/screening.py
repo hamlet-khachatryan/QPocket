@@ -173,6 +173,36 @@ def matrix_figure(matrix: pd.DataFrame, threshold: float) -> go.Figure:
     return fig
 
 
+def success_bars(pairs: pd.DataFrame, threshold: float) -> go.Figure:
+    """Per representative, the share of its dockings solved by the best-scored pose and by any sampled pose.
+
+    Args:
+        pairs: crossdock_pairs.csv (representative, top1_success, sampled_success).
+        threshold: The success threshold (Å) the pairs were scored with, for the labels.
+
+    Returns:
+        Grouped bars on 0–100 %; the gap between a representative's bars is what scoring missed.
+    """
+    rates = pairs.groupby("representative", sort=True).agg(
+        n=("top1_success", "size"), top1=("top1_success", "mean"), sampled=("sampled_success", "mean"))
+    names = list(rates.index.astype(str))
+    fig = go.Figure()
+    for column, label, colour in (("top1", f"best-scored pose ≤ {threshold:g} Å", PADDED),
+                                  ("sampled", f"any sampled pose ≤ {threshold:g} Å", GOOD)):
+        values = [100.0 * float(v) for v in rates[column]]
+        fig.add_bar(x=names, y=values, name=label, marker_color=colour,
+                    customdata=rates["n"].tolist(),
+                    hovertemplate="%{x}<br>" + label + ": %{y:.0f}% of %{customdata} dockings<extra></extra>")
+    fig = apply(fig)
+    fig.update_layout(barmode="group", height=360, width=max(600, 60 * len(names) + 200),
+                      yaxis=dict(title="success rate (%)", range=[0, 100]),
+                      xaxis=dict(title="representative", tickangle=-45, tickfont=dict(size=9)),
+                      title=dict(text=f"Cross-docking success by representative · threshold {threshold:g} Å",
+                                 font=dict(size=11)),
+                      legend=dict(orientation="h", y=1.12))
+    return fig
+
+
 def _colour(rmsd: float, threshold: float) -> str:
     if rmsd is None or not np.isfinite(rmsd):
         return GREY

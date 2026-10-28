@@ -18,8 +18,15 @@ def test_unknown_page_is_refused():
 
 
 def test_css_hides_every_other_page():
-    assert pages.page_css("Site") == "<style>.qp-page:not(.qp-on-Site) { display: none; }</style>"
+    css = pages.page_css("Site")
+    assert ".qp-page:not(.qp-on-Site) { display: none; }" in css
     assert pages.PAGES == ("Site", "Exploration", "Screening")
+
+
+def test_css_collapses_cells_holding_only_other_pages():
+    # A cell whose sections all belong to other pages takes no room, so a later page starts at the top.
+    css = pages.page_css("Screening")
+    assert ".marimo-cell:has(.qp-page):not(:has(.qp-on-Screening)) { display: none; }" in css
 
 
 def test_a_message_shows_only_while_its_stamp_holds(tmp_path):

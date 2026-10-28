@@ -35,8 +35,10 @@ def on(page: Union[str, Iterable[str]], content):
 
 
 def page_css(active: str) -> str:
-    """The style block that hides every page section except ``active``'s."""
-    return f"<style>.qp-page:not(.qp-on-{active}) {{ display: none; }}</style>"
+    """The style block that hides every page section except ``active``'s, and every cell holding only those."""
+    # Hiding the sections alone leaves each cell's own box and spacing, which stack up above later pages.
+    return (f"<style>.qp-page:not(.qp-on-{active}) {{ display: none; }}\n"
+            f".marimo-cell:has(.qp-page):not(:has(.qp-on-{active})) {{ display: none; }}</style>")
 
 
 def clustering_stamp(site_dir: Path) -> str:

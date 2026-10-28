@@ -87,7 +87,7 @@ def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered
     assert not errors, "cells left showing errors: " + "; ".join(
         str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
     for text in ("Binding sites", "Steps for S1-Y1", "S1-Y1 · ", "Ligands shown",
-                 "Exploration", "Screening", "Merge…", "Split…", "Overrides", "Site overview", "qp-on-Site"):
+                 "Exploration", "Screening", "Merge…", "Split…", "Overrides", "qp-on-Site"):
         assert text in shown, f"{text!r} never rendered"
     assert ("No distance matrix for this site yet" in shown) is not shape_clustered
     if shape_clustered:  # the clustering views need the site's distance matrices
@@ -164,7 +164,7 @@ def test_a_two_stage_site_renders_the_chemistry_views(tmp_path, monkeypatch):
     assert finished, "no cell ran at all"
     assert not errors, "cells left showing errors: " + "; ".join(
         str(e.get("msg") or e.get("type"))[:160] for e in errors[:5])
-    for text in ("Chemistry cut (percentile)", "Cluster distances", "Pockets shown", "Residue contacts by cluster"):
+    for text in ("Chemistry cut (percentile)", "Pockets shown", "Residue contacts by cluster"):
         assert text in shown, f"{text!r} never rendered"
 
 
@@ -179,7 +179,6 @@ def test_tabs_guard_without_a_site(tmp_path, monkeypatch):
     errors, finished, shown = _render(root)
     assert finished and not errors, "; ".join(str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
     assert "Pick a site on the Site page." in shown and "qp-on-Exploration qp-on-Screening" in shown
-    assert "No sites to draw." in shown
 
 
 def _element_id(html: str, kind: str, label: str):
@@ -316,7 +315,7 @@ def test_finalise_from_the_page_writes_final_and_clears_the_guard(tmp_path, monk
     first, clicked = _session(root, [finalise])
     assert final.final_status(root, "S1-Y1") == "current"
     shown = "\n".join(html for _, html in clicked)
-    assert "Finalised into" in shown and "Screening S1-Y1 from its final metadata" in shown
+    assert "Finalised into" in shown and "Finalise this site on the Exploration page" not in shown
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")

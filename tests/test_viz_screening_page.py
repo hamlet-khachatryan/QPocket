@@ -162,3 +162,14 @@ def test_a_wide_success_matrix_gets_room_for_its_labels():
     fig = page.matrix_figure(matrix, threshold=2.0)
     assert fig.layout.width >= 80 * 12 and fig.layout.xaxis.tickfont.size <= 9
     assert fig.layout.margin.b >= 100
+
+
+def test_success_bars_give_two_rates_per_representative():
+    pairs = pd.DataFrame({"representative": ["R1", "R1", "R2"], "active_id": ["A", "B", "A"],
+                          "top1_success": [False, False, True], "sampled_success": [True, False, True]})
+    fig = page.success_bars(pairs, threshold=2.0)
+    by_name = {trace.name: dict(zip(trace.x, trace.y)) for trace in fig.data}
+    assert set(by_name) == {"best-scored pose ≤ 2 Å", "any sampled pose ≤ 2 Å"}
+    assert by_name["best-scored pose ≤ 2 Å"] == {"R1": 0.0, "R2": 100.0}
+    assert by_name["any sampled pose ≤ 2 Å"] == {"R1": 50.0, "R2": 100.0}
+    assert fig.layout.barmode == "group" and fig.layout.yaxis.range == (0, 100)

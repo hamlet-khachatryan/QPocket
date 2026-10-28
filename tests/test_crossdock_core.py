@@ -91,3 +91,21 @@ def test_older_job_tables_without_a_seed_still_run():
            "center_z": 0, "size_x": 1, "size_y": 1, "size_z": 1, "exhaustiveness": 8, "num_modes": 9,
            "energy_range": 3}
     assert "--seed" not in vina_argv(job, "vina", 2)
+
+
+def test_pairs_record_the_best_of_every_sampled_pose():
+    pairs = cx.pair_table(_poses(), threshold=2.0, top_k=2).set_index("job_id")
+    assert pairs.loc["j1", "best_rmsd"] == 0.9 and pairs.loc["j1", "sampled_success"] == True  # noqa: E712  (rank 3)
+    assert np.isnan(pairs.loc["j3", "best_rmsd"]) and pairs.loc["j3", "sampled_success"] == False  # noqa: E712
+
+
+def test_a_pose_at_exactly_the_threshold_succeeds():
+    poses = _poses().assign(rmsd=[2.0, 5.0, 5.0, 5.0, 5.0, 5.0])
+    pairs = cx.pair_table(poses, threshold=2.0, top_k=1).set_index("job_id")
+    assert pairs.loc["j1", "top1_success"] == True and pairs.loc["j1", "sampled_success"] == True  # noqa: E712
+
+
+def test_success_table_has_the_sampled_rate():
+    s = cx.success_table(cx.pair_table(_poses(), 2.0, 2)).set_index(["level", "name"])
+    assert s.loc[("representative", "R1"), "sampled_success_rate"] == 50.0
+    assert s.loc[("overall", "all"), "sampled_success_rate"] == pytest.approx(200 / 3)

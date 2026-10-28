@@ -109,27 +109,32 @@ def crossdock_jobs(receptors: Dict[str, str], ligands: Dict[str, str], box: Dict
 
 
 def pair_table(poses: pd.DataFrame, threshold: float, top_k: int) -> pd.DataFrame:
-    """One row per docking: its best-scored pose and its best pose among the top k.
+    """One row per docking: its best-scored pose, its best pose among the top k, and its best pose of all.
 
     Args:
         poses: job_id, representative, active_id, rank, score, rmsd.
-        threshold: Success when RMSD < threshold, Å.
+        threshold: Success when RMSD <= threshold, Å.
         top_k: Poses considered for the top-k criterion.
 
     Returns:
-        representative, active_id, n_poses, top1_score, top1_rmsd, best_topk_rmsd, top1_success, topk_success per job_id.
+        Per job_id: n_poses, top1_score, top1_rmsd, best_topk_rmsd, best_rmsd and their three successes.
     """
     rows: List[dict] = []
     for job_id, group in poses.sort_values(["job_id", "rank"]).groupby("job_id", sort=False):
         top = group.iloc[0]
         best_k = group.head(int(top_k))["rmsd"].min()
+        best = group["rmsd"].min()  # every pose the engine sampled: a scoring miss still counts here
+
+        def hit(value) -> bool:
+            return bool(pd.notna(value) and value <= threshold)
+
         rows.append({"job_id": job_id, "representative": top["representative"], "active_id": top["active_id"],
                      "n_poses": len(group), "top1_score": top["score"], "top1_rmsd": top["rmsd"],
-                     "best_topk_rmsd": best_k,
-                     "top1_success": bool(pd.notna(top["rmsd"]) and top["rmsd"] < threshold),
-                     "topk_success": bool(pd.notna(best_k) and best_k < threshold)})
+                     "best_topk_rmsd": best_k, "best_rmsd": best, "top1_success": hit(top["rmsd"]),
+                     "topk_success": hit(best_k), "sampled_success": hit(best)})
     return pd.DataFrame(rows, columns=["job_id", "representative", "active_id", "n_poses", "top1_score",
-                                       "top1_rmsd", "best_topk_rmsd", "top1_success", "topk_success"])
+                                       "top1_rmsd", "best_topk_rmsd", "best_rmsd", "top1_success", "topk_success",
+                                       "sampled_success"])
 
 
 def success_table(pairs: pd.DataFrame) -> pd.DataFrame:
@@ -139,14 +144,17 @@ def success_table(pairs: pd.DataFrame) -> pd.DataFrame:
         pairs: From pair_table.
 
     Returns:
-        level, name, n_pairs, top1_success_rate, topk_success_rate (percent).
+        level, name, n_pairs, top1_success_rate, topk_success_rate, sampled_success_rate (percent).
     """
     def rates(level, name, group):
-        return {"level": level, "name": str(name), "n_pairs": len(group),
-                "top1_success_rate": 100.0 * group["top1_success"].mean() if len(group) else 0.0,
-                "topk_success_rate": 100.0 * group["topk_success"].mean() if len(group) else 0.0}
+        out = {"level": level, "name": str(name), "n_pairs": len(group)}
+        for kind in ("top1", "topk", "sampled"):
+            column = f"{kind}_success"
+            out[f"{column}_rate"] = 100.0 * group[column].mean() if len(group) and column in group else 0.0
+        return out
 
     rows = [rates("representative", n, g) for n, g in pairs.groupby("representative", sort=True)]
     rows += [rates("active", n, g) for n, g in pairs.groupby("active_id", sort=True)]
     rows.append(rates("overall", "all", pairs))
-    return pd.DataFrame(rows, columns=["level", "name", "n_pairs", "top1_success_rate", "topk_success_rate"])
+    return pd.DataFrame(rows, columns=["level", "name", "n_pairs", "top1_success_rate", "topk_success_rate",
+                                       "sampled_success_rate"])

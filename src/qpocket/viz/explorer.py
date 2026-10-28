@@ -486,16 +486,6 @@ def _(get_site_change_message, mo, qpages, run_dir):
 
 
 @app.cell
-def _(mo, qpages, qsite_page, run_dir, site_picker, sites_df):
-    qpages.on("Site", mo.vstack([
-        mo.md("### Site overview"),
-        qsite_page.overview_figure(run_dir, sites_df, selected=site_picker.value) if len(sites_df)
-        else mo.md("_No sites to draw._"),
-    ]))
-    return
-
-
-@app.cell
 def _(lru_cache, pd):
     import os
 
@@ -641,7 +631,7 @@ def _(chem_cut, cluster_matrices, cluster_method, cluster_settings, combined_cut
                 f"_{_hued} coloured clusters share {len(qviz.style.HUES)} hues: colours repeat every "
                 f"{len(qviz.style.HUES)} clusters (names are unique)._")])
     elif cluster_method.value == "affinity" and pending is not None:
-        tree_view = mo.md("_Affinity propagation builds no tree; see Cluster distances below._")
+        tree_view = mo.md("_Affinity propagation builds no tree._")
     qpages.on("Exploration", tree_view)
     return cluster_table, name_colours, preview_colours, tree_matrices, tree_preview
 
@@ -1336,60 +1326,6 @@ def _(active_info, ligand_cluster, ligand_cols, ligand_rows, max_ligands, mo, n_
 @app.cell
 def _(mo, qpages):
     qpages.on("Exploration", mo.md("""
-    ## Cluster distances
-    The median distance between every pair of clusters, as a site percentile (dark = close).
-    Pick two clusters to see their members side by side.
-    """))
-    return
-
-
-@app.cell
-def _(active_info, cluster_matrices, mo, qpages, qviz):
-    _kinds = ["shape"] + (["chemistry", "combined"] if cluster_matrices is not None
-                          and cluster_matrices.chem is not None else [])
-    dist_kind_pick = mo.ui.dropdown(options=_kinds, value="shape", label="Distance")
-    cluster_names = qviz.clusters.cluster_labels_of(active_info)
-    _options = {name: str(c) for c, name in sorted(cluster_names.items()) if c >= 0}
-    _first = list(_options)
-    pair_a = mo.ui.dropdown(options=_options, value=_first[0] if _first else None, label="Cluster")
-    pair_b = mo.ui.dropdown(options=_options, value=_first[min(1, len(_first) - 1)] if _first else None,
-                            label="against")
-    qpages.on("Exploration", dist_kind_pick)
-    return cluster_names, dist_kind_pick, pair_a, pair_b
-
-
-@app.cell
-def _(active_info, cluster_matrices, cluster_names, cluster_settings, dist_kind_pick, mo, pd, qpages, qviz):
-    # The k × k map follows the distance kind only, so picking a pair below does not recompute it.
-    mo.stop(cluster_matrices is None, qpages.on("Exploration", mo.md("No distance matrix.")))
-    _full = {"shape": cluster_matrices.shape, "chemistry": cluster_matrices.chem,
-             "combined": cluster_matrices.combined}[dist_kind_pick.value]
-    site_M = pd.DataFrame(_full, index=cluster_matrices.ids, columns=cluster_matrices.ids)
-    site_labels = active_info.assign(pdb_id=active_info["pdb_id"].astype(str)).set_index("pdb_id")["cluster_id"]
-    site_labels = site_labels.reindex(site_M.index).dropna().astype(int)
-    site_M = site_M.loc[site_labels.index, site_labels.index]
-    _shape, _chem = qviz.clusters.display_ids(active_info)
-    _by_pair = qviz.style.cluster_colours(_shape, _chem, int(cluster_settings.min_cluster_size))
-    _colours = {int(c): _by_pair.get((int(sh), int(ch)), qviz.style.GREY)
-                for c, sh, ch in zip(active_info["cluster_id"], _shape, _chem) if c == c}
-    _cmap = qviz.matrix.cluster_map(site_M, site_labels)
-    qpages.on("Exploration", qviz.matrix.cluster_map_figure(_cmap, _colours, names={c: cluster_names.get(int(c), str(c))
-                                                          for c in _cmap.index}))
-    return site_M, site_labels
-
-
-@app.cell
-def _(mo, pair_a, pair_b, qpages, qviz, site_M, site_labels):
-    _view = mo.md("")
-    if pair_a.value is not None and pair_b.value is not None:
-        _block = qviz.matrix.member_block(site_M, site_labels, int(pair_a.value), int(pair_b.value))
-        _view = qviz.style.apply(qviz.matrix.heatmap(_block, list(_block.index), [], "as loaded"))
-    qpages.on("Exploration", mo.vstack([mo.hstack([pair_a, pair_b], justify="start", gap=2), _view]))
-    return
-
-@app.cell
-def _(mo, qpages):
-    qpages.on("Exploration", mo.md("""
     ## Interaction fingerprint
     What the ligands touch, and what merely lines the pocket. Percentages on the
     left are over the ligand-bound structures; on the right, the pale bar is over
@@ -1549,8 +1485,10 @@ def _(active_info, get_final_version, mo, qfinal, qpages, run_dir, site_dir):
     _status = qfinal.final_status(run_dir, site_dir.name)
     _why = {"missing": " It has no final metadata yet.",
             "stale": " Its clustering or a representative changed since it was finalised."}.get(_status, "")
-    qpages.on("Screening", mo.callout(mo.md(f"Finalise this site on the Exploration page.{_why}"), kind="warn")
-              if _status != "current" else mo.md(f"_Screening {site_dir.name} from its final metadata._"))
+    # Only a site that is not ready says anything here: a finalised one opens straight on the Screening heading.
+    _out = (qpages.on("Screening", mo.callout(mo.md(f"Finalise this site on the Exploration page.{_why}"), kind="warn"))
+            if _status != "current" else None)
+    _out
     return
 
 
@@ -1818,8 +1756,10 @@ def _(analyse_button, analyse_threshold, get_screen_messages, mo, qcrossdock, qp
 
     try:
         with mo.status.spinner(title="Scoring poses against the crystal ligands…"):
-            set_screen_result(qcrossdock.analyze(site_dir, str(screen_cfg_path) if screen_cfg_path else None,
-                                                 analysis={"rmsd_threshold": float(analyse_threshold.value)}))
+            # Kept with the threshold it was scored at, so moving the field later does not relabel it.
+            set_screen_result((qcrossdock.analyze(site_dir, str(screen_cfg_path) if screen_cfg_path else None,
+                                                  analysis={"rmsd_threshold": float(analyse_threshold.value)}),
+                               float(analyse_threshold.value)))
         _msg = ""
     except FileNotFoundError as _e:
         _msg = f"_Nothing to analyse yet: {_e}_"
@@ -1832,14 +1772,13 @@ def _(analyse_button, analyse_threshold, get_screen_messages, mo, qcrossdock, qp
 
 @app.cell
 def _(analyse_button, analyse_threshold, get_screen_messages, get_screen_result, mo, qpages, qscreen, site_dir):
-    _res = get_screen_result()
+    _res, _scored_at = get_screen_result() or (None, None)
     if _res is None or not len(_res.pairs):
         _view = mo.md("_No analysed poses yet._")
     else:
         _view = mo.vstack([
-            mo.md("Top-1 and top-k success per receptor, per ligand and overall:"),
-            mo.ui.table(_res.success, selection=None, pagination=True),
-            qscreen.matrix_figure(qscreen.success_matrix(_res.pairs), float(analyse_threshold.value)),
+            qscreen.success_bars(_res.pairs, _scored_at),
+            qscreen.matrix_figure(qscreen.success_matrix(_res.pairs), _scored_at),
         ])
     qpages.on("Screening", mo.vstack([
         mo.md("### Analysis"),
