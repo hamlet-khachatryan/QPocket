@@ -33,7 +33,7 @@ from Bio.PDB.Residue import Residue
 from Bio.PDB.Structure import Structure
 from scipy.spatial import cKDTree
 
-from qpocket.constants import STANDARD_AA, THREE_TO_ONE_MAPPING
+from qpocket.constants import STANDARD_AA, STANDARD_AA_ATOMS, THREE_TO_ONE_MAPPING
 
 #: Residue names PyMOL's ``solvent`` selection removes.
 WATER = frozenset({"HOH", "WAT", "H2O", "DOD", "D2O", "SOL", "TIP", "TIP3", "TIP4", "SPC"})
@@ -136,6 +136,66 @@ def atom_key(chain: str, resseq, icode: str, resname: str, atom: str) -> AtomKey
 def is_polymer(residue: Residue) -> bool:
     """An amino acid in the chain: it has the backbone N, CA and C."""
     return all(name in residue for name in ("N", "CA", "C"))
+
+
+#: Longest C–N distance (Å) still read as a peptide bond.
+PEPTIDE_BOND = 2.0
+
+
+def _bonded(c_side: Residue, n_side: Residue) -> bool:
+    return "C" in c_side and "N" in n_side and float(np.linalg.norm(c_side["C"].coord - n_side["N"].coord)) <= PEPTIDE_BOND
+
+
+def modified_residues(chain: Chain) -> Dict[tuple, str]:
+    """Non-standard amino acids peptide-bonded into the chain (PTR, SEP, TPO, MSE …), with their parent residue.
+
+    Args:
+        chain: Biopython chain.
+
+    Returns:
+        Residue id to the parent's three-letter name (PTR → TYR); a free amino-acid-like HET group is not one.
+    """
+    from Bio.Data.PDBData import protein_letters_1to3, protein_letters_3to1_extended
+
+    residues = list(chain)
+    found: Dict[tuple, str] = {}
+    for k, residue in enumerate(residues):
+        name = residue.get_resname().strip().upper()
+        letter = protein_letters_3to1_extended.get(name)
+        if name in STANDARD_AA or not letter or letter == "X" or not is_polymer(residue):
+            continue
+        before = k > 0 and _bonded(residues[k - 1], residue)
+        after = k + 1 < len(residues) and _bonded(residue, residues[k + 1])
+        if before or after:
+            found[residue.id] = protein_letters_1to3[letter].upper()
+    return found
+
+
+def standardised(structure: Structure) -> Tuple[Structure, int]:
+    """Copy with every modified residue in a chain turned into its parent: renamed, extra atoms dropped.
+
+    Args:
+        structure: Input structure (not modified).
+
+    Returns:
+        (new structure, residues converted); MSE keeps its selenium as the methionine's SD.
+    """
+    out = structure.copy()
+    converted = 0
+    for model in out:
+        for chain in model:
+            for rid, parent in modified_residues(chain).items():
+                residue = chain[rid]
+                if parent == "MET" and "SE" in residue and "SD" not in residue:
+                    residue["SE"].id, residue["SE"].name, residue["SE"].fullname = "SD", "SD", " SD "
+                    residue["SE"].element = "S"
+                    residue.child_dict["SD"] = residue.child_dict.pop("SE")
+                for atom in [a for a in residue if a.get_id() not in STANDARD_AA_ATOMS[parent]]:
+                    residue.detach_child(atom.get_id())
+                residue.resname = parent
+                residue.id = (" ", rid[1], rid[2])
+                converted += 1
+    return out, converted
 
 
 def polymer_residues(chain: Chain) -> List[Residue]:
@@ -332,7 +392,7 @@ def without_residues(structure: Structure, keep_names: Iterable[str]) -> Tuple[S
 
 
 def cleaned(structure: Structure, allowed_cofactors: Iterable[str] = ()) -> Tuple[Structure, int]:
-    """Copy keeping standard amino acids and allowed cofactors.
+    """Copy keeping amino acids (modified ones turned into their parents) and allowed cofactors.
 
     Args:
         structure: Input structure (not modified).
@@ -341,7 +401,7 @@ def cleaned(structure: Structure, allowed_cofactors: Iterable[str] = ()) -> Tupl
     Returns:
         (new structure, residues removed).
     """
-    return without_residues(structure, set(STANDARD_AA) | set(allowed_cofactors))
+    return without_residues(standardised(structure)[0], set(STANDARD_AA) | set(allowed_cofactors))
 
 
 def with_chain(structure: Structure, chain: Chain) -> Structure:

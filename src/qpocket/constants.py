@@ -158,6 +158,19 @@ STANDARD_AA = {
     'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL'
 }
 
+# Heavy atoms of each standard amino acid: a modified residue turned into its parent keeps only these.
+_BACKBONE = ("N", "CA", "C", "O", "OXT")
+STANDARD_AA_ATOMS = {name: frozenset(_BACKBONE + side) for name, side in {
+    'ALA': ("CB",), 'ARG': ("CB", "CG", "CD", "NE", "CZ", "NH1", "NH2"), 'ASN': ("CB", "CG", "OD1", "ND2"),
+    'ASP': ("CB", "CG", "OD1", "OD2"), 'CYS': ("CB", "SG"), 'GLN': ("CB", "CG", "CD", "OE1", "NE2"),
+    'GLU': ("CB", "CG", "CD", "OE1", "OE2"), 'GLY': (), 'HIS': ("CB", "CG", "ND1", "CD2", "CE1", "NE2"),
+    'ILE': ("CB", "CG1", "CG2", "CD1"), 'LEU': ("CB", "CG", "CD1", "CD2"),
+    'LYS': ("CB", "CG", "CD", "CE", "NZ"), 'MET': ("CB", "CG", "SD", "CE"),
+    'PHE': ("CB", "CG", "CD1", "CD2", "CE1", "CE2", "CZ"), 'PRO': ("CB", "CG", "CD"), 'SER': ("CB", "OG"),
+    'THR': ("CB", "OG1", "CG2"), 'TRP': ("CB", "CG", "CD1", "CD2", "NE1", "CE2", "CE3", "CZ2", "CZ3", "CH2"),
+    'TYR': ("CB", "CG", "CD1", "CD2", "CE1", "CE2", "CZ", "OH"), 'VAL': ("CB", "CG1", "CG2"),
+}.items()}
+
 THREE_TO_ONE_MAPPING = {
     'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C',
     'GLN':'Q','GLU':'E','GLY':'G','HIS':'H','ILE':'I',

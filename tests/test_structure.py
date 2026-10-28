@@ -431,3 +431,63 @@ def test_with_chain_replaces_in_place_of_order(tmp_path):
     out = st.with_chain(s, new_a)
     assert [c.id for c in out[0]] == ["A", "B"] and out[0]["A"].child_list[0].id[1] == 2
     assert s[0]["A"].child_list[0].id[1] == 1  # input untouched
+
+
+# --- modified residues ------------------------------------------------------
+
+
+def peptide(names, het=(), far=()):
+    """A straight peptide whose C–N links are 1.43 Å, so residues are bonded; ``far`` ones sit 30 Å away.
+
+    PTR gets its phosphate (P, O1P) and MSE its selenium, beside the atoms they share with TYR and MET.
+    """
+    extra = {"PTR": {"CB": (0, 1.5, 0), "OH": (0, 3.0, 0), "P": (0, 4.5, 0), "O1P": (0, 5.5, 0)},
+             "MSE": {"CB": (0, 1.5, 0), "SE": (0, 3.0, 0)}}
+    lines, serial = [], 1
+    for i, name in enumerate(names):
+        x0 = 3.8 * i + (30.0 if i in far else 0.0)
+        atoms = {"N": (x0, 0, 0), "CA": (x0 + 1.46, 0, 0), "C": (x0 + 2.46, 0.5, 0), "O": (x0 + 2.46, 1.7, 0)}
+        atoms.update({a: (x0 + 1.46 + dx, dy, dz) for a, (dx, dy, dz) in extra.get(name, {}).items()})
+        for atom, xyz in atoms.items():
+            element = "SE" if atom == "SE" else atom[0]
+            lines.append(line(serial, atom, name, "A", i + 1, xyz, element, het=i in het))
+            serial += 1
+    return lines
+
+
+def test_cleaning_turns_a_bonded_modified_residue_into_its_parent(tmp_path):
+    s = sio.load(write(tmp_path / "p.pdb", peptide(["ALA", "PTR", "ALA"], het={1})))
+    clean, removed = st.cleaned(s)
+    residues = list(clean[0]["A"])
+    assert [r.get_resname() for r in residues] == ["ALA", "TYR", "ALA"] and removed == 0
+    tyr = residues[1]
+    assert tyr.id[0] == " " and {"N", "CA", "C", "O", "CB", "OH"} == {a.get_id() for a in tyr}
+
+
+def test_selenomethionine_becomes_methionine_with_its_sulfur(tmp_path):
+    s = sio.load(write(tmp_path / "m.pdb", peptide(["ALA", "MSE", "ALA"], het={1})))
+    met = list(st.cleaned(s)[0][0]["A"])[1]
+    assert met.get_resname() == "MET" and "SD" in met and met["SD"].element == "S" and "SE" not in met
+
+
+def test_an_unbonded_amino_acid_like_het_group_is_not_protein(tmp_path):
+    s = sio.load(write(tmp_path / "f.pdb", peptide(["ALA", "ALA", "PTR"], het={2}, far={2})))
+    clean, removed = st.cleaned(s)
+    assert [r.get_resname() for r in clean[0]["A"]] == ["ALA", "ALA"] and removed == 1
+    assert st.modified_residues(s[0]["A"]) == {}
+
+
+def test_modified_residues_names_each_parent(tmp_path):
+    chain = sio.load(write(tmp_path / "n.pdb", peptide(["ALA", "PTR", "MSE", "ALA"], het={1, 2})))[0]["A"]
+    assert {rid[1]: parent for rid, parent in st.modified_residues(chain).items()} == {2: "TYR", 3: "MET"}
+
+
+def test_find_ligands_skips_modified_residues_in_the_chain(tmp_path):
+    from Bio.PDB import PDBParser
+
+    from qpocket.core.sites import find_ligands
+
+    lines = peptide(["ALA", "PTR", "ALA"], het={1}) + [
+        line(90 + k, f"C{k}", "LIG", "A", 900, (k, 20, 0), "C", het=True) for k in range(1, 8)]
+    parsed = PDBParser(QUIET=True).get_structure("x", str(write(tmp_path / "l.pdb", lines)))
+    assert [ligand.resname for ligand, _ in find_ligands(parsed, "x", [], 6)] == ["LIG"]

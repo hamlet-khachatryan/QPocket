@@ -8,6 +8,7 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial import cKDTree
 
 from qpocket.constants import BUFFER_RESNAMES
+from qpocket.core.structure import modified_residues
 from qpocket.core.types import Ligand
 
 
@@ -50,8 +51,9 @@ def find_ligands(structure, pdb_id: str, allowed_cofactors: Sequence[str],
     skipped = cofactors | (BUFFER_RESNAMES - {name.upper() for name in keep})
     found: List[Tuple[Ligand, object]] = []
     for chain in next(iter(structure)):
+        in_chain = modified_residues(chain)  # PTR, MSE … bonded into the protein are protein, not ligands
         for res in chain:
-            if res.id[0] in (" ", "W") or res.get_resname().strip().upper() in skipped:
+            if res.id[0] in (" ", "W") or res.get_resname().strip().upper() in skipped or res.id in in_chain:
                 continue
             elements = [_element(a) for a in res]
             if "C" not in elements:
