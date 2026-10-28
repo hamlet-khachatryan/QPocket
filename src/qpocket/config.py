@@ -589,6 +589,9 @@ def validate_config(cfg: "QPocketConfig") -> None:
         raise ValueError(f"sites.link_cutoff must be > 0, got: {sites.link_cutoff}")
     if sites.box_padding < 0:
         raise ValueError(f"sites.box_padding must be >= 0, got: {sites.box_padding}")
+    if isinstance(sites.keep_ligands, str) or not all(isinstance(n, str) for n in sites.keep_ligands):
+        raise ValueError(f"sites.keep_ligands must be a list of residue names, e.g. [CIT], "
+                         f"got: {sites.keep_ligands!r}")
     from qpocket.constants import BUFFER_RESNAMES
 
     for name in (cfg.cleaning.allowed_cofactors or "").split("|"):

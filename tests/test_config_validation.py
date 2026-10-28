@@ -434,3 +434,9 @@ def test_buffer_name_as_cofactor_rejected():
 
 def test_keep_ligands_defaults_empty():
     assert list(make_config(mode="pdb_query").sites.keep_ligands) == []
+
+
+def test_keep_ligands_must_be_a_list():
+    cfg = evolve(make_config(mode="pdb_query"), "sites.keep_ligands", "CIT")
+    with pytest.raises(ValueError, match="sites.keep_ligands"):
+        validate_config(cfg)
