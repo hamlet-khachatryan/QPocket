@@ -22,6 +22,13 @@ uv run qpocket site featurize RUNS/7KG6 --site S1-H21
 uv run qpocket site cluster   RUNS/7KG6 --site S1-H21
 ```
 
+The explorer has three tabs: **Site** (the binding sites, with regroup, merge,
+drop and split), **Exploration** (one site's clustering, representatives,
+interactions and ligands, then **Finalise**) and **Screening** (cross-docking the
+finalised representatives: box, run here / on SLURM / on a VM, success rates and
+poses). See [The explorer](docs/user-guide/explorer.md) and
+[Screening: cross-docking](docs/user-guide/virtual-screening.md).
+
 A run uses half the cores by default; `--workers N` changes that, `--workers 1`
 is serial. `--features hbond,aromatic` (or `--no-apbs`) narrows a site's featurisation,
 which also skips the tools those providers would have needed.

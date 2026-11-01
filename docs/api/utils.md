@@ -2,7 +2,11 @@
 
 ## Run directory
 
-::: qpocket.io.workspace
+::: qpocket.io.layout
+
+## Final site metadata
+
+::: qpocket.io.final
 
 ## Collect stage
 

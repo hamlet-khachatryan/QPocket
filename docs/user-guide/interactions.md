@@ -93,10 +93,9 @@ interactions:
     Hydrophobic: {distance: 4.0}
 ```
 
-This matters beyond the interaction tables. When
-`reference.pocket_definition` is `Interactions`, each site's pocket is cropped to its
-observed contacts before featurising, so the thresholds shape the point cloud,
-the distance matrices and the clustering.
+This matters beyond the interaction tables: the contacted residues build the
+interacting-residues docking box, the residue profile frozen by Finalise, and the
+explorer's fingerprint and residue heatmap.
 
 ## Determinism
 

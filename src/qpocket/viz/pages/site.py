@@ -147,6 +147,46 @@ def site_scene(sites: pd.DataFrame, current: Optional[str], frame_pdb: Optional[
                       message=f"{current} red, other sites grey · hover a sphere for its site")
 
 
+#: The site picker's entry for the ligands no site claimed; never a site ID.
+MISSES = "__missed_ligands__"
+
+#: Carbon colour of missed ligands: 3Dmol's ``<html colour>Carbon`` scheme, brick red.
+MISSED_CARBON = "firebrickCarbon"
+
+
+def missed_scene(sites: pd.DataFrame, frame_pdb: Optional[Path], ligand_files: List[str],
+                 offline: bool = True) -> str:
+    """Every ligand no site claimed, brick-red carbons, over the frame protein with every site grey.
+
+    Args:
+        sites: sites.csv (site_id, centre_x/y/z, n_structures, n_holo, n_ligands).
+        frame_pdb: Aligned structure drawn as a cartoon; none when None.
+        ligand_files: The missed ligands to draw as sticks.
+        offline: Inline the vendored 3Dmol build.
+
+    Returns:
+        A full HTML page, for ``mo.iframe``.
+    """
+    from qpocket.viz.pages.screening import CARTOON, scene_html
+    from qpocket.viz.pdb_text import ligand_pdb
+
+    models = []
+    if frame_pdb is not None and Path(frame_pdb).exists():
+        models.append({"pdb": Path(frame_pdb).read_text(encoding="utf-8"), "style": CARTOON, "role": "protein"})
+    for path in ligand_files:
+        text = ligand_pdb(path) if Path(path).exists() else ""
+        if text:
+            models.append({"pdb": text, "style": {"stick": {"colorscheme": MISSED_CARBON, "radius": 0.15}},
+                           "role": "ligand"})
+    spheres = [{"center": [float(r.centre_x), float(r.centre_y), float(r.centre_z)], "radius": 1.2,
+                "color": OTHER,
+                "hover": f"{r.site_id} · {int(r.n_structures)} structures · {int(r.n_holo)} holo · "
+                         f"{int(r.n_ligands)} ligands"} for r in sites.itertuples()]
+    return scene_html(models, [], spheres, height=440, offline=offline,
+                      message=f"{len(ligand_files)} missed ligands brick red, sites grey · "
+                              "hover a sphere for its site")
+
+
 def override_table(run_dir: Path) -> pd.DataFrame:
     """The run's manual site edits, in the order they apply.
 

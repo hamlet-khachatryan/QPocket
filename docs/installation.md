@@ -53,12 +53,13 @@ uv build                # sdist and wheel in dist/
 On a cluster, `uv sync --python "$(command -v python3)"` uses the loaded Python
 module instead of downloading an interpreter.
 
-PLIP and CavitOmiX are vendored under `src/` and install with the package;
-there is nothing extra to fetch.
+CavFind (CavitOmiX) and the QuickVina docking binaries ship with the package;
+contacts come from ProLIF, a regular dependency. There is nothing extra to fetch.
 
 ## Windows
 
-Everything installs with uv on Windows x86_64 except APBS, which has no Windows
+Windows is not tested in CI (Linux and macOS are). Everything installs with uv on
+Windows x86_64 except APBS, which has no Windows
 wheel. Install it from the [APBS releases](https://github.com/Electrostatics/apbs/releases)
 and either put `apbs.exe` on `PATH` or point Q-Pocket at it:
 

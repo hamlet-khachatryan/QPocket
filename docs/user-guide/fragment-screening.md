@@ -20,7 +20,6 @@ fragment_screen:
 
 reference:
   chain_id: "A"
-  pocket_definition: "Interactions"
 
 paths:
   workdir: "/data/frag/out"

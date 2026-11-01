@@ -30,7 +30,6 @@
       members:
         - apbs_potential
         - structure_data
-        - run_pdb2pqr
         - repair_pqr_with_missing_ions
         - read_dx_grid
 

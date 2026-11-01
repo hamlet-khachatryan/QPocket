@@ -5,12 +5,13 @@
       members:
         - QPocketConfig
         - ReferenceParams
-        - BoundingBoxParams
         - PathConfig
         - QueryParams
         - AlignParams
         - CleanParams
         - IOConfig
-        - DistanceMatrix
+        - SitesConfig
         - FragmentScreenParams
         - validate_config
+        - load_qpocket_config
+        - load_run_config

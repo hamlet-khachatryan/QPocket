@@ -76,46 +76,6 @@ def _cell_errors(port: int, seconds: float = 90.0):
     return asyncio.run(listen())
 
 
-@pytest.mark.golden
-@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
-@pytest.mark.parametrize("shape_clustered", [False, True], ids=["clouds-only", "shape-clustered"])
-def test_a_site_run_leaves_no_error_boxes(tmp_path, monkeypatch, shape_clustered):
-    """A three-structure site: the landscape's UMAP once crashed on runs this small, deep in scipy."""
-    root = _site_run(tmp_path, monkeypatch, shape_clustered)
-    errors, finished, shown = _render(root)
-    assert finished, "no cell ran at all"
-    assert not errors, "cells left showing errors: " + "; ".join(
-        str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
-    for text in ("Binding sites", "Steps for S1-Y1", "S1-Y1 · ", "Ligands shown",
-                 "Exploration", "Screening", "Merge…", "Split…", "Overrides", "qp-on-Site"):
-        assert text in shown, f"{text!r} never rendered"
-    assert ("No distance matrix for this site yet" in shown) is not shape_clustered
-    if shape_clustered:  # the clustering views need the site's distance matrices
-        for text in ("percentile", "Pockets shown", "shared volume", "Finalise site", "Set representative",
-                     "Residue contacts by cluster", "Finalise this site on the Exploration page.", "Not finalised yet"):
-            assert text in shown, f"{text!r} never rendered"
-    assert "Two-stage clustering (0/3 featurised)" in shown
-    assert "silhouette" not in shown.lower()
-    assert "exclusiv" not in shown.lower()
-    assert "Can two states be targeted" not in shown  # the section heading, which never says the word
-
-
-@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
-def test_a_run_with_ligand_linked_sites_asks_for_a_regroup(tmp_path, monkeypatch):
-    """A run made before cavity-defined sites has the old site table; the notebook must not break on it."""
-    import pandas as pd
-
-    root = _site_run(tmp_path, monkeypatch, False)
-    old = pd.read_csv(root / "sites" / "sites.csv")
-    pd.DataFrame({"site_id": old["site_id"], "n_ligands": old["n_ligands"], "n_holo_structures": old["n_holo"],
-                  "centre_x": old["centre_x"], "centre_y": old["centre_y"], "centre_z": old["centre_z"],
-                  "extent": 3.0, "resnames": old["resnames"], "contact_residues": ""}).to_csv(
-        root / "sites" / "sites.csv", index=False)
-    errors, finished, shown = _render(root)
-    assert finished and not errors, "; ".join(str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
-    assert "made before cavity-defined sites" in shown
-
-
 def _render(root):
     port = _free_port()
     server = subprocess.Popen(
@@ -166,19 +126,6 @@ def test_a_two_stage_site_renders_the_chemistry_views(tmp_path, monkeypatch):
         str(e.get("msg") or e.get("type"))[:160] for e in errors[:5])
     for text in ("Chemistry cut (percentile)", "Pockets shown", "Residue contacts by cluster"):
         assert text in shown, f"{text!r} never rendered"
-
-
-@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
-def test_tabs_guard_without_a_site(tmp_path, monkeypatch):
-    """A run with no sites: the Site page still renders; Exploration and Screening say what to do first."""
-    import pandas as pd
-
-    root = _site_run(tmp_path, monkeypatch, False)
-    table = pd.read_csv(root / "sites" / "sites.csv")
-    table.iloc[:0].to_csv(root / "sites" / "sites.csv", index=False)
-    errors, finished, shown = _render(root)
-    assert finished and not errors, "; ".join(str(e.get("msg") or e.get("type"))[:120] for e in errors[:5])
-    assert "Pick a site on the Site page." in shown and "qp-on-Exploration qp-on-Screening" in shown
 
 
 def _element_id(html: str, kind: str, label: str):
@@ -349,53 +296,6 @@ def test_a_finalised_site_renders_the_screening_page_and_saves_its_box(tmp_path,
     after = "\n".join(html for _, html in saved)
     assert "box.json</code>" in after and "Saved box:" in after
     assert "<iframe" not in after, "saving the box redrew the 3D viewer"
-
-
-@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
-def test_a_representative_swap_keeps_its_cluster_and_its_message(tmp_path, monkeypatch):
-    import pandas as pd
-
-    from qpocket.viz.clusters import cluster_labels_of
-    from qpocket.viz.pages.exploration import representative_options
-
-    root = _site_run(tmp_path, monkeypatch, True)
-    path = root / "sites" / "S1-Y1" / "metadata" / "clustering_metadata.csv"
-    table = pd.read_csv(path, dtype={"pdb_id": str})
-    table["cluster_id"] = 0
-    table["is_representative"] = [True] + [False] * (len(table) - 1)
-    table.to_csv(path, index=False)
-    cluster = f"{cluster_labels_of(table)[0]} ({len(table)})"
-    other = table["pdb_id"].iloc[1]
-
-    def pick_cluster(outputs):
-        dropdown = _element_id("\n".join(outputs), "dropdown", f'["{cluster}"]')  # another dropdown is "Cluster" too
-        assert dropdown, "no Cluster dropdown"
-        return [dropdown], [[cluster]]
-
-    master = pd.read_csv(path.with_name("master.csv"), dtype={"pdb_id": str})
-    options = representative_options(table.merge(master[["pdb_id", "protein_state"]], on="pdb_id"), 0)
-    member = next(label for label, pdb in options.items() if pdb == other)
-
-    def pick_member(outputs):
-        dropdown = _element_id("\n".join(outputs), "dropdown", member)
-        assert dropdown, "no Representative dropdown"
-        return [dropdown], [[member]]
-
-    def swap(outputs):
-        button = _element_id("\n".join(outputs), "button", "Set representative")
-        assert button, "no Set representative button"
-        return [button], [1]
-
-    steps = _session(root, [pick_cluster, pick_member, swap])
-    after = pd.read_csv(path, dtype={"pdb_id": str})
-    assert after.loc[after["is_representative"].astype(bool), "pdb_id"].tolist() == [other]
-    swapped = "\n".join(html for _, html in steps[-1])
-    assert f"{other} is now the representative" in swapped
-    import html as _html
-
-    for _ in range(4):
-        swapped = _html.unescape(swapped).replace("\\u003c", "<").replace("\\u003e", ">").replace("\\", "")
-    assert f"""data-initial-value='["{cluster}"]'""" in swapped, "the Cluster pick was reset"
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")

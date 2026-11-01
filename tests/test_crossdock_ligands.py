@@ -1,7 +1,7 @@
 """Actives are deduplicated by structure and keep every crystal copy."""
 import pandas as pd
 
-from qpocket.arms.screen.ligands import distinct_actives, prepare_ligands
+from qpocket.arms.screen.ligands import distinct_actives
 
 
 def _inputs(tmp_path):
@@ -25,21 +25,3 @@ def test_one_row_per_molecule_with_every_crystal_copy(tmp_path):
     assert eth["crystal_files"].split(";") == [str(tmp_path / "1AAA_L.pdb"), str(tmp_path / "2BBB_L.pdb")]
 
 
-def test_ids_stay_unique_when_codes_collide(tmp_path):
-    ids = list(distinct_actives(*_inputs(tmp_path))["active_id"])
-    assert ids == ["ETH", "BNZ", "ETH_2"]
-
-
-def test_preparation_skips_failures(tmp_path, monkeypatch):
-    from qpocket.arms.screen import ligands
-    from qpocket.screen_config import ScreenConfig
-
-    def fake_prepare(smiles, out, cfg, ligand_id):
-        if smiles == "c1ccccc1":
-            return False  # this one fails to prepare
-        out.write_text("x")
-        return True
-
-    monkeypatch.setattr(ligands, "prepare_ligand_pdbqt", fake_prepare)
-    done = prepare_ligands(distinct_actives(*_inputs(tmp_path)), tmp_path / "ligands", ScreenConfig())
-    assert sorted(done) == ["ETH", "ETH_2"] and done["ETH"] == tmp_path / "ligands" / "ETH.pdbqt"

@@ -47,15 +47,14 @@ reference:
   pdb_id: null                # required in pdb_query mode; 4 characters, e.g. "6HP0"
   chain_id: "A"
   auxiliary_chain_ids: null   # e.g. ["B"] — chains forming an interface with chain_id
-  pocket_definition: "Solvent"       # "Interactions" or "Solvent"
-  interaction_padding: 5.0    # Å around contacting residues, when pocket_definition
-                              # is "Interactions"
 ```
 
-| setting | meaning |
-|---|---|
-| `pocket_definition: Solvent` | The whole solvent-accessible cavity. |
-| `pocket_definition: Interactions` | The cavity cropped to residues the ligand actually contacts. |
+By default each structure keeps one chain: the one closest in sequence to
+`chain_id`. List the other chains that line the pocket in `auxiliary_chain_ids` to
+keep them too (see [PDB query mode](user-guide/pdb-query.md#targets-with-two-or-more-chains)).
+
+`pocket_definition` and `interaction_padding` are still accepted but no longer shape
+the pocket: site clouds are always the structure's own CavFind cavities.
 
 ```yaml
 sites:                        # sites are built from CavFind cavities; see the sites section below
@@ -214,7 +213,7 @@ features:
 Dropping a provider drops its columns, and a set that needs no PQR skips pdb2pqr
 and APBS altogether — the fastest way to a geometry-only run. `qpocket run
 --features hbond,aromatic` and `--no-apbs` set this from the command line.
-Featurising a site records what it used in `sites/site_NN/metadata/features.json`; fingerprints built from
+Featurising a site records what it used in `sites/<site>/metadata/features.json`; fingerprints built from
 different sets are not comparable. See [Features](user-guide/features.md).
 
 ## `interactions`

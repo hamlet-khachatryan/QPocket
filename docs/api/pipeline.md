@@ -1,19 +1,36 @@
 # Pipeline API
 
-::: qpocket.pipelines.stages
-    options:
-      members:
-        - load_qpocket_config
-        - run_qpocket_pipeline
-        - fetch_structures
-        - align_structures
-        - clean_structures
-        - extract_pockets_and_interactions
-
-## Orchestrators
+## A whole run
 
 ::: qpocket.pipelines.run
 
-::: qpocket.pipelines.pdb_query
+## Binding sites
 
-::: qpocket.pipelines.fragment_screen
+::: qpocket.pipelines.sites
+    options:
+      members:
+        - group_sites
+        - discover_sites
+        - sync_sites
+        - extract_site
+        - extract_all_sites
+
+::: qpocket.core.sites
+
+## Per-site steps, site edits and Finalise
+
+::: qpocket.arms.sites
+
+::: qpocket.arms.sites.final
+
+## Clustering
+
+::: qpocket.pipelines.clustering
+
+## Cross-docking
+
+::: qpocket.arms.screen.crossdock
+
+::: qpocket.arms.screen.box
+
+::: qpocket.arms.screen.submit

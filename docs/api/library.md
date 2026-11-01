@@ -54,11 +54,12 @@ qpocket compare-structures 7KG6:WDG 1HSG:MK1 --scaler runs/7KG6
 
 | Pipeline | Orchestrator | CLI |
 |---|---|---|
-| PDB query | `qpocket.pipelines.pdb_query.run(cfg)` | `qpocket run --config ...` |
-| Fragment screen | `qpocket.pipelines.fragment_screen.run(cfg)` | `qpocket run --config ...` |
-| Pocket comparison | `qpocket.pipelines.compare.run(specs)` | `qpocket compare-structures ...` |
-| Virtual screening | `qpocket.pipelines.screening.prepare(run_dir, submit=...)` | `qpocket screen prepare --submit slurm\|local` |
+| A run (PDB query or fragment screen) | `qpocket.pipelines.run.run(cfg)` | `qpocket run --config ...` |
+| Per-site steps | `qpocket.arms.sites` (`shape_cluster_site`, `featurize_site`, `two_stage_site`) | `qpocket site shape\|featurize\|cluster` |
+| Finalise a site | `qpocket.arms.sites.final.finalise_site(run_dir, site_id)` | explorer, Exploration tab |
+| Cross-docking | `qpocket.arms.screen.crossdock.prepare(site_dir)`, `analyze(site_dir)` | `qpocket screen prepare\|analyze` |
+| Pocket comparison | `qpocket.arms.compare` | `qpocket compare-structures ...` |
 
-::: qpocket.pipelines.compare
+::: qpocket.arms.compare
 
 ::: qpocket.core.spectral

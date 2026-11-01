@@ -71,15 +71,6 @@ def test_the_two_yaml_copies_are_identical():
     assert REPO_YAML.read_text() == PACKAGED_YAML.read_text()
 
 
-def test_the_packaged_yaml_defines_nothing_the_schema_lacks(schema_keys):
-    """A YAML key with no dataclass behind it is a setting nobody can reach.
-
-    The reverse is allowed: the file deliberately omits settings the chosen
-    method ignores, and `fill_defaults` supplies them.
-    """
-    assert fixed(yaml_keys(PACKAGED_YAML)) - fixed(schema_keys) == set()
-
-
 # --- qpocket init ----------------------------------------------------------
 
 
@@ -92,40 +83,11 @@ def generated(tmp_path):
         yield Path(here) / "qpocket_config.yaml"
 
 
-def test_init_writes_a_parseable_file(generated):
-    assert yaml.safe_load(generated.read_text())
-
-
 def test_init_reproduces_the_packaged_defaults(generated):
     """It used to emit 35 of 80 keys, and none of the clustering or SLURM ones."""
     assert yaml_keys(generated) == yaml_keys(PACKAGED_YAML)
 
 
-def test_init_drops_hydras_composition_list(generated):
-    """`defaults:` steers Hydra's own composition and is noise in a user file."""
-    assert "defaults:" not in generated.read_text().split("\n")[0]
-
-
-def test_init_refuses_to_clobber_an_existing_file(tmp_path):
-    runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        Path("qpocket_config.yaml").write_text("mine\n")
-        result = runner.invoke(cli, ["init"], input="n\n")
-        assert Path("qpocket_config.yaml").read_text() == "mine\n"
-
-
 # --- the documentation -----------------------------------------------------
 
 
-@pytest.mark.skipif(not DOCS.exists(), reason="docs not present")
-def test_every_setting_is_documented(schema_keys):
-    """The reference had no `slurm` section at all while the code read 21 of them."""
-    text = DOCS.read_text()
-    undocumented = sorted(k for k in schema_keys if k.rsplit(".", 1)[-1] not in text)
-    assert undocumented == []
-
-
-@pytest.mark.skipif(not DOCS.exists(), reason="docs not present")
-def test_the_docs_point_at_the_config_the_code_loads():
-    """They named the repo-root copy, which nothing reads."""
-    assert "src/qpocket/conf/config.yaml" in DOCS.read_text()

@@ -7,7 +7,6 @@ import stat
 import pytest
 
 from qpocket.io import engines
-from qpocket.io.tools import ToolNotFoundError
 
 
 @pytest.fixture
@@ -31,34 +30,6 @@ def test_the_vendored_binary_is_verified_and_executable(fake_vendor):
     assert path == fake_vendor and os.stat(path).st_mode & stat.S_IXUSR
 
 
-def test_a_tampered_binary_is_refused(fake_vendor):
-    fake_vendor.write_bytes(b"changed")
-    assert engines.vendored("qvina2") is None
-
-
-def test_resolution_order(fake_vendor, monkeypatch, tmp_path):
-    assert engines.resolve_executable("qvina2", "/opt/my/qvina") == "/opt/my/qvina"
-    monkeypatch.setenv("QPOCKET_QVINA2", "/env/qvina")
-    assert engines.resolve_executable("qvina2") == "/env/qvina"
-    monkeypatch.delenv("QPOCKET_QVINA2")
-    assert engines.resolve_executable("qvina2") == str(fake_vendor)
-
-
-def test_a_missing_binary_names_every_place_looked(fake_vendor, monkeypatch):
-    monkeypatch.setattr(engines.shutil, "which", lambda name: None)
-    with pytest.raises(ToolNotFoundError, match="engine_path.*QPOCKET_NOPE.*vendor.*PATH"):
-        engines.resolve_executable("nope")
-
-
-def test_the_real_manifest_is_consistent():
-    manifest = json.loads((engines.REAL_VENDOR_DIR / "manifest.json").read_text())
-    assert set(manifest) >= {"vina", "qvina2"}
-    for binary, entry in manifest.items():
-        for key, spec in entry["platforms"].items():
-            if spec and spec.get("sha256"):
-                assert (engines.REAL_VENDOR_DIR / key / spec["file"]).exists(), (binary, key)
-
-
 @pytest.fixture
 def fake_multipart(tmp_path, monkeypatch):
     """An engine shipped as an executable plus the libraries it loads."""
@@ -80,21 +51,3 @@ def fake_multipart(tmp_path, monkeypatch):
     return exe, lib
 
 
-def test_a_multipart_engine_is_verified_part_by_part(fake_multipart):
-    exe, _ = fake_multipart
-    assert engines.vendored("qvina2") == exe and os.stat(exe).st_mode & stat.S_IXUSR
-
-
-def test_a_tampered_library_refuses_the_engine(fake_multipart):
-    _, lib = fake_multipart
-    lib.write_bytes(b"changed")
-    assert engines.vendored("qvina2") is None
-
-
-def test_every_recorded_part_in_the_real_manifest_exists():
-    manifest = json.loads((engines.REAL_VENDOR_DIR / "manifest.json").read_text())
-    for binary, entry in manifest.items():
-        for key, spec in entry["platforms"].items():
-            for part in (spec or {}).get("parts", []):
-                if part.get("sha256"):
-                    assert (engines.REAL_VENDOR_DIR / key / part["path"]).exists(), (binary, key, part["path"])

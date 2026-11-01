@@ -26,7 +26,7 @@ uv run python scripts/benchmark_parallel.py /tmp/bench --counts 1,2,4,0
 ## What runs in parallel
 
 Each structure goes from input file to geodesic graph on one worker: align, clean,
-identify the pocket, featurise (pdb2pqr, APBS, CavFind, PLIP), then the geodesic
+identify the pocket, featurise (pdb2pqr, APBS, CavFind, ProLIF), then the geodesic
 graph. Three things are shared, so they stay serial:
 
 | Step | Why it cannot fan out |

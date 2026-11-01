@@ -75,12 +75,13 @@ nav:
       - PDB Query Mode: user-guide/pdb-query.md
       - Fragment Screening Mode: user-guide/fragment-screening.md
       - Pocket Extraction: user-guide/pocket-extraction.md
+      - The Explorer: user-guide/explorer.md
       - Distance Analysis: user-guide/distance-analysis.md
       - Running on a Cluster: user-guide/hpc.md
       - Features: user-guide/features.md
       - Interactions: user-guide/interactions.md
       - Performance: user-guide/performance.md
-      - Virtual Screening: user-guide/virtual-screening.md
+      - "Screening: Cross-docking": user-guide/virtual-screening.md
       - Output Files: user-guide/outputs.md
   - API Reference:
       - Overview: api/index.md

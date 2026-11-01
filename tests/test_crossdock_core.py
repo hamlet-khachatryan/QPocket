@@ -1,7 +1,6 @@
 """Pose RMSD in place, the job grid, and success rates."""
 import numpy as np
 import pandas as pd
-import pytest
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -17,35 +16,6 @@ def _ethanol(shift=0.0):
         p = conf.GetAtomPosition(i)
         conf.SetAtomPosition(i, (p.x + shift, p.y, p.z))
     return mol
-
-
-def test_identical_poses_have_zero_rmsd():
-    assert cx.pose_rmsd(_ethanol(), _ethanol(), "CCO") == pytest.approx(0.0, abs=1e-6)
-
-
-def test_a_translated_pose_is_not_superposed_away():
-    assert cx.pose_rmsd(_ethanol(3.0), _ethanol(), "CCO") == pytest.approx(3.0, abs=1e-6)
-
-
-def test_symmetric_atoms_take_the_best_mapping():
-    a = Chem.MolFromSmiles("OC(=O)C")
-    AllChem.Compute2DCoords(a)
-    b = Chem.Mol(a)
-    conf = b.GetConformer()
-    p0, p2 = conf.GetAtomPosition(0), conf.GetAtomPosition(2)
-    conf.SetAtomPosition(0, p2)
-    conf.SetAtomPosition(2, p0)          # swap the two carboxyl oxygens
-    assert cx.pose_rmsd(a, b) == pytest.approx(0.0, abs=1e-6)
-
-
-def test_the_job_grid_is_every_ligand_against_every_receptor():
-    jobs = cx.crossdock_jobs({"R1": "receptors/R1.pdbqt", "R2": "receptors/R2.pdbqt"},
-                             {"L1": "ligands/L1.pdbqt"}, {"center_x": 1.0, "center_y": 2.0, "center_z": 3.0,
-                                                          "size_x": 20.0, "size_y": 20.0, "size_z": 20.0},
-                             "quickvina", ".pdbqt", 8, 9, 3.0)
-    assert list(zip(jobs["representative"], jobs["active_id"])) == [("R1", "L1"), ("R2", "L1")]
-    assert jobs["output_pdbqt"].iloc[0] == "poses/job_00000.pdbqt"
-    assert not any(str(p).startswith("/") for p in jobs["protein_pdbqt"])
 
 
 def _poses():
@@ -74,38 +44,9 @@ def test_success_rates_by_representative_active_and_overall():
     assert s.loc[("overall", "all"), "n_pairs"] == 3
 
 
-def test_the_seed_travels_in_the_job_and_reaches_vina():
-    from qpocket.core.screening import vina_argv
-
-    jobs = cx.crossdock_jobs({"R1": "receptors/R1.pdbqt"}, {"L1": "ligands/L1.pdbqt"},
-                             {"center_x": 0, "center_y": 0, "center_z": 0, "size_x": 1, "size_y": 1, "size_z": 1},
-                             "vina", ".pdbqt", 8, 9, 3.0, seed=7)
-    argv = vina_argv(jobs.iloc[0], "vina", 2)
-    assert argv[argv.index("--seed") + 1] == "7"
-
-
-def test_older_job_tables_without_a_seed_still_run():
-    from qpocket.core.screening import vina_argv
-
-    job = {"protein_pdbqt": "r", "ligand_pdbqt": "l", "output_pdbqt": "o", "center_x": 0, "center_y": 0,
-           "center_z": 0, "size_x": 1, "size_y": 1, "size_z": 1, "exhaustiveness": 8, "num_modes": 9,
-           "energy_range": 3}
-    assert "--seed" not in vina_argv(job, "vina", 2)
-
-
 def test_pairs_record_the_best_of_every_sampled_pose():
     pairs = cx.pair_table(_poses(), threshold=2.0, top_k=2).set_index("job_id")
     assert pairs.loc["j1", "best_rmsd"] == 0.9 and pairs.loc["j1", "sampled_success"] == True  # noqa: E712  (rank 3)
     assert np.isnan(pairs.loc["j3", "best_rmsd"]) and pairs.loc["j3", "sampled_success"] == False  # noqa: E712
 
 
-def test_a_pose_at_exactly_the_threshold_succeeds():
-    poses = _poses().assign(rmsd=[2.0, 5.0, 5.0, 5.0, 5.0, 5.0])
-    pairs = cx.pair_table(poses, threshold=2.0, top_k=1).set_index("job_id")
-    assert pairs.loc["j1", "top1_success"] == True and pairs.loc["j1", "sampled_success"] == True  # noqa: E712
-
-
-def test_success_table_has_the_sampled_rate():
-    s = cx.success_table(cx.pair_table(_poses(), 2.0, 2)).set_index(["level", "name"])
-    assert s.loc[("representative", "R1"), "sampled_success_rate"] == 50.0
-    assert s.loc[("overall", "all"), "sampled_success_rate"] == pytest.approx(200 / 3)

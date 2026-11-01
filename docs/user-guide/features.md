@@ -41,7 +41,7 @@ Two things follow automatically:
 
 ## What a run records
 
-Featurising a site writes `sites/site_NN/metadata/features.json`, naming the set
+Featurising a site writes `sites/<site>/metadata/features.json`, naming the set
 it used:
 
 ```json

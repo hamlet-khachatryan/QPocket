@@ -15,6 +15,14 @@ A ligand is a non-polymer, non-water heteroatom group that
 - has at least one carbon atom, so ions, sulfate and phosphate are never ligands, and
 - has at least `sites.min_heavy_atoms` heavy atoms.
 
+**Modified residues are protein, not ligands.** A non-standard amino acid that is
+peptide-bonded into the chain — phosphotyrosine (PTR), phosphoserine (SEP),
+phosphothreonine (TPO), selenomethionine (MSE) and the like — is turned into its
+parent residue during cleaning (PTR becomes TYR without its phosphate; MSE keeps its
+selenium as methionine's sulfur), so the chain has no gap, and it is never reported
+as a ligand. The same residue name sitting free, not bonded into the chain, is still
+a ligand.
+
 ## What a run does
 
 1. Align and clean every structure, find its ligands, protonate one complex per
@@ -68,6 +76,30 @@ qpocket site regroup runs/7KG6 --cavity-overlap 0.4 --ligand-fraction 0.5
 
 `--box-padding`, `--min-cavity-points` and `--min-structure-fraction` are
 accepted too. The explorer has the same action (**Regroup sites**).
+
+**When one pocket comes out as several sites.** If the same ligands are listed in
+two or more sites, or one pocket is split across neighbouring sites, its cavities
+differ too much between structures for the default overlap (for example a loop that
+opens and closes). Lower `--cavity-overlap` step by step until those sites become one
+— the JAK1 ATP site needed 0.2 — and check that unrelated pockets did not fuse; or
+merge just those sites (below).
+
+## Editing sites
+
+On the explorer's Site tab:
+
+- **Merge** two or more sites into one; its box covers each part where it lies.
+- **Drop** a site: it disappears, and its ligands become misses with reason
+  `site_dropped`.
+- **Split** a site into its strict cavity groups (cavities that all overlap each
+  other); each part keeps the cavities overlapping it, but never a sibling part's.
+- **Undo** any earlier edit.
+
+Every edit previews how many sites there would be and which existing sites would
+lose results, and applies only on **Confirm**. Edits are saved in the run's config
+as `sites.overrides` and re-applied, in order, after every regroup: each one finds
+its site again by the cavities it was made on (at least half shared). An edit whose
+site no longer exists is kept but reported as unmatched.
 
 ## Settings
 

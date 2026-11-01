@@ -25,8 +25,7 @@ def _public(tree):
                 yield node
 
 
-@pytest.mark.parametrize("path", FILES, ids=lambda p: str(p.relative_to(SRC)))
-def test_docstrings_are_short(path):
+def _check_docstrings_are_short(path):
     tree = ast.parse(path.read_text(encoding="utf-8"))
     assert len((ast.get_docstring(tree) or "").splitlines()) <= 3, "module docstring over 3 lines"
     for node in _public(tree):
@@ -40,3 +39,13 @@ def test_docstrings_are_short(path):
             items = block.splitlines()[1:]
             assert all(line.startswith("    ") and not line.startswith("        ") for line in items), \
                 f"{node.name}: one line per item in {block.splitlines()[0]}"
+
+
+def test_docstrings_are_short():
+    failures = []
+    for path in FILES:
+        try:
+            _check_docstrings_are_short(path)
+        except AssertionError as e:
+            failures.append(f"{path}: {e}")
+    assert not failures, "\n".join(failures)

@@ -133,7 +133,6 @@ mode: "pdb_query"                  # or "fragment_screen"
 
 reference:
   pdb_id: "7KG6"
-  pocket_definition: "Interactions"
 
 paths:
   workdir: "/scratch/<user>/qpocket_runs"      # absolute; results land in <workdir>/<pdb_id>/

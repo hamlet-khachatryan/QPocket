@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import NamedTuple, Optional, Tuple
 
 import numpy as np
@@ -17,6 +18,10 @@ PCA_MDS, UMAP, TSNE = METHODS
 
 #: Fixed seed, so a layout is reproducible between runs of the notebook.
 RANDOM_STATE = 42
+
+# UMAP runs on numba's parallel workqueue, which aborts the whole process when two threads use it
+# at once; the explorer serves every browser session from one process, so fits take turns.
+_UMAP_LOCK = threading.Lock()
 
 
 class MDSResult(NamedTuple):
@@ -177,13 +182,14 @@ def embed_distances(
     if method == UMAP:
         import umap as _umap
 
-        coords = _umap.UMAP(
-            n_components=2,
-            metric="precomputed",
-            n_neighbors=int(min(max(2, n_neighbors), max(2, n - 1))),
-            min_dist=float(min_dist),
-            random_state=random_state,
-        ).fit_transform(d)
+        with _UMAP_LOCK:
+            coords = _umap.UMAP(
+                n_components=2,
+                metric="precomputed",
+                n_neighbors=int(min(max(2, n_neighbors), max(2, n - 1))),
+                min_dist=float(min_dist),
+                random_state=random_state,
+            ).fit_transform(d)
         note = (
             f"n_neighbors {int(n_neighbors)}, min_dist {min_dist:g}. Groups are"
             " meaningful, the gaps between them are not."

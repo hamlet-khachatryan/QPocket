@@ -6,8 +6,10 @@
 - Structure alignment and residue renumbering to a canonical UniProt reference
 - Binding sites built from CavFind cavities across all structures, with each structure's own cavity as its pocket cloud
 - Spectral graph fingerprinting and pairwise distance matrix computation
-- Automatic unsupervised clustering (Affinity Propagation) of pocket shapes
-- Co-crystallised ligand extraction for active compound sets
+- Clustering of pocket conformations (shape, then chemistry) with percentile cuts
+- Co-crystallised ligand extraction, interaction fingerprints and per-cluster residue profiles
+- Cross-docking of the cluster representatives, scored by in-place pose RMSD
+- An interactive explorer (Site, Exploration and Screening tabs)
 
 ---
 
@@ -19,14 +21,14 @@ PDB / fragment CSV
       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 1 – Data Retrieval                                   │
-│  fetch_structures(): PDB query  ─OR─  fragment CSV load     │
+│  PDB query  ─OR─  local structure files (fragment CSV)      │
 └─────────────────────────────────────────────────────────────┘
       │
       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 2 – Preprocessing                                    │
-│  align_structures()     – alignment + UniProt renumbering   │
-│  clean_structures()     – remove non-standard residues       │
+│  align   – primary (+ partner) chains, UniProt renumbering  │
+│  clean   – protein + allowed cofactors; modified → parent   │
 │  find ligands · protonate · contacts · cavities (once)      │
 │  group ligands into sites · cut one cloud per site          │
 └─────────────────────────────────────────────────────────────┘
@@ -38,11 +40,18 @@ PDB / fragment CSV
 │    ├── Geodesic graph + shortest paths                      │
 │    ├── Heat-kernel Laplacian → spectral fingerprints        │
 │    ├── Pairwise L2 distance (eigenvalue + feature)          │
-│    └── Affinity Propagation clustering                      │
+│    └── clustering (hierarchical, percentile cuts)           │
+│  representatives → Finalise → sites/<site>/final/           │
 └─────────────────────────────────────────────────────────────┘
       │
       ▼
- sites/site_NN/metadata/  ─  spectral_distance_matrix.csv
+┌─────────────────────────────────────────────────────────────┐
+│  Stage 4 – Cross-docking (explorer Screening tab or         │
+│  qpocket screen …): box → prepare → run → analyse           │
+└─────────────────────────────────────────────────────────────┘
+      │
+      ▼
+ sites/<site>/metadata/  ─  spectral_distance_matrix.csv
               clustering_metadata.csv
               selected_representatives.csv
               observed / potential interaction H5

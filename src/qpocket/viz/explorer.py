@@ -117,7 +117,7 @@ def _(Path, mo, run_selector):
 
 
 @app.cell
-def _(get_sites_version, mo, pd, qpages, qsites, run_dir):
+def _(get_sites_version, mo, pd, qpages, qsite_page, qsites, qviz, run_dir):
     # Bumped only by a confirmed site change, so previewing one never re-reads the table or resets the picker.
     _ = get_sites_version()
     _empty = pd.DataFrame(columns=["site_id", "n_structures", "n_holo", "n_apo", "n_cavfind_miss",
@@ -132,6 +132,10 @@ def _(get_sites_version, mo, pd, qpages, qsites, run_dir):
         sites_df = _empty
     _labels = {f"{r.site_id} · {r.n_structures} structures · {r.n_holo} holo · {r.n_cavfind_miss} misses":
                r.site_id for r in sites_df.itertuples()}
+    # Ligands no site claimed get an entry of their own, last, so they can be seen together.
+    _n_missed = len(qviz.missed_ligands(run_dir))
+    if _n_missed:
+        _labels[f"Missed ligands · {_n_missed} ligands no site claimed"] = qsite_page.MISSES
     site_picker = mo.ui.dropdown(options=_labels, value=next(iter(_labels), None),
                                  label="**Binding site**")
     qpages.on("Site", mo.vstack([
@@ -157,9 +161,11 @@ def _(mo):
 
 
 @app.cell
-def _(Path, get_site_steps, mo, pd, qpages, run_dir, site_picker):
+def _(Path, get_site_steps, mo, pd, qpages, qsite_page, run_dir, site_picker):
     mo.stop(site_picker.value is None, qpages.on(("Exploration", "Screening"), mo.callout(mo.md(
         "Pick a site on the Site page. This run has none yet; regroup its sites there."), kind="info")))
+    mo.stop(site_picker.value == qsite_page.MISSES, qpages.on(("Exploration", "Screening"), mo.callout(mo.md(
+        "Missed ligands are not a site. Pick a site on the Site page to explore it."), kind="info")))
 
     _ = get_site_steps()
     site_dir = run_dir / "sites" / site_picker.value
@@ -240,6 +246,19 @@ def _(info, mo, qpages, qsite_page, qviz, run_dir, site_dir, site_ligand_limit, 
                    if isinstance(f, str) and f and (run_dir / f).exists()), None)
     _html = qsite_page.site_scene(sites_df, site_dir.name, _frame, [str(f) for f in _files])
     qpages.on("Site", mo.vstack([site_ligand_limit, mo.iframe(_html, height="500px")]))
+    return
+
+
+@app.cell
+def _(mo, qpages, qsite_page, qviz, run_dir, site_picker, sites_df):
+    # Every ligand no site claimed, brick red, over the run's frame with every site's sphere grey.
+    mo.stop(site_picker.value != qsite_page.MISSES)
+    _files = qviz.missed_ligands(run_dir)
+    _html = qsite_page.missed_scene(sites_df, qviz.frame_structure(run_dir), [str(f) for f in _files])
+    qpages.on("Site", mo.vstack([
+        mo.md(f"**{len(_files)} ligands no site claimed** (`sites/cavfind_misses.csv`)"),
+        mo.iframe(_html, height="500px"),
+    ]))
     return
 
 
@@ -496,7 +515,7 @@ def _(qviz, site_dir):
 def _(mo, qpages):
     qpages.on("Exploration", mo.md("""
     ## Clustering
-    Pick a clustering method and adjust the controls to select the best parametrization. **Save** updates the run's clustering while keeping the old one in `metadata/clustering_history/`.
+    Pick a clustering method and adjust the controls to select the best parametrization. **Apply to this run** updates the run's clustering while keeping the old one in `metadata/clustering_history/`.
     """))
     return
 

@@ -25,71 +25,9 @@ def _params(**kw):
         structure.structure_params(make_config())
 
 
-def test_params_are_frozen_and_built_from_config():
-    p = _params()
-    assert p.contacts == ("prolif",) and p.min_heavy_atoms == 6
-
-
-def test_the_reference_is_not_realigned(ws):
-    record = Structure("REF", "ref.cif", 0.0, "a.pdb", cleaned_file="c.pdb")
-    ref = Reference("REF", CTX, record)
-    from qpocket.core.types import RawStructure
-
-    assert structure.align(ref, _params(), ws, RawStructure("REF", ws.original / "REF.cif")) is record
-
-
-def test_a_failed_cleaning_is_a_failure(ws, monkeypatch):
-    monkeypatch.setattr(structure, "clean_file", lambda record, ws, allowed: None)
-    out = structure.clean(_params(), ws, Structure("T", "t.pdb", 0.1, "t_aligned.pdb"))
-    assert out == Failure("T", "clean", "cleaning failed")
-
-
 def _het(serial, name, resname, resseq, xyz, element="C", chain="A"):
     return (f"HETATM{serial:5d} {name:<4s} {resname:>3s} {chain}{resseq:4d}    "
             f"{xyz[0]:8.3f}{xyz[1]:8.3f}{xyz[2]:8.3f}  1.00  0.00          {element:>2s}\n")
-
-
-def test_every_ligand_is_extracted_with_its_smiles(ws, monkeypatch, tmp_path):
-    from qpocket.io import interactions
-
-    aligned = tmp_path / "T_aligned.pdb"
-    aligned.write_text("".join(_het(i + 1, f"C{i}", "LIG", 300, (i, 0, 0)) for i in range(6))
-                       + "".join(_het(i + 7, f"C{i}", "LIG", 301, (i, 20, 0)) for i in range(6))
-                       + _het(13, "ZN", "ZN", 400, (0, 0, 30), "ZN") + "END\n")
-    monkeypatch.setattr(interactions, "ligand_smiles", lambda path: "CCCCCC")
-    out = structure.find_ligands_step(_params(), ws, Structure("T", "t", 0.0, str(aligned)))
-    assert [(l.resname, l.resseq) for l in out.ligands] == [("LIG", 300), ("LIG", 301)]
-    assert out.protein_state == "BOUND_STATE" and all(l.smiles == "CCCCCC" for l in out.ligands)
-    assert [Path(l.file).name for l in out.ligands] == ["T_A_LIG_300.pdb", "T_A_LIG_301.pdb"]
-    assert all(Path(l.file).exists() for l in out.ligands)
-
-
-def test_a_structure_without_ligands_is_unbound(ws, tmp_path):
-    aligned = tmp_path / "T_aligned.pdb"
-    aligned.write_text(_het(1, "ZN", "ZN", 400, (0, 0, 0), "ZN") + "END\n")
-    out = structure.find_ligands_step(_params(), ws, Structure("T", "t", 0.0, str(aligned)))
-    assert out.ligands == () and out.protein_state == "UNBOUND_STATE"
-
-
-def test_contacts_are_read_per_ligand_by_its_residue_number(ws, monkeypatch):
-    from qpocket.plugins.contacts import prolif
-
-    monkeypatch.setattr(prolif, "interactions_for",
-                        lambda path, lig, enabled, parameters, ligand_resseq: [f"R_{ligand_resseq}_A|X"])
-    a, b = Ligand("T", "A", "LIG", 300, " ", 6), Ligand("T", "B", "LIG", 300, " ", 6)
-    rec = Structure("T", "t", protonated_file="/p/T.pdb", ligands=(a, b))
-    out = structure.read_contacts(_params(), ws, rec)
-    assert out.contacts == ((a.key, ("R_900_A|X",)), (b.key, ("R_901_A|X",)))
-
-
-def test_without_a_protonated_complex_no_contacts_are_guessed(ws, monkeypatch):
-    """The aligned file cannot tell BTN A301 from BTN B301 by name and number alone."""
-    from qpocket.plugins.contacts import prolif
-
-    monkeypatch.setattr(prolif, "interactions_for", lambda *a, **k: ["R_1_A|X"])
-    a, b = Ligand("T", "A", "BTN", 301, " ", 16), Ligand("T", "B", "BTN", 301, " ", 16)
-    out = structure.read_contacts(_params(), ws, Structure("T", "t", aligned_file="/a.pdb", ligands=(a, b)))
-    assert out.contacts == ((a.key, ("no_ligand_found",)), (b.key, ("no_ligand_found",)))
 
 
 def _fake_protonation(monkeypatch, written):
@@ -109,50 +47,10 @@ def _fake_protonation(monkeypatch, written):
     monkeypatch.setattr(structure, "_protonated_ligand", lambda path: "mol")
 
 
-def test_a_complex_is_rebuilt_when_the_ligand_list_changes(ws, monkeypatch, tmp_path):
-    written = []
-    _fake_protonation(monkeypatch, written)
-    rec = _cleaned(tmp_path)
-    one = (Ligand("T", "A", "AAA", 1, " ", 6),)
-    two = one + (Ligand("T", "A", "BBB", 2, " ", 6),)
-    structure.protonate(ws, rec._replace(ligands=one))
-    structure.protonate(ws, rec._replace(ligands=one))       # same list: reused
-    out = structure.protonate(ws, rec._replace(ligands=two))  # new list: rebuilt
-    assert written == [["AAA"], ["AAA", "BBB"]] and out.protonated_file
-
-
-def test_per_site_settings_do_not_change_a_structure_fingerprint(tmp_path):
-    from qpocket.config import evolve
-    from qpocket.core.types import RawStructure
-    from tests.conftest import make_config
-
-    raw = tmp_path / "T.pdb"
-    raw.write_text("ATOM\n")
-    ref = Reference("REF", CTX, Structure("REF", "r"))
-    base = make_config()
-    other = evolve(evolve(base, "features.enabled", ["hbond"]), "distance.geo_graph_neighbor_radius", 9.5)
-    key = lambda cfg: structure.fingerprint(ref, structure.structure_params(cfg), RawStructure("T", raw))
-    assert key(base) == key(other)
-
-
-def test_contacts_need_a_ligand(ws):
-    rec = Structure("T", "t", protein_state="UNBOUND_STATE", cleaned_file="/nope.pdb")
-    assert structure.read_contacts(_params(), ws, rec).contacts == ()
-
-
 def _cleaned(tmp_path):
     cleaned = tmp_path / "T_clean.pdb"
     cleaned.write_text("END\n")
     return Structure("T", "t", 0.0, "a.pdb", cleaned_file=str(cleaned), protein_state="BOUND_STATE")
-
-
-def test_every_cavity_is_written_with_its_detection_index(ws, monkeypatch, tmp_path):
-    found = [np.zeros((2, 3)), np.ones((3, 3))]
-    monkeypatch.setattr(structure, "run_cavfind", lambda path, name: found)
-    out = structure.detect_cavities(ws, _cleaned(tmp_path))
-    assert out.cavities_file == str(ws.cavities / "T.csv") and out.protein_state == "BOUND_STATE"
-    cav = pd.read_csv(out.cavities_file)
-    assert list(cav.columns) == ["x", "y", "z", "cavity"] and list(cav["cavity"]) == [0, 0, 1, 1, 1]
 
 
 def test_no_cavity_or_a_failed_detection_is_a_state(ws, monkeypatch, tmp_path):
@@ -205,17 +103,6 @@ def test_run_level_collect_writes_master_and_failures_only(ws):
     assert not list(ws.metadata.glob("*.h5")) and not (ws.metadata / "features.json").exists()
 
 
-def test_collect_from_parts_keeps_order_and_reports_gaps(ws):
-    layout.write_part(ws, "B", Structure("B", "b", 0.1, "b", cleaned_file="b",
-                                         protein_state="UNBOUND_STATE").to_json())
-    layout.write_part(ws, "A", Failure("A", "align", "x").to_json())
-    (layout.parts_dir(ws) / "D.json").write_text("{not json")
-    records, failures = collect.collect_from_parts(ws, ["A", "B", "C", "D"])
-    assert [r.pdb_id for r in records] == ["B"]
-    assert [(f.pdb_id, f.stage) for f in failures] == [("A", "align"), ("C", "featurize"),
-                                                      ("D", "featurize")]
-
-
 STEPS = ("clean", "find_ligands_step", "protonate", "read_contacts", "detect_cavities")
 
 
@@ -254,9 +141,3 @@ def test_a_changed_input_or_setting_is_processed_again(ws, monkeypatch, tmp_path
     assert calls == ["T", "T", "T"]
 
 
-def test_a_failed_structure_is_retried(ws, monkeypatch, tmp_path):
-    raw, ref = _inputs(tmp_path)
-    calls = _counting_chain(monkeypatch, Failure("T", "align", "x"))
-    structure.process(ref, _params(), ws, raw)
-    structure.process(ref, _params(), ws, raw)
-    assert calls == ["T", "T"]

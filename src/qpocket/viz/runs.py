@@ -93,6 +93,49 @@ def site_view_ligands(run_dir: Path, site_id: str, limit: int) -> List[str]:
     return [by_pdb[p] for p in holo if p in by_pdb][: max(int(limit), 0)]
 
 
+def missed_ligands(run_dir: Path) -> List[str]:
+    """Ligand files of every ligand no site claimed, as sites/cavfind_misses.csv lists them.
+
+    Args:
+        run_dir: The run directory.
+
+    Returns:
+        Ligand file paths in the misses file's order; empty when the run has no misses.
+    """
+    import pandas as pd
+
+    root = Path(run_dir)
+    misses_path = root / "sites" / "cavfind_misses.csv"
+    ligands_path = root / "structures" / "ligands.csv"
+    if not misses_path.is_file() or not ligands_path.is_file():
+        return []
+    misses = pd.read_csv(misses_path, dtype=str, keep_default_na=False)
+    ligands = pd.read_csv(ligands_path, dtype=str, keep_default_na=False)
+    keys = (ligands["pdb_id"] + ":" + ligands["chain"] + ":" + ligands["resname"] + ":"
+            + ligands["resseq"] + ligands["icode"].str.strip())
+    by_key = dict(zip(keys, ligands["file"]))
+    return [by_key[k] for k in misses["ligand_key"] if k in by_key]
+
+
+def frame_structure(run_dir: Path) -> Optional[Path]:
+    """The first aligned structure on disk, which stands in for the run's frame.
+
+    Args:
+        run_dir: The run directory.
+
+    Returns:
+        Its path, or None when the run lists none that exists.
+    """
+    import pandas as pd
+
+    root = Path(run_dir)
+    master_path = root / "metadata" / "master.csv"
+    if not master_path.is_file():
+        return None
+    master = pd.read_csv(master_path, dtype=str, keep_default_na=False)
+    return next((root / f for f in master.get("aligned_file", []) if f and (root / f).exists()), None)
+
+
 def find_runs(roots: Iterable[Path], max_depth: int = MAX_DEPTH) -> List[Path]:
     """Every run at or below ``roots``, without walking into runs themselves.
 

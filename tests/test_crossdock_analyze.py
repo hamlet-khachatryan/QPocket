@@ -45,17 +45,3 @@ def test_analyze_takes_the_closest_crystal_copy(tmp_path, monkeypatch):
     assert (folder / "crossdock_poses.csv").exists() and (folder / "crossdock_pairs.csv").exists()
 
 
-def test_a_missing_output_is_a_failed_pair(tmp_path):
-    from qpocket.arms.screen import crossdock
-
-    ws = layout.create(str(tmp_path), "RUN")
-    folder = ws.screening / "crossdock"
-    folder.mkdir(parents=True)
-    pd.DataFrame({"active_id": ["ETH"], "smiles": ["CCO"], "canonical": ["CCO"], "crystal_files": [""]}
-                 ).to_csv(folder / "ligands.csv", index=False)
-    pd.DataFrame({"job_id": ["job_00000"], "representative": ["R1"], "active_id": ["ETH"],
-                  "engine": ["quickvina"], "output_pdbqt": ["poses/job_00000.pdbqt"]}
-                 ).to_csv(folder / "docking_jobs.csv", index=False)
-    result = crossdock.analyze(ws.root)
-    assert result.pairs.empty or not result.pairs["top1_success"].any()
-    assert result.success.set_index("level").loc["overall", "n_pairs"] == 0

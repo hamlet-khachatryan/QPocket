@@ -21,7 +21,7 @@ qpocket site regroup   runs/7KG6 --cavity-overlap 0.4
 
 Shape clustering (clustering mode `shape_only`) needs no featurisation, so it is the
 quick first look. Featurise writes `featurized.csv` beside each cloud; two-stage
-clustering needs it. Results land in `sites/site_NN/metadata/`. On a cluster, see
+clustering needs it. Results land in `sites/<site>/metadata/`. On a cluster, see
 [Running on a cluster](hpc.md).
 
 These steps read the settings saved with the run in `<run>/metadata/config.yaml`.
@@ -31,7 +31,7 @@ later site steps; the YAML you passed to `qpocket run` is not read again.
 ## Pipeline
 
 ```
-sites/site_NN/pockets/<pdb_id>/featurized.csv  (per pocket)
+sites/<site>/pockets/<pdb_id>/binding_site.csv   (cloud; featurized.csv after Featurise)
       │
       ▼
 compute_geodesic()        ← shortest-path distances on neighbourhood graph
@@ -40,15 +40,14 @@ compute_geodesic()        ← shortest-path distances on neighbourhood graph
 compute_spectral_fingerprint()  ← heat-kernel Laplacian → eigenvalues + GFT
       │
       ▼
-pairwise L2 distance matrix
+pairwise distance matrices (shape; chemistry; combined)
       │
       ▼
-Affinity Propagation clustering
+clustering (default: hierarchical, cut at site percentiles; two-stage = shape, then chemistry)
       │
       ▼
-  sites/site_NN/metadata/spectral_distance_matrix.csv
-  clustering_metadata.csv
-  selected_representatives.csv
+  sites/<site>/metadata/shape_distance_matrix.csv, spectral_distance_matrix.csv,
+  clustering_metadata.csv, selected_representatives.csv
 ```
 
 ## Features per pocket point
@@ -101,16 +100,16 @@ shape cluster is not split. `kmedoids` stages take a fixed `k` instead; see
   tight each cluster is (median within distance, as a percentile), how much
   cavity volume its pockets share, and its representative; select a row to see
   that cluster's own tree. **Apply to this run** saves the clustering.
-- **Cluster distances**: the median distance between every pair of clusters, as
-  a percentile, and the member-level block for any two clusters.
+- **Representatives**: each cluster's medoid, or a member you pick instead; then
+  **Finalise** freezes the result for screening (see [The explorer](explorer.md)).
 - **Landscape**: one small point per pocket, labels on hover.
 - **Pocket clouds**: at most 40 at once, picked in a searchable list
   (representatives first); consensus and difference colouring use the whole
   cluster.
 
-## Clustering — Affinity Propagation
+## Clustering — Affinity Propagation (optional)
 
-Affinity Propagation is applied to the precomputed distance matrix (converted to a similarity matrix via negation).  The number of clusters is determined **automatically** — no `k` needs to be specified.
+Choose `affinity` as the clustering method to use it. Affinity Propagation is applied to the precomputed distance matrix (converted to a similarity matrix via negation).  The number of clusters is determined **automatically** — no `k` needs to be specified.
 
 Key parameters:
 

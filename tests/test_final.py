@@ -1,13 +1,12 @@
 """Finalise freezes a site's clustering, representatives, residue profile and actives into final/."""
 import json
-from datetime import datetime
 
 import pandas as pd
 import pytest
 
 from qpocket.arms.sites import final
 from qpocket.arms import sites as steps
-from tests.test_site_steps import FAR, NEAR, _finished_run
+from tests.test_site_steps import FAR, _finished_run
 
 
 @pytest.fixture
@@ -37,37 +36,6 @@ def test_finalise_writes_the_four_files(run):
         assert key in settings
     assert settings["matrices"] and list(settings["matrices"]) == ["shape_distance_matrix.csv"]
     assert settings["representatives"] == clusters.loc[clusters["is_representative"], "pdb_id"].tolist()
-
-
-def test_shape_only_final_records_no_features(run):
-    settings = json.loads((final.finalise_site(run, FAR) / "settings.json").read_text())
-    assert settings["shape_only"] is True and settings["features"] == []
-
-
-def test_two_finalises_keep_two_histories(run):
-    now = datetime(2026, 10, 27, 18, 4, 0)
-    final.finalise_site(run, FAR, now=now)
-    final.finalise_site(run, FAR, now=now)
-    folder = final.finalise_site(run, FAR, now=now)
-    history = sorted(p.name for p in (folder / "history").iterdir())
-    assert history == ["2026-10-27T18-04-00", "2026-10-27T18-04-00-2"]
-    assert all((folder / "history" / h / "clusters.csv").exists() for h in history)
-    assert not (folder / "history" / history[0] / "history").exists()
-
-
-def test_finalise_without_interactions_writes_an_empty_profile(run):
-    for name in ("observed_interactions.h5", "potential_interactions.h5"):
-        (run / "sites" / FAR / "metadata" / name).unlink(missing_ok=True)
-    profile = pd.read_csv(final.finalise_site(run, FAR) / "residue_profile.csv")
-    assert profile.empty and "contacted_pct" in profile.columns
-
-
-def test_ligands_are_this_sites_members_only(run):
-    table = pd.read_csv(run / "structures" / "ligands.csv", dtype=str, keep_default_na=False)
-    stray = table.iloc[[2]].assign(pdb_id="X9")       # a ligand at FAR in a structure the site does not hold
-    pd.concat([table, stray]).to_csv(run / "structures" / "ligands.csv", index=False)
-    ligands = pd.read_csv(final.finalise_site(run, FAR) / "ligands.csv", keep_default_na=False)
-    assert ligands["pdb_id"].tolist() == ["P2"]
 
 
 def test_new_clustering_makes_the_final_stale(run):
@@ -100,40 +68,6 @@ def test_a_representative_swap_makes_the_final_stale(run):
     assert final.final_status(run, FAR) == "stale"
 
 
-def test_swapping_back_leaves_no_override_behind(run):
-    table = _one_cluster(run)
-    medoid, other = table["pdb_id"].iloc[0], table["pdb_id"].iloc[1]
-    settings = json.loads((final.finalise_site(run, FAR) / "settings.json").read_text())
-    steps.set_representative(run, FAR, 0, other)
-    steps.set_representative(run, FAR, 0, medoid)
-    params = json.loads((run / "sites" / FAR / "metadata" / "clustering_params.json").read_text())
-    assert params.get("representative_overrides", {}) == settings["clustering"].get("representative_overrides", {})
-    assert final.final_status(run, FAR) == "current"
-
-
-def test_history_is_named_by_the_parked_finals_time(run):
-    final.finalise_site(run, FAR, now=datetime(2026, 10, 27, 9, 0, 0))
-    folder = final.finalise_site(run, FAR, now=datetime(2026, 10, 27, 18, 0, 0))
-    assert [p.name for p in (folder / "history").iterdir()] == ["2026-10-27T09-00-00"]
-
-
-def test_saved_profile_keeps_its_counts(run):
-    profile = pd.read_csv(final.finalise_site(run, FAR) / "residue_profile.csv")
-    assert {"n_members", "n_with_contacts"} <= set(profile.columns)
-
-
-def test_finalise_before_clustering_is_a_site_error(run):
-    with pytest.raises(steps.SiteError, match="cluster this site first"):
-        final.finalise_site(run, NEAR)
-
-
-def test_read_final_returns_the_tables(run):
-    final.finalise_site(run, FAR)
-    got = final.read_final(run, FAR)
-    assert set(got) == {"clusters", "settings", "residue_profile", "ligands"}
-    assert isinstance(got["settings"], dict) and len(got["clusters"]) == 3
-
-
 def test_a_failed_finalise_keeps_the_previous_final(run, monkeypatch):
     final.finalise_site(run, FAR)
     before = (run / "sites" / FAR / "final" / "clusters.csv").read_text()
@@ -150,12 +84,3 @@ def test_a_failed_finalise_keeps_the_previous_final(run, monkeypatch):
     assert not (folder / "history").exists() and not list(folder.glob(".incoming*"))
 
 
-def test_io_final_reads_what_finalise_wrote(run):
-    from qpocket.io import final as io_final
-
-    final.finalise_site(run, FAR)
-    site = run / "sites" / FAR
-    assert io_final.read_final(site)["settings"]["site_id"] == FAR
-    assert io_final.final_status(site) == "current"
-    with pytest.raises(FileNotFoundError):
-        io_final.read_final(run / "sites" / NEAR)

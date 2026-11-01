@@ -24,7 +24,14 @@
 │       │   ├── binding_site.csv         ← the site's cloud in that structure (x, y, z)
 │       │   └── featurized.csv           ← after Featurise: x, y, z + feature columns
 │       ├── metadata/                ← distance matrices, clustering, representatives
-│       └── screening/               ← docking inputs and results for this site
+│       ├── final/                   ← after Finalise: clusters.csv, settings.json,
+│       │   │                          residue_profile.csv, ligands.csv
+│       │   └── history/<finalised_at>/  ← earlier finals
+│       └── screening/
+│           ├── box.json             ← the saved docking box (Save box)
+│           ├── screen_config.yaml   ← optional, this site's screening settings
+│           └── crossdock/           ← task folder: docking_jobs.csv, receptors/, ligands/,
+│                                      poses/, run_docking.sbatch, crossdock_*.csv
 └── metadata/
     ├── run.json                     ← layout version; older runs must be re-run
     ├── config.yaml                  ← the settings the run used
@@ -52,16 +59,25 @@ and `screening/`; those appear when you run a site's steps.
 | `ligand_file` | Path to extracted ligand PDB (or null) |
 | `protein_state` | `BOUND_STATE` (cavity and ligand) / `UNBOUND_STATE` (cavity only) / `FAILED` |
 
-### `sites/site_NN/metadata/clustering_metadata.csv`
+### `sites/<site>/metadata/clustering_metadata.csv`
 
 | Column | Description |
 |---|---|
 | `pdb_id` | Structure identifier |
-| `cluster_id` | Cluster index (0-based) |
-| `is_representative` | `True` if this is the Affinity Propagation exemplar |
-| `dist_to_exemplar` | Distance to cluster exemplar |
+| `cluster_id` | Cluster index (0-based; −1 before the site is clustered) |
+| `is_representative` | `True` for the cluster's representative (its medoid, or the member picked instead) |
+| `dist_to_exemplar` | Distance to the representative, on the matrix the clustering used |
 
-### `sites/site_NN/pockets/<pdb_id>/featurized.csv`
+### `sites/<site>/final/`
+
+Written by **Finalise**. `clusters.csv` (pdb_id, cluster, cluster_id,
+is_representative, dist_to_representative, holo), `residue_profile.csv` (per cluster
+and residue: contacted_pct, lining_pct, n_members, n_with_contacts), `ligands.csv`
+(the site's ligands per cluster, with SMILES) and `settings.json` (when, the
+clustering parameters, features, representatives, and the hash of the clustering it
+froze — a different clustering makes the final stale).
+
+### `sites/<site>/pockets/<pdb_id>/featurized.csv`
 
 Columns: `x`, `y`, `z`, `apbs`, `cp`, `lp`, `h_donor`, `h_acceptor`, `aromatic`.
 
@@ -69,5 +85,5 @@ Columns: `x`, `y`, `z`, `apbs`, `cp`, `lp`, `h_donor`, `h_acceptor`, `aromatic`.
 
 Keys are PDB IDs; values are byte-encoded lists of:
 
-- **potential**: `"RESNAME_RESNUM"` strings (all residues within 4 Å of cavity)
-- **observed**: `"RESNAME_RESNUM|InteractionType"` strings from PLIP
+- **potential**: `"RESNAME_RESNUM_CHAIN"` strings (residues with an atom within 4 Å of the cloud)
+- **observed**: `"RESNAME_RESNUM_CHAIN|InteractionType"` strings from ProLIF

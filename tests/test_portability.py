@@ -14,11 +14,20 @@ RULES = {
 }
 
 
-@pytest.mark.parametrize("path", FILES, ids=lambda p: str(p.relative_to(SRC)))
-def test_no_posix_only_constructs(path):
+def _check_no_posix_only_constructs(path):
     text = path.read_text(encoding="utf-8")
     for label, rule in RULES.items():
         assert not rule.search(text), f"{label} in {path.name}"
+
+
+def test_no_posix_only_constructs():
+    failures = []
+    for path in FILES:
+        try:
+            _check_no_posix_only_constructs(path)
+        except AssertionError as e:
+            failures.append(f"{path}: {e}")
+    assert not failures, "\n".join(failures)
 
 
 def _text_io_without_encoding(tree):
@@ -37,8 +46,17 @@ def _text_io_without_encoding(tree):
             yield node
 
 
-@pytest.mark.parametrize("path", FILES, ids=lambda p: str(p.relative_to(SRC)))
-def test_text_files_are_opened_as_utf8(path):
+def _check_text_files_are_opened_as_utf8(path):
     """Windows defaults to cp1252; every text read and write names its encoding."""
     missing = [n.lineno for n in _text_io_without_encoding(ast.parse(path.read_text(encoding="utf-8")))]
     assert not missing, f"text I/O without encoding at lines {missing}"
+
+
+def test_text_files_are_opened_as_utf8():
+    failures = []
+    for path in FILES:
+        try:
+            _check_text_files_are_opened_as_utf8(path)
+        except AssertionError as e:
+            failures.append(f"{path}: {e}")
+    assert not failures, "\n".join(failures)

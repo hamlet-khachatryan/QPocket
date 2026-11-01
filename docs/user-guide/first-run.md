@@ -126,7 +126,7 @@ uv run qpocket run ... --no-apbs
 
 That skips pdb2pqr too, when nothing else needs it. Fingerprints from different
 feature sets are **not comparable**, and featurising a site records the set it
-used in `sites/site_NN/metadata/features.json`.
+used in `sites/<site>/metadata/features.json`.
 
 ---
 
@@ -156,15 +156,16 @@ the one you choose.
 
 | method | what it does | knobs |
 |---|---|---|
-| Affinity propagation | clusters the combined score, as the pipeline does | damping, preference percentile |
-| One hierarchical cut | cuts the combined score's tree at one height | cut height |
-| Two stages | groups by shape, then splits each group by chemistry | shape cut, chemistry cut, minimum group to split |
+| Two stages (default) | groups by shape, then splits each group by chemistry | shape cut, chemistry cut, minimum group to split |
+| One hierarchical cut | cuts the combined score's tree once | cut |
+| Affinity propagation | clusters the combined score, choosing the number of clusters itself | damping, preference percentile |
 
-The dendrogram draws the tree being cut, with a dashed line at the height, so
-moving a slider shows you what it does. The "Cut by" choice picks the rule:
-relative (a fraction of the tree's highest merge, the default), an absolute height,
-or a cluster count. Each result reports its cluster count and how far it sits from
-the clustering stored with the run (ARI, and how many pockets moved).
+Every cut is a **site percentile**: a shape cut at 15 puts the line where 15 % of the
+site's pairwise shape distances lie below, so the same number means the same
+tightness on every target. The dendrogram draws the tree being cut, with a dashed
+line at the cut, so moving a slider shows you what it does. Each result reports its
+cluster count and how far it sits from the clustering stored with the run (ARI, and
+how many pockets moved).
 
 Only the two-stage result can be **saved** as the run's clustering, because that
 is the form a run stores.
@@ -182,7 +183,7 @@ percentile cuts in the notebook and apply, or from the command line:
 uv run qpocket recluster ./runs/parg-minimal/7KG6/sites/S1-H21 --shape-percentile 15 --chem-percentile 20
 ```
 
-The previous clustering is archived under `sites/site_NN/metadata/clustering_history/` rather
+The previous clustering is archived under `sites/<site>/metadata/clustering_history/` rather
 than overwritten.
 
 ---

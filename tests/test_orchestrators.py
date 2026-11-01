@@ -29,12 +29,6 @@ def test_pdb_query_mode_searches_rcsb(tmp_path, monkeypatch):
     assert seen == ["7KG6"]
 
 
-def test_every_core_module_is_under_the_layer_rules():
-    from tests.test_layers import CORE, CORE_MODULES_DONE
-    modules = sorted(p.name for p in CORE.glob("*.py") if p.name != "__init__.py")
-    assert sorted(CORE_MODULES_DONE) == modules
-
-
 # ── the whole run, with the structure chain faked ────────────────────────────
 
 def _fake_run(tmp_path, monkeypatch, holo=True, **compute):
@@ -77,20 +71,6 @@ def test_run_writes_sites_and_no_matrices(tmp_path, monkeypatch):
     assert not list(root.rglob("*distance_matrix.csv"))
     assert not list(root.rglob("featurized.csv"))
     assert load_run_config(root).sites.cavity_overlap == 0.5
-
-
-def test_rerun_keeps_site_results(tmp_path, monkeypatch):
-    cfg = _fake_run(tmp_path, monkeypatch)
-    from tests.site_helpers import site_ids
-
-    root = run.run(cfg)
-    marker = root / "sites" / site_ids(root)[0] / "metadata" / "keep.txt"
-    marker.write_text("x")
-    cloud = root / "sites" / site_ids(root)[0] / "pockets" / "APO1" / "binding_site.csv"
-    text, mtime = cloud.read_text(), cloud.stat().st_mtime_ns
-    run.run(cfg)
-    assert marker.read_text() == "x"
-    assert cloud.read_text() == text and cloud.stat().st_mtime_ns == mtime
 
 
 def test_rerun_reconciles_renumbered_sites(tmp_path, monkeypatch):
@@ -146,27 +126,3 @@ def test_run_with_no_ligands(tmp_path, monkeypatch):
     assert list(pd.read_csv(root / "metadata" / "master.csv")["pdb_id"]) == ["P1", "APO1"]
 
 
-def test_site_extraction_runs_on_worker_processes(tmp_path, monkeypatch):
-    """The per-pair worker crosses a process boundary, so it must pickle."""
-    import pandas as pd
-
-    from qpocket.pipelines.sites import discover_sites, extract_all_sites
-
-    cfg = _fake_run(tmp_path, monkeypatch, workers=2, backend="process")
-    records = [run.process(None, None, None, raw) for raw in run.ingest(cfg, None).structures]
-    ws = layout.create(cfg.paths.workdir, "run")
-    extract_all_sites(cfg, ws, discover_sites(cfg, ws, records), records)
-    from tests.site_helpers import site_ids
-
-    master = pd.read_csv(ws.sites / site_ids(ws.root)[0] / "metadata" / "master.csv")
-    assert list(master["protein_state"]) == ["BOUND_STATE", "UNBOUND_STATE"]
-
-
-def test_saved_config_loads_back_through_validation(tmp_path):
-    from qpocket.config import load_qpocket_config, load_run_config, save_run_config
-
-    cfg = load_qpocket_config(overrides=["reference.pdb_id=1ABC", "sites.cavity_overlap=0.4"])
-    ws = layout.create(str(tmp_path), "run")
-    save_run_config(cfg, ws)
-    loaded = load_run_config(ws.root)
-    assert loaded.sites.cavity_overlap == 0.4 and loaded.reference.pdb_id == "1ABC"

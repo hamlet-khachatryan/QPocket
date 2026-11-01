@@ -1,14 +1,8 @@
 # Processing
 
-## Extraction
+## Per-structure stages (align, clean, ligands, protonate, contacts, cavities)
 
-::: qpocket.pipelines.pockets
-    options:
-      members:
-        - extract_reference_pocket_bbox
-        - extract_pocket_from_structure
-        - get_plip_interactions
-        - run_analysis_step
+::: qpocket.pipelines.structure
 
 ## Alignment
 

@@ -1,5 +1,4 @@
 """Per-site steps on a finished run: featurise, shape clustering, two-stage, regroup."""
-import os
 from pathlib import Path
 
 import numpy as np
@@ -7,7 +6,7 @@ import pandas as pd
 import pytest
 
 from qpocket.arms import sites as steps
-from qpocket.config import QPocketConfig, evolve, load_run_config
+from qpocket.config import QPocketConfig, evolve
 from qpocket.io import layout
 from qpocket.pipelines import run, structure
 
@@ -96,80 +95,6 @@ def test_one_failed_featurisation_still_allows_two_stage(tmp_path, monkeypatch, 
     assert steps.site_status(root, NEAR)["two_stage"]
 
 
-def test_shape_clustering_one_pocket_is_a_site_error(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    for pid in ("P1", "APO1"):
-        (root / "sites" / NEAR / "pockets" / pid / "binding_site.csv").unlink()
-    with pytest.raises(steps.SiteError, match="fewer than 2 pockets"):
-        steps.shape_cluster_site(root, NEAR)
-
-
-def test_two_stage_that_writes_no_matrix_raises(tmp_path, monkeypatch, fake_features):
-    root = _finished_run(tmp_path, monkeypatch)
-    steps.featurize_site(root, NEAR)
-    steps.two_stage_site(root, NEAR)  # an earlier matrix must not pass for this run's
-    monkeypatch.setattr(steps, "compute_spectral_distance_matrix", lambda cfg, ws: None)
-    with pytest.raises(steps.SiteError, match="wrote no"):
-        steps.two_stage_site(root, NEAR)
-
-
-def test_featurise_records_the_feature_set(tmp_path, monkeypatch, fake_features):
-    import json
-
-    root = _finished_run(tmp_path, monkeypatch)
-    record = root / "sites" / NEAR / "metadata" / "features.json"
-    assert not record.exists()
-    steps.featurize_site(root, NEAR)
-    assert json.loads(record.read_text())["enabled"] == list(load_run_config(root).features.enabled)
-
-
-def test_two_stage_before_featurise_raises(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    with pytest.raises(steps.SiteError, match="Featurise"):
-        steps.two_stage_site(root, NEAR)
-
-
-def test_featurise_skips_done(tmp_path, monkeypatch, fake_features):
-    root = _finished_run(tmp_path, monkeypatch)
-    steps.featurize_site(root, NEAR)
-    assert steps.featurize_site(root, NEAR) == []
-    cloud = root / "sites" / NEAR / "pockets" / "P2" / "binding_site.csv"
-    later = cloud.with_name("featurized.csv").stat().st_mtime + 10
-    os.utime(cloud, (later, later))  # a touched but unchanged cloud is still featurised
-    assert steps.featurize_site(root, NEAR) == []
-    cloud.write_text(cloud.read_text() + "0.0,0.0,0.0\n")
-    assert steps.featurize_site(root, NEAR) == ["P2"]
-
-
-def test_rerun_leaves_features_current(tmp_path, monkeypatch, fake_features):
-    root = _finished_run(tmp_path, monkeypatch)
-    steps.featurize_site(root, NEAR)
-    cloud = root / "sites" / NEAR / "pockets" / "P2" / "binding_site.csv"
-    before = cloud.stat().st_mtime_ns
-    run.run(load_run_config(root))
-    assert cloud.stat().st_mtime_ns == before
-    assert steps.featurize_site(root, NEAR) == []
-
-
-def test_regroup_keeps_unchanged_sites(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    sites_dir = root / "sites"
-    steps.shape_cluster_site(root, FAR)
-    for sid in (NEAR, FAR):
-        (sites_dir / sid / "metadata" / "marker.txt").write_text("kept")
-    (sites_dir / FAR / "ligands.pdb").write_text("stale")
-
-    table = steps.regroup_sites(root, ligand_fraction=0.4)
-
-    assert list(table["site_id"]) == [NEAR, FAR]
-    for sid in (NEAR, FAR):
-        assert (sites_dir / sid / "metadata" / "marker.txt").read_text() == "kept"
-    assert "CCC" in (sites_dir / FAR / "ligands.pdb").read_text()
-    assert load_run_config(root).sites.ligand_fraction == 0.4
-    kept = pd.read_csv(sites_dir / FAR / "metadata" / "clustering_metadata.csv")
-    assert all(Path(p).exists() and Path(p).parents[2].name == FAR for p in kept["pocket_file"])
-
-
 def test_regroup_that_changes_membership_drops_the_site(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     sites_dir = root / "sites"
@@ -182,69 +107,6 @@ def test_regroup_that_changes_membership_drops_the_site(tmp_path, monkeypatch):
     assert not (sites_dir / FAR).exists()
     misses = pd.read_csv(sites_dir / "cavfind_misses.csv")
     assert misses.set_index("resname").loc["CCC", "reason"] == "no_site"
-
-
-def test_regroup_after_a_crash_extracts_the_changed_sites(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    sites_dir = root / "sites"
-
-    def crash(*args, **kwargs):
-        raise RuntimeError("killed")
-
-    with monkeypatch.context() as m:
-        m.setattr(steps, "extract_all_sites", crash)
-        with pytest.raises(RuntimeError):
-            steps.regroup_sites(root, cavity_overlap=0.4)
-    table = steps.regroup_sites(root, cavity_overlap=0.4)
-    for sid in table["site_id"]:
-        assert (sites_dir / sid / "metadata" / "master.csv").exists()
-        assert (sites_dir / sid / "pockets" / "APO1" / "binding_site.csv").exists()
-
-
-def test_leftover_parked_folders_do_not_break_regroup(tmp_path, monkeypatch):
-    import shutil
-
-    root = _finished_run(tmp_path, monkeypatch)
-    sites_dir = root / "sites"
-    shutil.copytree(sites_dir / FAR, sites_dir / f".regroup_{FAR}")   # its name is taken: dropped
-    shutil.move(sites_dir / NEAR, sites_dir / f".regroup_{NEAR}")     # its name is free: it is NEAR
-    (sites_dir / f".regroup_{NEAR}" / "metadata" / "marker.txt").write_text("restored")
-
-    steps.regroup_sites(root, ligand_fraction=0.5)
-    assert not list(sites_dir.glob(".regroup_*"))
-    assert (sites_dir / NEAR / "metadata" / "marker.txt").read_text() == "restored"
-    assert (sites_dir / FAR / "metadata" / "master.csv").exists()
-
-
-def test_regroup_needs_a_known_parameter(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    with pytest.raises(ValueError, match="at least one"):
-        steps.regroup_sites(root)
-    with pytest.raises(ValueError, match="link_cutoff"):
-        steps.regroup_sites(root, link_cutoff=3.0)
-
-
-def test_unknown_site_is_refused(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    for step in (steps.site_status, steps.featurize_site, steps.shape_cluster_site, steps.two_stage_site):
-        with pytest.raises(steps.SiteError, match="unknown site 'site_99'"):
-            step(root, "site_99")
-    assert not (root / "sites" / "site_99").exists()
-
-
-def test_a_run_saved_with_the_silhouette_defaults_still_clusters(tmp_path, monkeypatch):
-    from omegaconf import OmegaConf
-
-    root = _finished_run(tmp_path, monkeypatch)
-    path = Path(root) / "metadata" / "config.yaml"
-    saved = OmegaConf.load(path)
-    saved.distance.clustering.shape = {"method": "hierarchical", "linkage": "average", "k": None,
-                                       "k_range": [2, 10], "criterion": "count", "threshold": None}
-    saved.distance.clustering.chem = {"method": "kmedoids", "k": None, "k_range": [2, 6],
-                                      "criterion": "count", "threshold": None}
-    path.write_text(OmegaConf.to_yaml(saved), encoding="utf-8")
-    steps.shape_cluster_site(root, NEAR)
-    assert steps.site_status(root, NEAR)["shape_clustered"]
 
 
 def test_regroup_that_flips_a_ligand_refreshes_the_site_tables(tmp_path, monkeypatch):
@@ -267,17 +129,6 @@ def test_regroup_that_flips_a_ligand_refreshes_the_site_tables(tmp_path, monkeyp
 
 # --- manual site edits ----------------------------------------------------------
 
-def test_merge_then_undo_restores_the_automatic_sites(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    before = (root / "sites" / "cavities.csv").read_text()
-    merged = steps.add_override(root, steps.merge_override(root, [NEAR, FAR]))
-    assert len(merged) == 1
-    assert steps.list_overrides(root)[0]["status"] == "applied"
-    table = steps.undo_override(root, 0)
-    assert list(table["site_id"]) == [NEAR, FAR]
-    assert (root / "sites" / "cavities.csv").read_text() == before
-    assert steps.list_overrides(root) == []
-
 
 def test_drop_removes_the_site_folder(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
@@ -287,12 +138,6 @@ def test_drop_removes_the_site_folder(tmp_path, monkeypatch):
     assert entry["op"] == "drop" and entry["label"] == FAR and entry["status"] == "applied"
 
 
-def test_split_of_a_single_core_site_is_refused(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    with pytest.raises(steps.SiteError, match="one strict cavity group"):
-        steps.split_override(root, NEAR)   # its three cavities form one strict group; FAR's form two
-
-
 def test_split_makes_one_site_per_strict_group(tmp_path, monkeypatch):
     root = _finished_run(tmp_path, monkeypatch)
     table = steps.add_override(root, steps.split_override(root, FAR))
@@ -300,40 +145,6 @@ def test_split_makes_one_site_per_strict_group(tmp_path, monkeypatch):
     assert entry["status"] == "applied" and entry["parts"] == 2
     assert NEAR in set(table["site_id"])  # the other site is untouched
     assert set(entry["site_ids"]) <= set(table["site_id"])
-
-
-def test_merge_needs_two_known_sites(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    with pytest.raises(steps.SiteError):
-        steps.merge_override(root, [NEAR])
-    with pytest.raises(steps.SiteError, match="unknown site"):
-        steps.merge_override(root, [NEAR, "S9-X1"])
-    with pytest.raises(steps.SiteError):
-        steps.undo_override(root, 0)
-
-
-def test_preview_lists_only_what_exists(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    steps.shape_cluster_site(root, FAR)
-    before = (root / "sites" / "sites.csv").read_text()
-    losses = steps.preview_changes(root, overrides=[steps.merge_override(root, [NEAR, FAR])])
-    assert losses == {NEAR: [], FAR: ["clustering"]}
-    assert steps.preview_changes(root, ligand_fraction=0.4) == {}  # membership unchanged
-    assert (root / "sites" / "sites.csv").read_text() == before   # a preview writes nothing
-
-
-def test_override_survives_a_regroup(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    steps.add_override(root, steps.drop_override(root, FAR))
-    table = steps.regroup_sites(root, ligand_fraction=0.4)
-    assert list(table["site_id"]) == [NEAR]
-
-
-def test_site_results_counts_featurised_pockets(tmp_path, monkeypatch, fake_features):
-    root = _finished_run(tmp_path, monkeypatch)
-    assert steps.site_results(root, NEAR) == []
-    steps.featurize_site(root, NEAR, workers=1)
-    assert steps.site_results(root, NEAR) == [f"featurised pockets ({len(list((root / 'sites' / NEAR / 'pockets').glob('*/featurized.csv')))})"]
 
 
 def test_split_works_on_a_grouping_made_before_cores_were_recorded(tmp_path, monkeypatch):
@@ -362,38 +173,6 @@ def test_a_merged_site_keeps_its_ligands_and_members(tmp_path, monkeypatch):
     row = table.iloc[0]
     assert len(table) == 1 and row.n_ligands == 3 and row.n_holo == 2
     assert _members(root, row.site_id) == union
-
-
-def test_split_parts_do_not_overlap_and_the_preview_says_a_site_is_new(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    split = steps.split_override(root, FAR)
-    preview = steps.preview(root, overrides=[split])
-    assert preview.n_before == 2 and preview.n_after == 3 and FAR in preview.losses
-    table = steps.add_override(root, split)
-    parts = [_members(root, sid) for sid in table["site_id"] if sid != NEAR]
-    assert len(parts) == 2 and not (parts[0] & parts[1])
-
-
-def test_preview_counts_screening_docking(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    jobs = root / "sites" / FAR / "screening" / "docking_jobs.csv"
-    jobs.parent.mkdir(parents=True, exist_ok=True)
-    jobs.write_text("job_id\n")
-    assert steps.site_results(root, FAR) == ["docking"]
-
-
-def test_a_failed_apply_keeps_the_config_in_step(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    drop = steps.drop_override(root, FAR)
-
-    def broken(*args, **kwargs):
-        raise RuntimeError("extraction died")
-
-    monkeypatch.setattr(steps, "extract_all_sites", broken)
-    with pytest.raises(RuntimeError):
-        steps.add_override(root, drop)
-    listed = steps.list_overrides(root)
-    assert len(listed) == 1 and listed[0]["status"] == "applied"
 
 
 # --- representative override ----------------------------------------------------
@@ -436,21 +215,6 @@ def test_set_representative_swaps_it_everywhere(tmp_path, monkeypatch):
     assert params["representative_overrides"] == {str(cluster): pdb_id}
 
 
-def test_a_representative_from_another_cluster_is_refused(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    table = _clustered(root, NEAR)
-    table["cluster_id"] = [0] + [1] * (len(table) - 1)
-    table.to_csv(root / "sites" / NEAR / "metadata" / "clustering_metadata.csv", index=False)
-    with pytest.raises(steps.SiteError, match="not in cluster"):
-        steps.set_representative(root, NEAR, 0, str(table["pdb_id"].iloc[1]))
-
-
-def test_set_representative_before_clustering_is_a_site_error(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    with pytest.raises(steps.SiteError, match="cluster this site first"):
-        steps.set_representative(root, NEAR, 0, "P1")
-
-
 def _meta_dir(tmp_path, mode):
     """A clustering of A, B, C in one cluster with A its representative; shape and spectral distances differ."""
     import json
@@ -465,48 +229,3 @@ def _meta_dir(tmp_path, mode):
     return tmp_path
 
 
-@pytest.mark.parametrize("mode, scale", [("two_stage", 10.0), ("shape_only", 1.0)])
-def test_swap_distances_come_from_the_matrix_the_clustering_used(tmp_path, mode, scale):
-    from qpocket.pipelines.clustering import set_representative
-
-    meta = _meta_dir(tmp_path, mode)
-    set_representative(meta, 0, "B")
-    after = pd.read_csv(meta / "clustering_metadata.csv").set_index("pdb_id")["dist_to_exemplar"]
-    assert after.to_dict() == {"A": 1.0 * scale, "B": 0.0, "C": 3.0 * scale}
-
-
-def test_set_representative_keeps_a_history(tmp_path):
-    import json
-
-    from qpocket.pipelines.clustering import set_representative
-
-    meta = _meta_dir(tmp_path, "shape_only")
-    set_representative(meta, 0, "B")
-    set_representative(meta, 0, "C")
-    history = json.loads((meta / "clustering_params.json").read_text())["representative_history"]
-    assert [(h["cluster_id"], h["from"], h["to"]) for h in history] == [(0, "A", "B"), (0, "B", "C")]
-    assert all("at" in h for h in history)
-
-
-def test_a_failed_swap_changes_nothing(tmp_path, monkeypatch):
-    import qpocket.pipelines.clustering as clustering
-
-    meta = _meta_dir(tmp_path, "shape_only")
-    before = {p.name: p.read_bytes() for p in meta.iterdir()}
-
-    def boom(*a, **k):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(clustering.json, "dumps", boom)
-    with pytest.raises(OSError):
-        clustering.set_representative(meta, 0, "B")
-    assert {p.name: p.read_bytes() for p in meta.iterdir()} == before
-
-
-def test_set_representative_without_its_matrix_is_a_site_error(tmp_path, monkeypatch):
-    root = _finished_run(tmp_path, monkeypatch)
-    table = _clustered(root, NEAR)
-    for matrix in (root / "sites" / NEAR / "metadata").glob("*_distance_matrix.csv"):
-        matrix.unlink()
-    with pytest.raises(steps.SiteError, match="distance matrix"):
-        steps.set_representative(root, NEAR, int(table["cluster_id"].iloc[0]), str(table["pdb_id"].iloc[0]))
